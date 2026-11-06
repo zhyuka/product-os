@@ -1,0 +1,1 @@
+() => new Promise(done => requestAnimationFrame(() => setTimeout(done)))

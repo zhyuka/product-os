@@ -1,0 +1,77 @@
+# Settings
+
+The tools read settings from two JSON files and merge them key by key, with the project's file winning:
+
+- `~/.claude/product-os.json` holds yours: folders on your machine, plus the project to use when you work outside any project folder.
+- `<project>/.claude/product-os.json` holds the project's and is committed with it. The tools use the nearest one, found by walking up from the project folder: `--project <dir>` where a tool takes it, else `$CLAUDE_PROJECT_DIR`, else the folder you run in. A folder inside the plugin's own folder isn't taken for the project unless it has a `.claude` folder of its own, as the shipped example project does: run there, or named with `--project`, a tool refuses in one line, exit 2, naming the `--project` to run it again with. `$CLAUDE_PROJECT_DIR` is taken as given.
+
+`$PRODUCT_OS_CONFIG` names a single file to use in place of the project's. `python tools/kit_config.py` shows where it looked and what it found.
+
+Every key is optional, and a tool reads only the keys it uses. A tool that needs a key neither file has stops with exit 2 and names the key. There are no built-in defaults for a project, so a missing setting never reads from someone else's project or files into it.
+
+A project's file can't choose what runs on your machine. A setting that runs a command or sends a request counts from the project's file only after you accept it, and again after it changes. That covers every key ending in `_cmd`, plus `triage.sources`, `rebase.surfaces`, `scheduled_audits.extra`, `setup.checks` and the retro keys `footprint`, `insights`, `records`, `loop_outcome`, `measures_dir` and `reader_proxy`. Until you accept it, the setting is left out, as if unset, and `python tools/kit_config.py` lists it as NOT ACCEPTED. Read it in the project's file, then run `product-os kit_config accept <key>`, or `accept --all`. The digests of the accepted values are kept in `~/.claude/product-os-commands-accepted.json`. The same commands in your own file always count. Where Claude Code hooks run, the plugin asks before an agent accepts a command or edits either file. Where they don't, add an ask rule such as `Bash(*kit_config* accept*)`.
+
+Tokens never go in these files. `FIGMA_TOKEN`, `ADO_PAT` and the like come from the environment, or from the OS keychain under the service `product-os` (see `kit_config.py --help`).
+
+## Keys, by the tool that reads them
+
+A path under `app`, such as `app.decisions`, `app.rules`, `app.baseline` or `app.frames`, is from the project root, not from `app.dir`. Commands run in `app.dir`.
+
+| Key | Read by | What it is |
+|---|---|---|
+| `intent.dir` | the intent and spec skills | folder that holds each change's `intent.md`, `spec.md` and `plan.md`, one subfolder per change (default `intent/` at the project root) |
+| `app.dir`, `app.widths` | the push check, setup-kit, build-change, check-page, review-change | the folder the app's commands run from (default: the repo root); the widths it ships, in CSS px, widest first |
+| `app.build_cmd`, `app.serve_cmd`, `app.check_cmd` | the same | the production build; the server for it, with `{port}`; the project's check command, which fails when the known-findings baseline grows |
+| `app.qa_cmd`, `app.screenshot_cmd`, `app.measure_cmd`, `app.contrast_cmd`, `app.compare_cmd`, `app.component_lookup_cmd` | check-page, build-change, review-change | the project's QA commands (a list); a full-page picture (default `product-os shot_gpu`); measuring a box; grading contrast; pairing each section with its design frame; naming the file that already draws a design component. Each skill's references say which `{fields}` it fills |
+| `app.baseline`, `app.base`, `app.decisions`, `app.rules` | check-page, build-change, review-change | the known-findings file, which may only shrink; the branch a change is measured against; the file of design decisions a reviewer may cite; the project's build rules files |
+| `app.plan_cmd`, `app.plan_stale_cmd`, `app.frames` | build-change, review-change | writes a route's plan from its design, with `{file_key}` and `{section}`; checks a route's plan with `{route}`: exit 0 current, 1 stale (the plan cites a file that's gone, or the design changed since), printing the command that re-plans, 2 didn't run; the file that names each route's design frames when its plan doesn't |
+| `tracker.server` | deliver-change, build-change, setup-kit | the MCP server the project's work tracker goes through, as Claude Code names it, such as `azure-devops`. When it's set, the tracker steps use that server's tools, with each person signed in with their own account, in place of the `ado` skill's token |
+| `setup.min_version` | doctor, setup-kit | the oldest Product OS version the project works with, such as `0.6.0`; an older one is a miss |
+| `deliver.remote`, `deliver.branch` | deliver-change | where a delivery pushes: the remote (default `origin`) and the branch (default: the upstream, else it asks) |
+| `go.routes` | go | extra routes, `[{"when", "skill", "done"}]`; one wins over a built-in route it overlaps |
+| `rebase.surfaces`, `triage.sources` | reconcile, triage | the project's own places to check, `[{"name", "cmd", "pass"}]`, and its decision sources, `[{"name", "cmd"}]`, both run as commands; the shapes are in each skill's references |
+| `setup.checks`, `setup.tokens` | setup-kit | extra setup lines, `[{"label", "cmd", "fix", "optional"}]`; tokens reported as set or not set, `[{"name", "fix", "optional"}]`, never printed |
+| `ado.org`, `ado.project` | ado, ado_rest, ado_write | Azure DevOps organization URL and project |
+| `ado.title_prefix` | ado | work-item titles read `<prefix> // {Page - Section} // {what}`; unset, any title passes |
+| `ado.search_stop` | ado | extra words the duplicate search ignores |
+| `ado.fix_repo`, `ado.fix_branch_prefix` | ado new | the git checkout whose linked worktrees count for `new --type Bug --fixing <branch>` (default: the folder you run in), and the prefix such a branch must have (default: none) |
+| `ado.frozen_branch` | ado_rest audit | a branch nobody may propose merging to; unset, that check prints "did not run" |
+| `ado.backlog_iteration` | ado_rest audit | the dateless "someday" iteration |
+| `ado.phase_suffixes`, `ado.decision_tag` | ado_rest | title endings that mark a planned pair; the tag that marks an open question (default `decision`) |
+| `ado.undo_dir` | ado_write delete | the folder a delete writes each item's undo file to before it sends the delete (default `~/.local/share/product-os/ado-undo`) |
+| `ado_links.*` (`root`, `places`, `records`, `stores`, `plain_quotes`) | ado_links | the folder the census starts from and the folders it walks; path fragments of records whose text is evidence, `{"<path prefix>": "<why>"}` for stores a tool parses, and markdown files whose quotes are posted as plain text, which a rewrite leaves alone |
+| `figma.files`, `figma.default_file` | figma tools, ado | `{"<file key>": {"kind": "design" or "board", "name": "<label>"}}`; the file a bare node id refers to |
+| `figma.mirror` | figma_client | `{"<file key>": ["<page name>", ...]}` to keep a local REST mirror; off until set |
+| `figma.drafts` | drafts_store, figma_post | path of a drafts file of Figma comments (or `$FIGMA_DRAFTS`) |
+| `figma.new_thread_files` | figma_post, drafts_store | Figma file keys where every new FIX thread needs `--new-thread "<why>"` and a batch `new` FIX item is refused; unset, the component match alone decides |
+| `figma.read_only` | figma_post, figma_attach, deliver-change | `true` when nothing in this plugin writes to the project's Figma: every post, reply, delete, edit, attach, mention and resolve through this plugin's copies is refused before any call (a `figma_attach probe` still runs), and deliver-change drafts the reply to design for the person to post, with no tool posting it, an MCP tool included; unset, they write |
+| `drafts.outbound`, `drafts.repo`, `drafts.branch` | drafts_store stale | the file of messages waiting to be sent (or `$OUTBOUND_DRAFTS`); the git checkout and branch where a "held until commit" release is checked (default: the folder you run in; with no branch, that hold reads "not checked") |
+| `recall.notes`, `recall.transcripts`, `recall.repos` | recall | folders searched as your notes and meeting transcripts; git clones to search (default: the repo you run in). `seen_before.notes` / `.transcripts` / `.site` are read as fallbacks |
+| `kb.root`, `kb.dir`, `kb.rules`, `kb.private`, `kb.cache` | kb | the folder a citation's relative path and a rule's glob start from (default: the project folder); the store, `index.md` plus one page per body (default `knowledge/` under the root); the pointer rules checked (default `.claude/rules` under the root); folders under the root that are never a source and that no rule may reach into (default none); where `check --record` and `--new` keep their state (default `~/.cache/product-os/kb`) |
+| `card_check.runs` | card_check | the file each run appends one line to, which `--share` reads (default `~/.local/share/product-os/card-checks.jsonl`) |
+| `recall.index_dir` | recall, recall_index | folder of the logs index (default `~/.cache/product-os/recall_logs`); keep it outside any folder a cloud drive or mirror job copies |
+| `recall.aliases` | recall | a file of names a thing has had, one `alias: Name = Alt \| #N  (since YYYY-MM-DD)` line each (default `~/.local/share/product-os/aliases.md`); no file means no aliases |
+| `logs.root`, `logs.backups` | cc_logs and the tools built on it | where to walk for Claude Code logs (default `~`); backup folders whose copies count as backups |
+| `session_close.drafts` | session_close | file names or path endings that count as drafts files; listed, never blocking, and a promise naming one has a home |
+| `session_close.sweep_task` | session_close | the scheduled-task id of your close sweep, read by `--archived-since last-sweep`; unset, that form exits 2 |
+| `skill_lint.topics`, `skill_lint.startup_max` | skill_lint | facts with one owning file; the word budget for what loads at startup |
+| `skill_use.rules`, `skill_use.aliases` | skill_use | which skill must load before which risky step |
+| `tool_time.tools` | tool_time | extra folders of tools to time |
+| `agent_gate.suites` | agent_gate_stale | folder of eval suites |
+| `agent_gate.version_cmd` | agent_gate_stale | the command that prints the Claude Code version a suite re-run launches, version first (default `claude --version`); give `zsh -lc 'claude --version'` when your suites run in a login shell. A command key: it counts from a project's file only once accepted |
+| `metrics.*` (`log_roots`, `project_folders`, `skip_folders`, `repo`, `branch`, `ticket_re`, `check_dir`, `tsv`) | weekly_metrics | inputs of the weekly process measures |
+| `doclint.*` (`scope`, `names`, `names_file`, `people_glob`, `people_prefix`, `people_file`, `exempt_names`, `exempt_parts`) | doclint | which docs it reads and the people's names it refuses |
+| `ledger.*` (`dir`, `rulings`, `rulings_also`, `ado_cache`, `skip_cwd`, `skip_first`, `other_roots`, `told_routes`, ...) | ledger, digest, recall (`ledger.dir`) | where the request ledger lives and what else it reads; `other_roots` are working-folder prefixes of sessions run on another machine (a Windows drive path always counts), listed after this machine's; `told_routes` are the `{name, chose, other}` patterns `--told` reads |
+| `transcripts.*` (`dir`, `aliases`, `aliases_file`, `ambiguous`) | transcript_check | the transcripts folder and the spellings of your product names |
+| `workspace.*` (`root`, `not_ours`, `docs`, `map`, `skip`, `ado_docs`, ...) | workspace_audit, archive, upkeep, desktop_mirror | your working folder and what in it the audits judge |
+| `backup.folder` | backup_cc_logs, desktop_mirror, upkeep | a folder a cloud drive syncs, or an external disk |
+| `mirror.*` (`source`, `name`, `exclude`, `worktrees`, `sentinels`, `extra_repos`, `log`) | desktop_mirror, scheduled_audits | the one-way copy of your working folder |
+| `upkeep.*` (`repos`, `integration`, `worktrees`, `dist_parents`, `pyc_dirs`, `setup_repos`) | upkeep | what the daily cleanup may prune |
+| `scheduled_audits.*` (`extra`, `agent_prefix`, `exit_matters`, `log`, `watchdog`, `unused_callers`, `keep_unused`) | scheduled_audits | extra audits to run, each `[name, script, args..., login shell true or false, timeout in seconds]` with the last two optional, and which scheduled jobs to watch; globs of other files that run your tools, and `{"name.py": "why"}` for a tool kept with no run or caller |
+| `scheduled_audits.figma_token_pipeline`, `scheduled_audits.figma_token_variable` | scheduled_audits `--figma-tokens` | the ADO build definition id whose secret variable holds CI's Figma token (unset: CI's token isn't checked), and that variable's name (default `FIGMA_TOKEN`); each token warns 76 days after it was saved and fails at Figma's 90-day cap |
+| `retro.*` (`report`, `archive_cmd`, `records`, `files`, `insights`, `propose_cmd`, `coordinator_cmd`, ...) | the retro skill | where its report lives, which commands and files are your records, and where it files upgrades; every key is in `skills/retro/references/config.md` |
+| `signed_in_browser.*` (`channel`, `no_profile_under`, `temp_root`, `reap`) | signed_in_browser, figma_attach | `msedge` or `chrome`, and where a signed-in profile may not live |
+| `ask_rules.settings` | ask_rules | settings files whose permissions.ask rules must prompt on each of the plugin's outward writes and on no read |
+| `ask_rules.copies` | ask_rules | settings files that may hold copies of the rules: a copy may lack write rules, but must prompt on no read |
+
+Each tool's `--help` describes its keys in more detail.

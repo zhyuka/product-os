@@ -1,0 +1,15 @@
+[
+  {"query": "The saved-searches intent is accepted. Write the spec", "should_trigger": true, "split": "train"},
+  {"query": "Turn intent/dark-mode/intent.md into requirements and a design for this codebase", "should_trigger": true, "split": "train"},
+  {"query": "What exactly are we building for bulk export? Write the requirements and design", "should_trigger": true, "split": "train"},
+  {"query": "Write a design doc from the accepted intent, and flag anything that breaks our rules", "should_trigger": true, "split": "train"},
+  {"query": "Produce spec.md for the claim-status change", "should_trigger": true, "split": "test"},
+  {"query": "We have the intent approved, now I need the requirements doc engineering can plan against", "should_trigger": true, "split": "test"},
+  {"query": "Capture this idea: a dark mode for the settings page", "should_trigger": false, "split": "train"},
+  {"query": "Build the dark mode toggle from the Figma frame", "should_trigger": false, "split": "train"},
+  {"query": "Run the project's checks", "should_trigger": false, "split": "train"},
+  {"query": "Plan the order of work for the accepted spec", "should_trigger": false, "split": "test"},
+  {"query": "Review this change against its design", "should_trigger": false, "split": "test"},
+  {"query": "Explain what this function does", "should_trigger": false, "split": "test"},
+  {"query": "The discount-code intent is accepted. Write the spec.", "should_trigger": true, "split": "heldout"}
+]

@@ -1,0 +1,9 @@
+[
+  {"query": "/ambition add a docstring to total()", "should_trigger": true, "split": "heldout"},
+  {"query": "Make this more ambitious: write a test for mean().", "should_trigger": true, "split": "heldout"},
+  {"query": "What am I not asking for? My prompt is: review the cart module.", "should_trigger": true, "split": "heldout"},
+  {"query": "Give me a deeper version of this task: document the cart functions.", "should_trigger": true, "split": "heldout"},
+  {"query": "Make mean() handle an empty list without crashing.", "should_trigger": false, "split": "heldout"},
+  {"query": "Shorten this commit message: 'Added a function that computes the mean of the prices list in cart'.", "should_trigger": false, "split": "heldout"},
+  {"query": "Plan the order of work for adding tax support to the cart.", "should_trigger": false, "split": "heldout"}
+]

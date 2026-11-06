@@ -1,0 +1,15 @@
+[
+  {"query": "Let's triage", "should_trigger": true, "split": "train"},
+  {"query": "Resolve the open questions with me", "should_trigger": true, "split": "train"},
+  {"query": "What's still open? Go through the open questions", "should_trigger": true, "split": "train"},
+  {"query": "Walk me through the pending decisions one by one", "should_trigger": true, "split": "train"},
+  {"query": "Work only Q-12 with me, I have an answer for it", "should_trigger": true, "split": "test"},
+  {"query": "Go through the decisions that are waiting on me", "should_trigger": true, "split": "test"},
+  {"query": "Park this question for later, I'll decide it another day", "should_trigger": false, "split": "train"},
+  {"query": "Add an open question about the button radius", "should_trigger": false, "split": "train"},
+  {"query": "Triage this crash log and find the bug", "should_trigger": false, "split": "train"},
+  {"query": "rebase us", "should_trigger": false, "split": "train"},
+  {"query": "Close these tickets out on the board", "should_trigger": false, "split": "test"},
+  {"query": "Have we seen this question before?", "should_trigger": false, "split": "test"},
+  {"query": "Go through my open questions with me, four at a time.", "should_trigger": true, "split": "heldout"}
+]

@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.DS_Store
+.cache/
+*.egg-info/
+/build/
+/dist/
+.venv/
+# The plugin directory can't scan a plugin that holds a system file.
+Thumbs.db

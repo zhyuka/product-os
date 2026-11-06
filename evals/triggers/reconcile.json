@@ -1,0 +1,15 @@
+[
+  {"query": "rebase us", "should_trigger": true, "split": "train"},
+  {"query": "Had a few calls, get organized", "should_trigger": true, "split": "train"},
+  {"query": "Reconcile the workspace", "should_trigger": true, "split": "train"},
+  {"query": "What needs cleaning, updating or consolidating in here since the last pass?", "should_trigger": true, "split": "train"},
+  {"query": "It's been over a month. Do a full pass over every surface and tell me what drifted", "should_trigger": true, "split": "test"},
+  {"query": "Catch us up: the new call transcripts, the board, and whatever the sessions left open", "should_trigger": true, "split": "test"},
+  {"query": "Rebase my branch onto main", "should_trigger": false, "split": "train"},
+  {"query": "Rebase this PR on the latest main", "should_trigger": false, "split": "train"},
+  {"query": "Go through the open questions with me one at a time", "should_trigger": false, "split": "train"},
+  {"query": "Audit the backlog: why is the board out of date?", "should_trigger": false, "split": "train"},
+  {"query": "Squash and rebase my commits", "should_trigger": false, "split": "test"},
+  {"query": "Have we seen this before? Search everything for what we decided about the footer", "should_trigger": false, "split": "test"},
+  {"query": "Catch us up: reconcile the repo and the board, it's been two weeks.", "should_trigger": true, "split": "heldout"}
+]

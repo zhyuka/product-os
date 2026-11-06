@@ -1,0 +1,18 @@
+#!/bin/sh
+# product-os: push check
+# product-os: runs the installed plugin's hook
+# The project keeps this file instead of a copy of the push check: it runs ci/pre-push from the
+# Product OS that `product-os` on PATH belongs to, so the check is always the installed release's.
+# The setup-kit skill puts it in .githooks/ and turns it on with `git config core.hooksPath .githooks`.
+
+root=$(product-os --root 2>/dev/null) || {
+    echo "pre-push: REFUSED. product-os isn't on PATH, so the push checks can't run."
+    echo "  fix: install Product OS, then put its bin/product-os on PATH, for example:"
+    echo "  ln -s \"<plugin folder>/bin/product-os\" ~/.local/bin/product-os"
+    exit 1
+}
+[ -f "$root/ci/pre-push" ] || {
+    echo "pre-push: REFUSED. $root/ci/pre-push is missing, so the push checks can't run."
+    exit 1
+}
+exec "$root/ci/pre-push" "$@"

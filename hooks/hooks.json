@@ -1,0 +1,52 @@
+{
+  "description": "Product OS: reviewer agents stay read-only, and builders pass QA after their last edit before they stop. Each command runs hooks/run.sh in sh or Git Bash; on Windows without Git Bash, PowerShell skips the first line and runs hooks/run.ps1 from the second.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exec sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" session_status\npowershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.ps1\" session_status",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exec sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" reviewer_readonly\npowershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.ps1\" reviewer_readonly",
+            "timeout": 30,
+            "onFailure": "continue"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exec sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" qa_before_done\npowershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.ps1\" qa_before_done",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exec sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" qa_before_done\npowershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.ps1\" qa_before_done",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

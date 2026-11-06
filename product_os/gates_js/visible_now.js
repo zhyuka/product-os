@@ -1,0 +1,1 @@
+const el = find(path); return !!el && shown(el); }

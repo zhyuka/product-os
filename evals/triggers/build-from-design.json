@@ -1,0 +1,15 @@
+[
+  {"query": "Build this section from Figma. Desktop: https://www.figma.com/design/AbC123/Site?node-id=12-40, phone: node-id=12-88", "should_trigger": true, "split": "train"},
+  {"query": "Implement this design from the Figma frame and make sure it matches Figma's values", "should_trigger": true, "split": "train"},
+  {"query": "Make the pricing cards match Figma exactly, here are the desktop and phone frame links", "should_trigger": true, "split": "train"},
+  {"query": "Check the about page against the Figma frames at each width and fix every miss", "should_trigger": true, "split": "train"},
+  {"query": "Pixel-match the hero to node 4:120 in our design file", "should_trigger": true, "split": "test"},
+  {"query": "Run the figma check on the team page and get it to every check met", "should_trigger": true, "split": "test"},
+  {"query": "Build the signup form from this screenshot I pasted", "should_trigger": false, "split": "train"},
+  {"query": "Work story 118: the FAQ accordion, the acceptance criteria are in the ticket", "should_trigger": false, "split": "train"},
+  {"query": "Review my branch against the design and tell me what a designer would send back", "should_trigger": false, "split": "train"},
+  {"query": "QA the pricing page on a production build before I push", "should_trigger": false, "split": "test"},
+  {"query": "Add a hover variant to the button component in the Figma file", "should_trigger": false, "split": "test"},
+  {"query": "Write the spec for the dashboard from the accepted intent and its frames", "should_trigger": false, "split": "test"},
+  {"query": "Check the built cart page against its Figma frame and tell me whether it matches at each width.", "should_trigger": true, "split": "heldout"}
+]

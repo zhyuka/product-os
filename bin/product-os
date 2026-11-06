@@ -1,0 +1,79 @@
+#!/bin/sh
+# product-os - run a Product OS check or tool from anywhere.
+#
+#   product-os check|prove|accept|gates|design|demo ...   the checks (python -m product_os)
+#   product-os <tool> [args...]   run <plugin root>/tools/<tool>.py with the args
+#   product-os --list             print the tool names, one per line
+#   product-os --root             print the plugin root, for the files a skill copies or runs
+#
+# Claude Code puts an enabled plugin's bin/ on the Bash PATH, so a project's own skills can call
+# `product-os class_check ...` without knowing where the plugin is installed. Installed from a clone
+# or the zip, INSTALL.md links this script onto the PATH instead. The plugin root is found from this
+# script's own location, following symlinks. Python is the first of python3 and python that runs and
+# is 3.9 or later.
+# Exit 2 with one line on stderr: no tool named, an unknown tool, or no working Python. Otherwise the
+# check's or tool's own exit code.
+
+me=$0
+while [ -L "$me" ]; do
+    link=$(readlink "$me")
+    case $link in
+        /*) me=$link ;;
+        *) me=$(dirname "$me")/$link ;;
+    esac
+done
+root=$(cd "$(dirname "$me")/.." && pwd -P) || exit 2
+tools=$root/tools
+
+if [ "$#" -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    echo "usage: product-os check|prove|accept|gates|design|demo ... | product-os <tool> [args...] | product-os --list | product-os --root   (tools in $tools)"
+    [ "$#" -eq 0 ] && exit 2
+    exit 0
+fi
+
+if [ "$1" = "--root" ]; then
+    echo "$root"
+    exit 0
+fi
+
+if [ "$1" = "--list" ]; then
+    for f in "$tools"/*.py; do
+        [ -f "$f" ] || continue
+        name=$(basename "$f" .py)
+        case $name in _*) continue ;; esac
+        echo "$name"
+    done
+    exit 0
+fi
+
+# A name on PATH isn't a working Python: macOS ships a python3 that only offers to install the
+# developer tools, and Windows a python3 that opens the Store. So each one has to run, at 3.9 or later.
+py=
+for candidate in python3 python; do
+    command -v "$candidate" >/dev/null 2>&1 || continue
+    if "$candidate" -c 'import sys; sys.exit(sys.version_info < (3, 9))' >/dev/null 2>&1; then
+        py=$candidate
+        break
+    fi
+done
+if [ -z "$py" ]; then
+    echo "product-os: no Python 3.9 or later runs here (tried python3 and python on PATH); install one, then run product-os doctor" >&2
+    exit 2
+fi
+
+case $1 in
+    check|prove|accept|gates|design|demo|--version)
+        PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" exec "$py" -m product_os "$@" ;;
+esac
+
+tool=${1%.py}
+shift
+case $tool in
+    ""|*/*|_*) echo "product-os: unknown tool '$tool'; run product-os --list" >&2; exit 2 ;;
+esac
+if [ ! -f "$tools/$tool.py" ]; then
+    echo "product-os: unknown tool '$tool'; run product-os --list" >&2
+    exit 2
+fi
+
+exec "$py" "$tools/$tool.py" "$@"

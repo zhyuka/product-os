@@ -1,0 +1,47 @@
+# Runs the project's product-os checks on every pull request and every push to main.
+#
+# Copy this file to .github/workflows/product-os.yml. Then, in the repository's settings,
+# protect main: require pull requests, require the "product-os" check to pass, and
+# require a code owner's review for this file and for .claude/ (a CODEOWNERS line such as
+# `/.github/workflows/ /.claude/ @your-team`). A pull request runs its own copy of this
+# workflow, so without that review a change could edit the workflow and skip the checks.
+#
+# On a pull request, --base keeps the checks the target branch has: the change can add
+# checks but not remove one or edit its cases. --prove runs each check's planted bad cases
+# and good cases again instead of trusting the stored record.
+# --run-listed runs every check the project lists: CI has none of the checks a person
+# accepted on their own machine, and the code owner's review stands in for that.
+
+name: product-os
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  product-os:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # --base reads the target branch's checks from git
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      # A fixed release from outside the repository, so a change can't edit the checker.
+      # For a pin that can't move, put the release's commit SHA in place of the tag.
+      - name: Install product-os
+        run: python -m pip install "product-os @ git+https://github.com/zhyuka/product-os@v0.1.0"
+      - name: Run the checks
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE" ]; then
+            product-os check --prove --run-listed --base "origin/$BASE"
+          else
+            product-os check --prove --run-listed
+          fi

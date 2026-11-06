@@ -1,0 +1,9 @@
+[
+  {"query": "File a bug in ADO: the cart total is wrong when prices is empty.", "should_trigger": true, "split": "heldout"},
+  {"query": "Close out work item 2412, the fix shipped this morning.", "should_trigger": true, "split": "heldout"},
+  {"query": "Why is the board out of date? Half the items marked Active are already merged.", "should_trigger": true, "split": "heldout"},
+  {"query": "Open a ticket for adding a test for mean() in the cart module.", "should_trigger": true, "split": "heldout"},
+  {"query": "Write a unit test for mean() in src/cart.py.", "should_trigger": false, "split": "heldout"},
+  {"query": "Just explain: what's the difference between an Epic and a Feature in Azure DevOps?", "should_trigger": false, "split": "heldout"},
+  {"query": "Set up a GitHub Actions workflow that runs the tests on every push.", "should_trigger": false, "split": "heldout"}
+]

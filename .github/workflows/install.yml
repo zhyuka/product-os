@@ -1,0 +1,87 @@
+name: install
+
+# Each install path in docs/install.md, on a fresh runner with an empty home, on every push.
+# None makes a model call, so none needs a key or costs anything. The one agent run that follows
+# INSTALL.md for real is in release.yml, on each release tag.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  DISABLE_AUTOUPDATER: "1"
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+
+jobs:
+  plugin:
+    name: Path 1, the plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Add this checkout as a marketplace and install the plugin from it
+        run: |
+          export HOME="$RUNNER_TEMP/home" && mkdir -p "$HOME"
+          claude --version
+          claude plugin marketplace add "$GITHUB_WORKSPACE"
+          claude plugin install product-os@product-os
+          claude plugin list --json > "$RUNNER_TEMP/plugins.json"
+          python3 -c 'import json, sys; ids = {p["id"]: p.get("enabled") for p in json.load(open(sys.argv[1]))}; print(ids); sys.exit(0 if ids.get("product-os@product-os") else 1)' "$RUNNER_TEMP/plugins.json"
+
+  install-doc:
+    name: Path 2, INSTALL.md (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, python: "3.9" }
+          - { os: macos-latest, python: "3.13" }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      # With claude on PATH, doctor also needs `claude plugin list` to show the plugin loading
+      # from the checkout through the settings key step 3 writes.
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+      # Steps 1, 3, 4 and 6 run against the commit under test. Step 2 would check out the newest
+      # release instead, so it runs on its own below.
+      - name: INSTALL.md's commands, in an empty home, ending in product-os doctor
+        run: |
+          export HOME="$RUNNER_TEMP/home" PRODUCT_OS_DIR="$GITHUB_WORKSPACE"
+          export PATH="$HOME/.local/bin:$PATH"
+          mkdir -p "$HOME"
+          python3 .github/run_install_doc.py --skip 2
+      - name: Step 2 clones Product OS from GitHub
+        run: |
+          export HOME="$RUNNER_TEMP/home2" PRODUCT_OS_DIR="$RUNNER_TEMP/home2/product-os"
+          mkdir -p "$HOME"
+          python3 .github/run_install_doc.py --only 2
+          test -x "$PRODUCT_OS_DIR/bin/product-os"
+
+  zip:
+    name: Path 3, the release zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: The same commit builds the same bytes twice
+        run: |
+          python3 scripts/make_zip.py --out "$RUNNER_TEMP/a"
+          python3 scripts/make_zip.py --out "$RUNNER_TEMP/b"
+          cmp "$RUNNER_TEMP"/a/product-os-*.zip "$RUNNER_TEMP"/b/product-os-*.zip
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+      - name: The unzipped folder validates, and installs by INSTALL.md from step 3
+        run: |
+          export HOME="$RUNNER_TEMP/home" && mkdir -p "$HOME"
+          unzip -q "$RUNNER_TEMP"/a/product-os-*.zip -d "$RUNNER_TEMP/unzipped"
+          dir=$(echo "$RUNNER_TEMP"/unzipped/product-os-*)
+          claude plugin validate --strict "$dir"
+          # doctor, the last step, needs claude plugin list to show product-os@inline from $dir
+          PATH="$HOME/.local/bin:$PATH" PRODUCT_OS_DIR="$dir" python3 "$dir/.github/run_install_doc.py" --skip 2 "$dir/INSTALL.md"

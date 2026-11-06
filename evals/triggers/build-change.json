@@ -1,0 +1,15 @@
+[
+  {"query": "Build the hero from this mockup screenshot, desktop and phone", "should_trigger": true, "split": "train"},
+  {"query": "Restyle the footer so it matches the PNG I attached", "should_trigger": true, "split": "train"},
+  {"query": "Add a testimonials band to the home page; here are the acceptance criteria", "should_trigger": true, "split": "train"},
+  {"query": "Fix the spacing in the pricing section on mobile", "should_trigger": true, "split": "train"},
+  {"query": "Work story 118: the FAQ accordion, criteria are in the ticket", "should_trigger": true, "split": "test"},
+  {"query": "Change the card grid to three columns at tablet width and check it at every width we ship", "should_trigger": true, "split": "test"},
+  {"query": "Run figma_check.py's self-test and tell me if the check can be trusted here", "should_trigger": false, "split": "train"},
+  {"query": "QA the pricing page on a production build before I push", "should_trigger": false, "split": "train"},
+  {"query": "Review my uncommitted changes against the design", "should_trigger": false, "split": "train"},
+  {"query": "Push the change and mark the work item resolved", "should_trigger": false, "split": "test"},
+  {"query": "Write this request up as an intent before anyone builds it", "should_trigger": false, "split": "test"},
+  {"query": "Edit the Figma frame to add the missing phone layout", "should_trigger": false, "split": "test"},
+  {"query": "Restyle the cart summary to match the screenshot I attached: bigger total, grey background.", "should_trigger": true, "split": "heldout"}
+]

@@ -1,0 +1,19 @@
+#!/bin/sh
+# product-os: commit check. Refuses a commit whose added lines hold a token, key or password.
+# scan_keys.py, beside this file, names the file, the line and the kind, never the value. The
+# setup-kit skill copies both to .githooks/ and turns them on with `git config core.hooksPath .githooks`.
+# A scan that did not run is not a pass, so a missing Python or scanner refuses the commit too.
+
+here=$(dirname "$0")
+if command -v python3 >/dev/null 2>&1; then py=python3
+elif command -v python >/dev/null 2>&1; then py=python
+else
+    echo "pre-commit: REFUSED. The key scan did not run: no python3 or python on PATH."
+    exit 1
+fi
+if [ ! -f "$here/scan_keys.py" ]; then
+    echo "pre-commit: REFUSED. The key scan did not run: $here/scan_keys.py is missing."
+    echo "  fix: copy scan_keys.py from the plugin's ci/ folder beside this hook"
+    exit 1
+fi
+"$py" "$here/scan_keys.py" || exit 1

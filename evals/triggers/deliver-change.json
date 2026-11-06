@@ -1,0 +1,15 @@
+[
+  {"query": "Ship the median change: commit it, push it and resolve the ticket", "should_trigger": true, "split": "train"},
+  {"query": "This story is built and reviewed. Deliver it", "should_trigger": true, "split": "train"},
+  {"query": "Push my branch and mark the work item resolved", "should_trigger": true, "split": "train"},
+  {"query": "Close out the footer fix. It passed QA, so get it pushed and let design know", "should_trigger": true, "split": "train"},
+  {"query": "We're ready to hand this change off. Do the commit, the push and the tracker update", "should_trigger": true, "split": "test"},
+  {"query": "Mark story 412 done and push the change that fixes it", "should_trigger": true, "split": "test"},
+  {"query": "Review the uncommitted change before I push it", "should_trigger": false, "split": "train"},
+  {"query": "QA the pricing page on the production build", "should_trigger": false, "split": "train"},
+  {"query": "File a ticket for the broken search filter", "should_trigger": false, "split": "train"},
+  {"query": "Rebase my branch onto main", "should_trigger": false, "split": "test"},
+  {"query": "Run the project's checks and tell me if it's ready to merge", "should_trigger": false, "split": "test"},
+  {"query": "Post my comment on the hero frame in Figma", "should_trigger": false, "split": "test"},
+  {"query": "Ship it: push the mean() change and mark the story done.", "should_trigger": true, "split": "heldout"}
+]

@@ -1,0 +1,135 @@
+#!/bin/sh
+# product-os: push check. Runs before git pushes, so it holds wherever git runs, with or without
+# Claude Code hooks. The setup-kit skill copies it to .githooks/pre-push and turns it on with
+# `git config core.hooksPath .githooks`.
+#
+# It refuses the push when:
+#   - product-os, the plugin's own launcher (bin/product-os), isn't on PATH, so nothing can run;
+#   - a pushed commit isn't the one checked out, or tracked files have edits that aren't
+#     committed, since the checks read the working tree and must see what you push;
+#   - the project's app.build_cmd or app.check_cmd, from .claude/product-os.json, isn't
+#     accepted on this machine (product-os kit_config accept <key>);
+#   - either command fails, or prints a DID NOT RUN line: a gate that did not run is not a pass;
+#   - product-os check --base fails: a check failed, isn't proven or accepted here, or the push
+#     removes a check or a case the remote's default branch has. No listed check fails too.
+# The build and check commands run only when a pushed commit changes app.dir (default: the
+# repo root). They run in that folder without a shell, so a pipe or `|| true` is just a word.
+# `git push --no-verify` skips every git hook, this one included; CI on a protected branch is where
+# a check can't be skipped (ci/github-actions.yml, ci/azure-pipelines.yml).
+
+refuse() {
+    echo "pre-push: REFUSED. $1"
+    [ -n "$2" ] && echo "  fix: $2"
+    exit 1
+}
+
+top=$(git rev-parse --show-toplevel) || exit 1
+cd "$top" || exit 1
+
+po=$(command -v product-os 2>/dev/null) || refuse "product-os isn't on PATH, so the push checks can't run." \
+    "put the plugin's bin/product-os on PATH, for example: ln -s \"<plugin folder>/bin/product-os\" ~/.local/bin/product-os"
+me=$po
+while [ -L "$me" ]; do
+    link=$(readlink "$me")
+    case $link in
+        /*) me=$link ;;
+        *) me=$(dirname "$me")/$link ;;
+    esac
+done
+root=$(cd "$(dirname "$me")/.." && pwd -P) || refuse "can't find the folder of $po."
+[ -f "$root/tools/kit_config.py" ] || refuse "$po isn't the plugin's launcher (no tools/kit_config.py beside it), so the project's settings can't be read." \
+    "put the plugin's bin/product-os on PATH ahead of $po"
+if command -v python3 >/dev/null 2>&1; then py=python3
+elif command -v python >/dev/null 2>&1; then py=python
+else refuse "no python3 or python on PATH, so the push checks can't run." "install Python 3.9 or later"
+fi
+
+settings=$("$py" -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+import kit_config
+c = kit_config.load()
+for p in c["problems"]:
+    print("problem=" + " ".join(str(p).split()))
+push = c["settings"].get("app")
+push = push if isinstance(push, dict) else {}
+for key, name in (("dir", "app_dir"), ("build_cmd", "build_cmd"), ("check_cmd", "check_cmd")):
+    v = push.get(key)
+    if isinstance(v, str) and v.strip():
+        print(name + "=" + " ".join(v.split()))
+for key, why in c["withheld"]:
+    if key in ("app.build_cmd", "app.check_cmd"):
+        print("withheld=" + key)
+' "$root/tools") || refuse "the settings couldn't be read ($root/tools/kit_config.py failed)."
+
+APP=.
+BUILD=""
+CHECK=""
+withheld=""
+while IFS= read -r line; do
+    case $line in
+        problem=*) refuse "the settings have a problem: ${line#problem=}" "python \"$root/tools/kit_config.py\" shows it" ;;
+        app_dir=*) APP=${line#app_dir=} ;;
+        build_cmd=*) BUILD=${line#build_cmd=} ;;
+        check_cmd=*) CHECK=${line#check_cmd=} ;;
+        withheld=*) withheld="$withheld ${line#withheld=}" ;;
+    esac
+done <<EOF
+$settings
+EOF
+[ -d "$APP" ] || refuse "app.dir is $APP, which isn't a folder in this repo."
+
+zero=0000000000000000000000000000000000000000
+head=$(git rev-parse HEAD) || exit 1
+need=0
+need_build=0
+while read -r lref lsha rref rsha; do
+    [ "$lsha" = "$zero" ] && continue
+    lcommit=$(git rev-parse --verify --quiet "$lsha^{commit}") || continue
+    known=0
+    if [ "$rsha" != "$zero" ] && git cat-file -e "$rsha^{commit}" 2>/dev/null; then known=1; fi
+    if [ "$known" = 1 ] && git diff --quiet "$rsha" "$lcommit"; then continue; fi
+    [ "$lcommit" = "$head" ] || refuse "$lref is not the commit you have checked out, so the checks can't read it." \
+        "check it out and push again"
+    need=1
+    if [ "$known" = 0 ] || ! git diff --quiet "$rsha" "$lcommit" -- "$APP"; then need_build=1; fi
+done
+[ "$need" = 0 ] && exit 0
+
+git diff --quiet HEAD || refuse "tracked files have edits that aren't committed, so the checks would read something other than what you push." \
+    "commit or stash them, then push again"
+
+if [ "$need_build" = 1 ] && [ -n "$withheld" ]; then
+    refuse "the project's${withheld} isn't accepted on this machine, so it DID NOT RUN." \
+        "read it in .claude/product-os.json, then run: product-os kit_config accept${withheld}"
+fi
+
+log=$(mktemp) || exit 1
+st=$(mktemp) || exit 1
+trap 'rm -f "$log" "$st"' EXIT
+status=0
+if [ "$need_build" = 1 ] && { [ -n "$BUILD" ] || [ -n "$CHECK" ]; }; then
+    echo "pre-push: running in $APP:${BUILD:+ $BUILD}${BUILD:+${CHECK:+ and}}${CHECK:+ $CHECK}"
+    { (cd "$APP" && set -f && { [ -z "$BUILD" ] || $BUILD; } && { [ -z "$CHECK" ] || $CHECK; }) 2>&1; echo $? > "$st"; } | tee "$log"
+    status=$(cat "$st")
+elif [ "$need_build" = 1 ]; then
+    echo "pre-push: note: no app.build_cmd or app.check_cmd is set, so only product-os check runs."
+fi
+
+base=$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null) || base=origin/main
+if [ "$status" = 0 ]; then
+    { product-os check --base "$base" 2>&1; echo $? > "$st"; } | tee -a "$log"
+    status=$(cat "$st")
+fi
+skipped=$(grep -E 'DID[- ]NOT[- ]RUN' "$log" | head -5)
+
+[ "$status" = 0 ] && [ -z "$skipped" ] && exit 0
+echo ""
+if [ "$status" = 0 ]; then
+    echo "pre-push: REFUSED. Every command passed, but a gate did not run, and a gate that did not run is not a pass:"
+    echo "$skipped" | sed 's/^/    /'
+    echo "  fix: give it what it names and push again."
+else
+    echo "pre-push: REFUSED. A command or a check failed (above). Fix the cause and push again."
+fi
+exit 1

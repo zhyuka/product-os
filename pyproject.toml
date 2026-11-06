@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "product-os"
+version = "0.1.0"
+description = "The Product OS: checks an agent can't pass for itself. Run a project's checks from a skill, a git hook or CI, each counting only once proven on a planted bad case and a good one, and exercise a build in every state its Figma design draws."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "zhyuka" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+]
+
+[project.urls]
+Homepage = "https://github.com/zhyuka/product-os"
+
+[project.scripts]
+product-os = "product_os.cli:main"
+
+[tool.setuptools]
+packages = ["product_os"]
+
+[tool.setuptools.package-data]
+product_os = ["gates_js/*.js"]

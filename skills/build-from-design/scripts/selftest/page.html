@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>figma-check self-test page</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-font-smoothing: antialiased; }
+  body { font-family: Helvetica, Arial, sans-serif; background: #ffffff; }
+  section { padding: 80px 112px 24px; }
+  h1 { font-size: 48px; font-weight: 500; line-height: 56px; letter-spacing: -0.4px; color: #111113; text-align: center; }
+  .lede { margin-top: 16px; font-size: 18px; line-height: 28px; color: #3f3f46; text-align: center; }
+  .card { position: relative; margin-top: 48px; padding: 24px; width: 448px; background: #f4f4f5; border-radius: 8px; outline: 1px solid #e4e4e7; }
+  .rule { position: absolute; left: 24px; right: 24px; top: 56px; height: 1px; background: #d4d4d8; }
+  .icon { position: absolute; top: 24px; right: 24px; width: 24px; height: 24px; }
+  .card h2 { font-size: 20px; font-weight: 600; line-height: 28px; color: #111113; }
+  .card p { margin-top: 8px; font-size: 16px; line-height: 24px; color: #52525b; }
+  @media (max-width: 600px) {
+    section { padding: 40px 16px 24px; }
+    h1 { font-size: 28px; line-height: 36px; }
+    .lede { margin-top: 12px; font-size: 16px; line-height: 24px; }
+    .card { margin-top: 32px; padding: 20px; width: auto; }
+    .card h2 { font-size: 18px; line-height: 24px; }
+  }
+</style>
+</head>
+<body>
+<section>
+  <h1>Plan the release</h1>
+  <p class="lede">Everything the team needs before launch.</p>
+  <div class="card">
+    <h2>Checklist</h2>
+    <div class="rule"></div>
+    <img class="icon" src="icon.svg" alt="">
+    <p>Six steps, one owner each.</p>
+  </div>
+</section>
+</body>
+</html>

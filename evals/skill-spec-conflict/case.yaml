@@ -1,0 +1,17 @@
+schema_version: "1.1"
+name: skill-spec-conflict
+description: >-
+  The spec skill, on an accepted intent whose outcome asks for the handler's name and email
+  in the portal, in a project whose CLAUDE.md allows no personal data beyond the claim number. It
+  should write spec.md with the concerns first, flag that conflict without settling it, and answer
+  or carry forward the open question.
+expected_outcome: intent/claim-status/spec.md with Concerns first, the personal-data conflict flagged and not settled, and the adjuster question answered or carried forward.
+tags: [skill, spec]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: claude-haiku-4-5
+  max_turns: 30
+  timeout_seconds: 600
+  allowed_tools: [Read, Grep, Glob, Bash, Edit, Write, Skill]

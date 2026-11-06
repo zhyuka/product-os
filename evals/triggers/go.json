@@ -1,0 +1,15 @@
+[
+  {"query": "go", "should_trigger": true, "split": "train"},
+  {"query": "go: the saved-searches intent is accepted, take it from here", "should_trigger": true, "split": "train"},
+  {"query": "Which skill handles this? The board is out of date and two stories shipped last week", "should_trigger": true, "split": "train"},
+  {"query": "Route this to whatever owns it: a designer's notes on the pricing page, five items", "should_trigger": true, "split": "train"},
+  {"query": "Take it from here. Here's the request from the claims team, pick the right playbook", "should_trigger": true, "split": "test"},
+  {"query": "Customers want to export their claims history as a CSV. Which stage is this, and what runs first?", "should_trigger": true, "split": "test"},
+  {"query": "Write the spec for the accepted dark-mode intent", "should_trigger": false, "split": "train"},
+  {"query": "Deliver the change on add-median", "should_trigger": false, "split": "train"},
+  {"query": "Did we ever decide on the footer width?", "should_trigger": false, "split": "train"},
+  {"query": "Review this diff before I merge it", "should_trigger": false, "split": "test"},
+  {"query": "Capture this idea: saved searches that email you new matches", "should_trigger": false, "split": "test"},
+  {"query": "Explain what this function does", "should_trigger": false, "split": "test"},
+  {"query": "Take it from here: the mean() change needs to go from this diff to done.", "should_trigger": true, "split": "heldout"}
+]

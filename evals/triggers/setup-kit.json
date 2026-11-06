@@ -1,0 +1,15 @@
+[
+  {"query": "I just installed product-os. Set this repo up", "should_trigger": true, "split": "train"},
+  {"query": "New clone here, get me onboarded and check the setup", "should_trigger": true, "split": "train"},
+  {"query": "Turn on the push and commit checks for this project", "should_trigger": true, "split": "train"},
+  {"query": "The session line says the QA check is off. Fix that", "should_trigger": true, "split": "train"},
+  {"query": "Is my machine set up right for this repo's workflow? Tell me what's missing", "should_trigger": true, "split": "test"},
+  {"query": "Make sure a push can't go out unless the build and the checks pass", "should_trigger": true, "split": "test"},
+  {"query": "Run the project's checks", "should_trigger": false, "split": "train"},
+  {"query": "A debug print got into the release. Make sure that can't happen again", "should_trigger": false, "split": "train"},
+  {"query": "Commit this and push it to the branch", "should_trigger": false, "split": "train"},
+  {"query": "Review this change before I merge it", "should_trigger": false, "split": "test"},
+  {"query": "Allow npm commands without asking me every time", "should_trigger": false, "split": "test"},
+  {"query": "QA the checkout page on a production build", "should_trigger": false, "split": "test"},
+  {"query": "Set up this repo for Product OS: find its check command and wire the hooks.", "should_trigger": true, "split": "heldout"}
+]

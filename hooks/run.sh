@@ -1,0 +1,67 @@
+#!/bin/sh
+# Run one product-os hook with the first Python 3.9 or later on this machine.
+#
+# hooks.json runs this on macOS, Linux and Windows with Git Bash as
+#     sh "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" <hook>
+# On Windows without Git Bash, hooks.json runs hooks/run.ps1, the same search in
+# PowerShell.
+#
+# The hook input on stdin goes, unread, to each Python in turn. hooks/run.py
+# exits 0 when it ran the hook and 3 when that Python is older than 3.9. Any
+# other exit means that interpreter could not run it, such as the Microsoft
+# Store's python3 alias, so the next one gets a try. With no Python that works,
+# the hook lets the call through and warns once per session.
+
+hook=$1
+here=$(dirname "$0")
+
+try_python() {
+    command -v "$1" >/dev/null 2>&1 || return 0
+    "$@" "$here/run.py" "$hook" && exit 0
+}
+
+# PRODUCT_OS_PYTHON picks a Python. It counts only outside the project, so a repository
+# can't choose the program that runs its own checks.
+chosen=$PRODUCT_OS_PYTHON
+inside=
+if [ -n "$chosen" ] && found=$(command -v "$chosen" 2>/dev/null); then
+    where=$(cd "$(dirname "$found")" 2>/dev/null && pwd -P)
+    project=$(cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null && pwd -P)
+    case "$where/" in
+        "$project"/*) inside=1 ;;
+        *) try_python "$chosen" ;;
+    esac
+fi
+
+case $(uname -s 2>/dev/null) in
+    MINGW* | MSYS* | CYGWIN*)
+        try_python py -3
+        try_python python
+        try_python python3
+        ;;
+    Darwin)
+        # Without the Xcode command line tools, /usr/bin/python3 is a stub that
+        # opens an install dialog instead of running.
+        if [ "$(command -v python3)" != /usr/bin/python3 ] || /usr/bin/xcode-select -p >/dev/null 2>&1; then
+            try_python python3
+        fi
+        try_python python
+        ;;
+    *)
+        try_python python3
+        try_python python
+        ;;
+esac
+
+# No Python ran the hook. Say so once per session, and let the call through.
+session=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9_-]*\)".*/\1/p' | head -n 1)
+marker="${TMPDIR:-/tmp}/product-os-no-python-${session:-unknown}"
+if [ ! -e "$marker" ]; then
+    : >"$marker" 2>/dev/null
+    if [ -n "$inside" ]; then
+        printf '%s\n' '{"systemMessage": "product-os is off: it needs Python 3.9 or later, and none ran (tried python3, python and py -3). PRODUCT_OS_PYTHON is inside the project, so it was skipped. Install Python, or set PRODUCT_OS_PYTHON to one outside the project."}'
+    else
+        printf '%s\n' '{"systemMessage": "product-os is off: it needs Python 3.9 or later, and none ran (tried python3, python and py -3). Install Python, or set PRODUCT_OS_PYTHON to its path."}'
+    fi
+fi
+exit 0

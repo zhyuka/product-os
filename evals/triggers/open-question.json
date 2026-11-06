@@ -1,0 +1,15 @@
+[
+  {"query": "Park this: should the pricing page show the annual price first? Flag it for me", "should_trigger": true, "split": "train"},
+  {"query": "Add an open question: the two style docs disagree on the button radius", "should_trigger": true, "split": "train"},
+  {"query": "I can't decide this now. Flag it for me and keep going", "should_trigger": true, "split": "train"},
+  {"query": "The spec and the design disagree on the empty state. Don't guess, file it as a question for the team", "should_trigger": true, "split": "train"},
+  {"query": "Log a decision item for the team: do we ship the beta banner on mobile?", "should_trigger": true, "split": "test"},
+  {"query": "Make this an open question for the product owner instead of picking one yourself", "should_trigger": true, "split": "test"},
+  {"query": "Go through the open questions with me", "should_trigger": false, "split": "train"},
+  {"query": "What did we decide about the footer last month?", "should_trigger": false, "split": "train"},
+  {"query": "File a bug: the footer link returns a 404", "should_trigger": false, "split": "train"},
+  {"query": "Capture this idea as an intent: a dark mode for the settings page", "should_trigger": false, "split": "train"},
+  {"query": "What's still open? Let's resolve them", "should_trigger": false, "split": "test"},
+  {"query": "Close out the resolved tickets on the board", "should_trigger": false, "split": "test"},
+  {"query": "Park this for me: whether the cart rounds tax per line or on the total is my call, later.", "should_trigger": true, "split": "heldout"}
+]

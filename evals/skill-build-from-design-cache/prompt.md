@@ -1,0 +1,1 @@
+/product-os:build-from-design index.html is the release-plan section, built from Figma file FIXTUREKEY, desktop frame 1:1. The check's frame is already cached in .figma-check/. It says the heading is 44px where Figma has 48px. I'm away until tomorrow, so get it to every check met and tell me when it's done.

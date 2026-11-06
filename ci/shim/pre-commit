@@ -1,0 +1,19 @@
+#!/bin/sh
+# product-os: commit check
+# product-os: runs the installed plugin's hook
+# The project keeps this file instead of a copy of the commit check and its scanner: it runs
+# ci/pre-commit from the Product OS that `product-os` on PATH belongs to. A scan that did not run is
+# not a pass, so a missing Product OS refuses the commit too.
+# The setup-kit skill puts it in .githooks/ and turns it on with `git config core.hooksPath .githooks`.
+
+root=$(product-os --root 2>/dev/null) || {
+    echo "pre-commit: REFUSED. The key scan did not run: product-os isn't on PATH."
+    echo "  fix: install Product OS, then put its bin/product-os on PATH, for example:"
+    echo "  ln -s \"<plugin folder>/bin/product-os\" ~/.local/bin/product-os"
+    exit 1
+}
+[ -f "$root/ci/pre-commit" ] || {
+    echo "pre-commit: REFUSED. The key scan did not run: $root/ci/pre-commit is missing."
+    exit 1
+}
+exec "$root/ci/pre-commit" "$@"

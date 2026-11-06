@@ -1,0 +1,58 @@
+{
+  "name": "product-os",
+  "displayName": "Product OS",
+  "version": "0.1.0",
+  "description": "Product work with Claude Code in six stages, from the ask to maintenance. Each stage commits a file the next one reads, a reviewer that can't edit files checks every change, a builder can't stop until its checks pass, and every miss becomes a check that has failed a planted bad case.",
+  "author": {
+    "name": "zhyuka",
+    "url": "https://github.com/zhyuka"
+  },
+  "homepage": "https://github.com/zhyuka/product-os",
+  "repository": "https://github.com/zhyuka/product-os",
+  "documentationUrl": "https://github.com/zhyuka/product-os#readme",
+  "supportUrl": "https://github.com/zhyuka/product-os/issues",
+  "privacyPolicyUrl": "https://github.com/zhyuka/product-os/blob/main/PRIVACY.md",
+  "license": "MIT",
+  "keywords": [
+    "sdlc",
+    "product",
+    "skills",
+    "agents",
+    "subagents",
+    "review",
+    "qa",
+    "verification",
+    "evals",
+    "hooks",
+    "ci",
+    "figma",
+    "azure-devops",
+    "design"
+  ],
+  "userConfig": {
+    "reviewer_agents": {
+      "type": "string",
+      "title": "Reviewer agents",
+      "description": "Agents that may not write files, as name patterns separated by commas, such as *reviewer*, code-reviewer. A project's .claude/product-os-checks.json can add names but not remove these.",
+      "default": "*reviewer*"
+    },
+    "reviewer_shell": {
+      "type": "string",
+      "title": "Reviewer shell commands",
+      "description": "block-writes denies the shell commands that write files. block-all denies every shell command a reviewer runs.",
+      "default": "block-writes"
+    },
+    "builder_agents": {
+      "type": "string",
+      "title": "Builder agents",
+      "description": "Agents that must pass the project's QA command after their last edit before they stop, as name patterns separated by commas. Write main for the main session. You accept each project's QA command in your own ~/.claude/product-os-checks.json, and /product-os:setup-kit shows the entry to add.",
+      "default": "*builder*"
+    },
+    "session_status": {
+      "type": "string",
+      "title": "Status line at session start",
+      "description": "once shows what the plugin will block the first time a session starts in a project, and again when that changes. always shows it in every session. off shows only problems.",
+      "default": "once"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+schema_version: "1.1"
+name: retro-last-run
+description: >-
+  The last report filed three upgrades. Upgrade 1, a rule that loads every session, landed, but no session cited it and its outcome got worse; upgrade 2's measure can't run; upgrade 3 was never accepted. The records show a correction made four times, and an insights file suggests a Claude Code hook that the constraints rule out. The skill should give each old upgrade its own verdict, recommend reverting upgrade 1, archive the old report, and file at least one new upgrade that isn't a Claude Code hook.
+expected_outcome: Verdicts worse, did not run and not landed; a revert recommended for upgrade 1; the old report archived; a new report with its upgrades block; at least one proposal filed; no Claude Code hook proposed.
+tags: [skill, retro]
+runs: 2
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: claude-haiku-4-5
+  max_turns: 60
+  timeout_seconds: 900
+  allowed_tools: [Read, Grep, Glob, Bash, Edit, Write, Skill]

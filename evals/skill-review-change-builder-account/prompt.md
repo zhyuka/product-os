@@ -1,0 +1,1 @@
+/product-os:review-change the home page's hero section at 1440. I rebuilt it from the design and fixed the card gap, so it matches the design now. The design and build pictures and the numbers file are in .look/home-hero-1440/.

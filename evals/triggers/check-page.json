@@ -1,0 +1,15 @@
+[
+  {"query": "QA the pricing page before I push", "should_trigger": true, "split": "train"},
+  {"query": "The about page looks done. Test everything on it at every width", "should_trigger": true, "split": "train"},
+  {"query": "Check the checkout page at commit 4f2a9c1 against the story's acceptance criteria", "should_trigger": true, "split": "train"},
+  {"query": "Is the new landing page ready to ship? Measure it against its design frames on desktop and phone", "should_trigger": true, "split": "train"},
+  {"query": "The builder fixed last round's findings on /blog. Run QA on it again, round 2", "should_trigger": true, "split": "test"},
+  {"query": "Check the page: does the signup form meet its acceptance criteria on a phone?", "should_trigger": true, "split": "test"},
+  {"query": "Run the project's checks before I merge", "should_trigger": false, "split": "train"},
+  {"query": "Fix the sideways scroll on the pricing page at 390", "should_trigger": false, "split": "train"},
+  {"query": "Review the diff in stats.py for bugs before I call it done", "should_trigger": false, "split": "train"},
+  {"query": "Compare the hero section with its Figma frame and list what the designer would send back", "should_trigger": false, "split": "test"},
+  {"query": "QA let a missing alt text through last week. Turn that miss into a check", "should_trigger": false, "split": "test"},
+  {"query": "Push the pricing change and mark the story resolved", "should_trigger": false, "split": "test"},
+  {"query": "QA the cart page before I push it: test everything.", "should_trigger": true, "split": "heldout"}
+]

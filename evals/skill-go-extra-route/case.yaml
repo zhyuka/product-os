@@ -1,0 +1,18 @@
+schema_version: "1.1"
+name: skill-go-extra-route
+description: >-
+  The user asks go to build a page from a design frame. The built-in table sends that to
+  build-change, but the project's settings add a go.routes entry that sends design builds to its
+  own skill, site-pages. An eval run loads no project skills, so site-pages isn't loaded. go should
+  read the extra routes, take the project's route, report that site-pages isn't loaded, and load no
+  built-in row in its place. Only a model that read go.routes knows the name site-pages.
+expected_outcome: The reply names site-pages as the project's route and says it isn't loaded, build-change and build-from-design aren't loaded, and no file is written.
+tags: [skill, go]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: claude-haiku-4-5
+  max_turns: 20
+  timeout_seconds: 420
+  allowed_tools: [Read, Grep, Glob, Bash, Edit, Write, Skill]

@@ -1,0 +1,119 @@
+name: release
+
+# On each release tag vX.Y.Z: build the whole-plugin zip from the tag, attach it to the tag's
+# GitHub release, and have one real agent follow INSTALL.md from that tag in an empty home.
+# make_zip.py refuses a tag whose version the files don't carry. The agent run is a paid model
+# call, capped at $1 by --max-budget-usd, and its cost is printed. It signs in through Anthropic
+# workload identity federation, from the four ANTHROPIC_* repository variables (see live.yml),
+# and is skipped with a notice when any of them is unset. Nothing here uses an API key.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  DISABLE_AUTOUPDATER: "1"
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+
+jobs:
+  zip:
+    name: Build and attach the zip
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Build it twice from the tag; the bytes must match
+        run: |
+          python3 scripts/make_zip.py "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/a"
+          python3 scripts/make_zip.py "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/b"
+          cmp "$RUNNER_TEMP"/a/product-os-*.zip "$RUNNER_TEMP"/b/product-os-*.zip
+      - name: Attach it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          zip=$(echo "$RUNNER_TEMP"/a/product-os-*.zip)
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$zip"
+          else
+            gh release create "$GITHUB_REF_NAME" "$zip" --verify-tag --title "$GITHUB_REF_NAME" --notes "Install: docs/install.md"
+          fi
+
+  federation:
+    name: Check for the federation variables
+    runs-on: ubuntu-latest
+    outputs:
+      present: ${{ steps.check.outputs.present }}
+    steps:
+      - id: check
+        env:
+          RULE: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ORG: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ACCOUNT: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          WORKSPACE: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+        run: |
+          if [ -n "$RULE" ] && [ -n "$ORG" ] && [ -n "$ACCOUNT" ] && [ -n "$WORKSPACE" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::A federation variable (ANTHROPIC_FEDERATION_RULE_ID, ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_SERVICE_ACCOUNT_ID or ANTHROPIC_WORKSPACE_ID) is not set, so the agent install run is skipped."
+          fi
+
+  agent-install:
+    name: An agent follows INSTALL.md
+    needs: federation
+    if: needs.federation.outputs.present == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+      ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+      ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+      ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+      # GitHub's OIDC token, with Anthropic's audience, in the file Claude Code reads it from.
+      - name: Fetch GitHub OIDC token
+        run: |
+          echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/gha-jwt" >> "$GITHUB_ENV"
+          curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+            | jq -r .value > "$RUNNER_TEMP/gha-jwt"
+          [ -s "$RUNNER_TEMP/gha-jwt" ] && [ "$(cat "$RUNNER_TEMP/gha-jwt")" != null ]
+      # A GitHub token lasts about 5 minutes and is good for one exchange, so a loop writes a
+      # fresh one every 2 minutes while the agent runs.
+      - name: Follow INSTALL.md from the tag, in an empty home
+        run: |
+          fetch() {
+            curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+              | jq -r .value > "$ANTHROPIC_IDENTITY_TOKEN_FILE.next" \
+              && mv -f "$ANTHROPIC_IDENTITY_TOKEN_FILE.next" "$ANTHROPIC_IDENTITY_TOKEN_FILE"
+          }
+          ( while sleep 120; do fetch || echo "::warning::The OIDC token refresh failed; trying again in 2 minutes."; done ) &
+          refresher=$!
+          trap 'kill "$refresher" 2>/dev/null' EXIT
+          export HOME="$RUNNER_TEMP/home" PATH="$RUNNER_TEMP/home/.local/bin:$PATH"
+          mkdir -p "$HOME" && cd "$HOME"
+          url="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/INSTALL.md"
+          claude -p "Fetch and follow $url to install Product OS for me, into ~/product-os. Yes to step 3. Report product-os doctor's first line and every MISS line." \
+            --model haiku --max-budget-usd 1.00 --permission-mode dontAsk \
+            --allowedTools "WebFetch" "Bash" "Read" \
+            --output-format json < /dev/null > "$RUNNER_TEMP/run.json"
+          python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); print("result:", d.get("result")); print("cost_usd:", d.get("total_cost_usd"))' "$RUNNER_TEMP/run.json"
+      - name: The install it made passes product-os doctor
+        run: |
+          export HOME="$RUNNER_TEMP/home" PATH="$RUNNER_TEMP/home/.local/bin:$PATH"
+          "$HOME/product-os/bin/product-os" doctor

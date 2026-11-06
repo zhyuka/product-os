@@ -1,0 +1,15 @@
+[
+  {"query": "Does the pricing page still match the Figma after my branch?", "should_trigger": true, "split": "train"},
+  {"query": "Review this branch against the design at every width we ship", "should_trigger": true, "split": "train"},
+  {"query": "Compare the rebuilt hero section with its Figma frame and tell me what the designer would send back", "should_trigger": true, "split": "train"},
+  {"query": "Design review my uncommitted changes to the footer before I push", "should_trigger": true, "split": "test"},
+  {"query": "I changed the card component. Check every page that uses it against the mockup", "should_trigger": true, "split": "train"},
+  {"query": "Which of these design misses are new with this change and which were there before?", "should_trigger": true, "split": "test"},
+  {"query": "Review the diff in src/cart.py for bugs", "should_trigger": false, "split": "train"},
+  {"query": "Build the pricing section from this Figma frame", "should_trigger": false, "split": "train"},
+  {"query": "QA the about page before the push: overflow, keyboard and contrast", "should_trigger": false, "split": "train"},
+  {"query": "Do a code review of the last three commits against the spec", "should_trigger": false, "split": "train"},
+  {"query": "Push the change and mark the story resolved", "should_trigger": false, "split": "test"},
+  {"query": "Run the project's checks and tell me what fails", "should_trigger": false, "split": "test"},
+  {"query": "Compare the built checkout against its design, section by section, at every width.", "should_trigger": true, "split": "heldout"}
+]

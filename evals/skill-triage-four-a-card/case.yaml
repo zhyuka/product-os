@@ -1,0 +1,17 @@
+schema_version: "1.1"
+name: skill-triage-four-a-card
+description: >-
+  The triage skill on a ledger of five open questions, handed a tracker export pulled three hours
+  ago as the tracker's decisions. It should refuse the export as older than 30 minutes and say the
+  tracker list did not run, present up to four ledger questions in full, each its own question, wait
+  for their decisions, and close nothing, since nobody answers in an eval run.
+expected_outcome: All five ledger questions still open, up to four presented in full, each with its own decision options, and the tracker export refused as stale.
+tags: [skill, triage]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: claude-haiku-4-5
+  max_turns: 30
+  timeout_seconds: 600
+  allowed_tools: [Read, Grep, Glob, Bash, Edit, Write, Skill]

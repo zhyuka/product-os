@@ -1,0 +1,9 @@
+[
+  {"query": "/humanize this PR description: 'This PR introduces a robust mean() function that seamlessly leverages total() to deliver comprehensive averaging.'", "should_trigger": true, "split": "heldout"},
+  {"query": "Make this reply to my teammate sound human: 'Great question! I'd be happy to help. Here's a comprehensive overview of the cart changes.'", "should_trigger": true, "split": "heldout"},
+  {"query": "De-AI this commit message before I push: 'feat: Enhance cart module with comprehensive mean calculation capability'", "should_trigger": true, "split": "heldout"},
+  {"query": "Before I send this to the design team, clean up the wording: 'I wanted to circle back and delve into the checkout flow to ensure alignment.'", "should_trigger": true, "split": "heldout"},
+  {"query": "Add a docstring to mean() saying what it returns.", "should_trigger": false, "split": "heldout"},
+  {"query": "Summarize for me what changed in src/cart.py since the last commit.", "should_trigger": false, "split": "heldout"},
+  {"query": "Translate this sentence to French: 'The cart total is wrong.'", "should_trigger": false, "split": "heldout"}
+]

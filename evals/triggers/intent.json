@@ -1,0 +1,18 @@
+[
+  {"query": "Customers keep asking where their order is. Write this up so we can build something for it", "should_trigger": true, "split": "train"},
+  {"query": "Capture this idea before I forget: a dark mode for the settings page", "should_trigger": true, "split": "train"},
+  {"query": "Turn ticket 42 into an intent we can review", "should_trigger": true, "split": "train"},
+  {"query": "Here's what the client asked for on the call. Write up what they want, not how we'd build it", "should_trigger": true, "split": "train"},
+  {"query": "I want a way for admins to bulk-export users. Can you write the ask down properly?", "should_trigger": true, "split": "train"},
+  {"query": "Start a new feature: saved searches. First, get the problem down in writing", "should_trigger": true, "split": "test"},
+  {"query": "This alert keeps firing at night. Write it up as something we need to fix", "should_trigger": true, "split": "test"},
+  {"query": "Make this a ticket: the footer links are broken on mobile", "should_trigger": true, "split": "test"},
+  {"query": "Fix the broken footer links on mobile", "should_trigger": false, "split": "train"},
+  {"query": "Write the spec for the accepted saved-searches intent", "should_trigger": false, "split": "train"},
+  {"query": "Plan the files we need to change for dark mode", "should_trigger": false, "split": "train"},
+  {"query": "Review my diff before I commit", "should_trigger": false, "split": "train"},
+  {"query": "Summarize this meeting transcript in five bullets", "should_trigger": false, "split": "test"},
+  {"query": "Draft a Teams message to the designer about the footer", "should_trigger": false, "split": "test"},
+  {"query": "Rewrite this paragraph so it sounds less robotic", "should_trigger": false, "split": "test"},
+  {"query": "Capture this idea before I forget: a discount code field on the cart.", "should_trigger": true, "split": "heldout"}
+]

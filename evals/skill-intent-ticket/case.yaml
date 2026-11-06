@@ -1,0 +1,16 @@
+schema_version: "1.1"
+name: skill-intent-ticket
+description: >-
+  The intent skill, given a ticket's ask in a project with a no-personal-data rule. It
+  should write intent/claim-status/intent.md with the template's sections, as a draft, keep the
+  unsettled question open, and leave the solution out.
+expected_outcome: intent/claim-status/intent.md with the five sections, Status draft, the adjuster question still open, and no design or code plan.
+tags: [skill, intent]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: claude-haiku-4-5
+  max_turns: 30
+  timeout_seconds: 600
+  allowed_tools: [Read, Grep, Glob, Bash, Edit, Write, Skill]

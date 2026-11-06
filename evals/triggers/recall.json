@@ -1,0 +1,9 @@
+[
+  {"query": "Did we ever decide how mean() should handle an empty cart?", "should_trigger": true, "split": "heldout"},
+  {"query": "Search all the logs: have I asked about tax rounding before?", "should_trigger": true, "split": "heldout"},
+  {"query": "What did we decide last week about the checkout button colour?", "should_trigger": true, "split": "heldout"},
+  {"query": "Before I file this, have we seen the empty-prices crash before?", "should_trigger": true, "split": "heldout"},
+  {"query": "Search the codebase for every place total() is called.", "should_trigger": false, "split": "heldout"},
+  {"query": "Show me the diff of the uncommitted change.", "should_trigger": false, "split": "heldout"},
+  {"query": "Look up how Python's statistics.mean handles empty input.", "should_trigger": false, "split": "heldout"}
+]

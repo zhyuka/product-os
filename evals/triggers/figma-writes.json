@@ -1,0 +1,9 @@
+[
+  {"query": "Rename the 'Hero' frame in my Figma file to 'Hero / Desktop' with use_figma.", "should_trigger": true, "split": "heldout"},
+  {"query": "Reply to the design comment on the pricing frame in Figma saying the fix is in.", "should_trigger": true, "split": "heldout"},
+  {"query": "Delete the old 'Cart v1' page from the Figma file.", "should_trigger": true, "split": "heldout"},
+  {"query": "Move the checkout button component in Figma 40px to the right.", "should_trigger": true, "split": "heldout"},
+  {"query": "Build the cart summary panel from this Figma frame: https://www.figma.com/design/abc123/Shop?node-id=1-2", "should_trigger": false, "split": "heldout"},
+  {"query": "Read the comments on the pricing frame in Figma and tell me what design asked for.", "should_trigger": false, "split": "heldout"},
+  {"query": "Get a screenshot of the Figma checkout frame so I can compare it with the build.", "should_trigger": false, "split": "heldout"}
+]

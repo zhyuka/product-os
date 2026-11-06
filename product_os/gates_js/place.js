@@ -1,0 +1,1 @@
+const el = find(path); return el ? [el.scrollTop, el.scrollLeft, el.innerHTML.length] : null; }
