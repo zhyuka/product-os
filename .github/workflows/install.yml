@@ -23,14 +23,29 @@ jobs:
       - uses: actions/checkout@v7
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
+      # plugin list's exit status is kept, so what it printed shows even when it fails. The step
+      # exits with that status, or, when it is 0, fails unless product-os is enabled.
       - name: Add this checkout as a marketplace and install the plugin from it
         run: |
           export HOME="$RUNNER_TEMP/home" && mkdir -p "$HOME"
           claude --version
           claude plugin marketplace add "$GITHUB_WORKSPACE"
           claude plugin install product-os@product-os
-          claude plugin list --json > "$RUNNER_TEMP/plugins.json"
-          python3 -c 'import json, sys; ids = {p["id"]: p.get("enabled") for p in json.load(open(sys.argv[1]))}; print(ids); sys.exit(0 if ids.get("product-os@product-os") else 1)' "$RUNNER_TEMP/plugins.json"
+          status=0
+          claude plugin list --json > "$RUNNER_TEMP/plugins.json" || status=$?
+          echo "claude plugin list exited $status"
+          python3 - "$RUNNER_TEMP/plugins.json" "$status" <<'EOF'
+          import json, sys
+          text = open(sys.argv[1], encoding="utf-8").read()
+          try:
+              ids = {p["id"]: p.get("enabled") for p in json.loads(text)}
+          except (ValueError, TypeError, KeyError, AttributeError):
+              print(f"plugins.json is not a list of plugins: {text[:2000]}" if text.strip() else "plugins.json is empty")
+              ids = {}
+          else:
+              print(ids)
+          sys.exit(int(sys.argv[2]) or (0 if ids.get("product-os@product-os") else 1))
+          EOF
 
   install-doc:
     name: Path 2, INSTALL.md (${{ matrix.os }}, Python ${{ matrix.python }})
