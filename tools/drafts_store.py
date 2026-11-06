@@ -80,7 +80,7 @@ with no hold or date in its heading reads as live.
 """
 import difflib, os, re, sys, tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+if os.path.dirname(os.path.realpath(__file__)) not in sys.path: sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 try:
     import kit_config
 except ImportError:
@@ -513,7 +513,7 @@ def own_open_drafts(text, name, own_check=None):
     """The own-open rule of structure(): each NEW draft whose lines link an open root comment of the token owner's,
     by figma_post.own_open_check, in the file its heading's link or its section names. Reads nothing when no NEW
     draft links a comment id."""
-    sys.path.insert(0, TOOLS)
+    if TOOLS not in sys.path: sys.path.append(TOOLS)
     import figma_post
     lines, out = text.split("\n"), []
     secs = sections(text)
@@ -553,7 +553,7 @@ def override_drafts(text, name, files=None):
         files = {v} if isinstance(v, str) else {str(k) for k in v}
     if not files:
         return []
-    sys.path.insert(0, TOOLS)
+    if TOOLS not in sys.path: sys.path.append(TOOLS)
     import figma_post
     lines, out = text.split("\n"), []
     listed = [s for s in sections(text) if any(f"`{k}`" in s["head"] for k in files)]
@@ -571,7 +571,7 @@ def override_drafts(text, name, files=None):
 
 
 def ledger_questions():
-    sys.path.insert(0, TOOLS)
+    if TOOLS not in sys.path: sys.path.append(TOOLS)
     import ledger
     return ledger.load_jsonl(os.path.join(ledger.LEDGER_DIR, "requests.jsonl"))
 
@@ -581,7 +581,7 @@ def ado_items(ids):
     error."""
     if not ids:
         return {}
-    sys.path.insert(0, TOOLS)
+    if TOOLS not in sys.path: sys.path.append(TOOLS)
     if not kit_config or not kit_config.token("ADO_PAT", "AZURE_DEVOPS_EXT_PAT"):
         raise NotChecked("no ADO_PAT in the environment or the OS keychain")
     try:
@@ -708,7 +708,7 @@ def cut_gone(text, lineage=None, files=None):
     where = lambda r: [r["file"]] if r["file"] else files  # noqa: E731
     want = {key: set().union(*[r["nodes"] for r in rows if key in where(r)]) for key in files}
     if lineage is None:
-        sys.path.insert(0, TOOLS)
+        if TOOLS not in sys.path: sys.path.append(TOOLS)
         import figma_auth
         import figma_client
         tok = figma_auth.token()

@@ -88,7 +88,7 @@ try:
 except Exception:
     pass
 
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+if os.path.dirname(os.path.realpath(__file__)) not in sys.path: sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 from ado import (AC_FIELD, BODY_FIELD, TITLE_RE,  # one copy of each rule: ado.py's
                  CATEGORY, categories_from, same_category)
 import kit_config

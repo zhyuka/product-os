@@ -78,7 +78,7 @@ import time
 import urllib.parse
 
 HERE = os.path.dirname(os.path.realpath(__file__))
-sys.path.insert(0, HERE)
+if HERE not in sys.path: sys.path.append(HERE)
 import kit_config  # noqa: E402
 
 HOME = os.path.expanduser("~")
@@ -499,7 +499,7 @@ def live_sessions(sessions, cmds):
 
 def audit_days():
     """workspace_audit config's age for an empty session-env folder, so the two can't drift apart."""
-    sys.path.insert(0, HERE)
+    if HERE not in sys.path: sys.path.append(HERE)
     import workspace_audit
     return workspace_audit.STALE_DAYS
 
@@ -600,7 +600,7 @@ def signed_in_profiles(dry, root=None):
     """Signed-in browser profiles that a killed run of signed_in_browser.py left in the temp dir. They hold
     session cookies, and the next launch reaps them, so this daily pass covers days with no launch."""
     s = Step("signed-in-profiles", dry)
-    sys.path.insert(0, HERE)
+    if HERE not in sys.path: sys.path.append(HERE)
     import signed_in_browser
     found = signed_in_browser.reap(root, dry=True)
     s.of = len(found)
@@ -615,7 +615,7 @@ def browser_runs(dry, roots=None):
     are what a bare Playwright launch leaves. Under a scheduler TMPDIR can be unset and tempfile falls
     back to /tmp, so both dirs are read."""
     s = Step("browser-runs", dry)
-    sys.path.insert(0, HERE)
+    if HERE not in sys.path: sys.path.append(HERE)
     import pw_temp, signed_in_browser
     if roots is None:
         roots = sorted({signed_in_browser.temp_root(), os.path.realpath(tempfile.gettempdir())})
@@ -641,7 +641,7 @@ def settings_allow(dry, home=HOME, desktop=None, user=False):
     if not desktop:
         s.error = "workspace.root is not set"
         return s
-    sys.path.insert(0, HERE)
+    if HERE not in sys.path: sys.path.append(HERE)
     import pathlib
     import workspace_audit as wa
     home, desktop = pathlib.Path(home), pathlib.Path(desktop)

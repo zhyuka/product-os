@@ -62,7 +62,7 @@ import sys
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 if HERE not in sys.path:
-    sys.path.insert(0, HERE)
+    if HERE not in sys.path: sys.path.append(HERE)
 
 # Every subcommand that writes, from each tool's own dispatch, in the shapes a command takes: a
 # relative path, the plugin root, a login shell, a cd first, an import.

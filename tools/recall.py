@@ -159,7 +159,7 @@ except Exception:
 
 TOOLS = os.path.dirname(os.path.realpath(__file__))
 if TOOLS not in sys.path:
-    sys.path.insert(0, TOOLS)
+    if TOOLS not in sys.path: sys.path.append(TOOLS)
 import cc_logs  # noqa: E402
 import seals as sealing  # noqa: E402  the .recall-sealed rule, shared with log_extract.py
 import kit_config  # noqa: E402

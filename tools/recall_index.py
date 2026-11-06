@@ -52,7 +52,7 @@ import argparse, collections, fcntl, hashlib, io, json, os, sqlite3, subprocess,
 
 TOOLS = os.path.dirname(os.path.realpath(__file__))
 if TOOLS not in sys.path:
-    sys.path.insert(0, TOOLS)
+    if TOOLS not in sys.path: sys.path.append(TOOLS)
 import cc_logs  # noqa: E402
 import kit_config  # noqa: E402
 

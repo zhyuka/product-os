@@ -38,7 +38,7 @@ import sys
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 if HERE not in sys.path:
-    sys.path.insert(0, HERE)
+    if HERE not in sys.path: sys.path.append(HERE)
 import cc_logs  # noqa: E402
 
 # Why seal at all: an experiment's sealed predictions and held-out checks sit in notes, and the logs hold

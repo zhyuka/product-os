@@ -49,7 +49,7 @@ belong to a new process that reused the pid; it is then only reaped later.
 """
 import contextlib, json, os, re, shutil, signal, sys, tempfile, time, urllib.parse
 
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+if os.path.dirname(os.path.realpath(__file__)) not in sys.path: sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 try:
     import kit_config
 except ImportError:

@@ -136,7 +136,7 @@ import tempfile
 import time
 
 TOOLS = os.path.dirname(os.path.realpath(__file__))
-sys.path.insert(0, TOOLS)
+if TOOLS not in sys.path: sys.path.append(TOOLS)
 import kit_config  # noqa: E402
 from desktop_mirror import LOG_DIR, notify  # noqa: E402
 
@@ -497,7 +497,7 @@ def open_requests_section(short, ledger_dir=None, limit=OPEN_SHOWN):
     older request from another machine never takes a line from this one's. A ledger that is missing or unreadable
     says so; it never reads as none open."""
     try:
-        sys.path.insert(0, TOOLS)
+        if TOOLS not in sys.path: sys.path.append(TOOLS)
         import ledger
         d = ledger_dir or LEDGER_DIR or ledger.LEDGER_DIR
         path = os.path.join(d, "requests.jsonl")
@@ -536,7 +536,7 @@ def pushback_section(short, ledger_dir=None):
         if d is None:
             import ledger
             d = ledger.LEDGER_DIR
-        sys.path.insert(0, TOOLS)
+        if TOOLS not in sys.path: sys.path.append(TOOLS)
         import pushback_score
         return pushback_score.section(short, ledger=os.path.join(d, "requests.jsonl"))
     except Exception as e:
@@ -600,7 +600,7 @@ def owner_texts(ledger_dir=None):
     A ledger that can't be read is named, so a hold never reads as none."""
     texts, unread = [], []
     try:
-        sys.path.insert(0, TOOLS)
+        if TOOLS not in sys.path: sys.path.append(TOOLS)
         import ledger
         d = ledger_dir or LEDGER_DIR or ledger.LEDGER_DIR
         if not os.path.isfile(os.path.join(d, "requests.jsonl")):
@@ -715,7 +715,7 @@ def digest(stamp, results, outputs, log, started):
     except Exception as e:      # a broken ledger module is reported, and the rest of today.md still gets written
         out += ["", "## Push-backs, last 7 days", f"- did not run ({type(e).__name__})"]
     try:
-        sys.path.insert(0, TOOLS)
+        if TOOLS not in sys.path: sys.path.append(TOOLS)
         import bare_ids
         out += ["", "## Bare ids, last 7 days"] + bare_ids.section(**({"projects": BARE_PROJECTS} if BARE_PROJECTS else {}))
     except Exception as e:      # its own section says "did not run" for no readable log; this catches the rest
@@ -1708,7 +1708,7 @@ def selftest():
               all(f"FAIL planted_{i}.py" in md_u for i in range(9)) and "more lines" not in md_u)
         LEDGER_DIR = os.path.join(t, "no-ledger")
         sent.clear()
-        sys.path.insert(0, TOOLS)
+        if TOOLS not in sys.path: sys.path.append(TOOLS)
         import bare_ids
         real_section = bare_ids.section
 

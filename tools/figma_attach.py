@@ -132,7 +132,7 @@ RESOLVE_API_WAIT = 20     # seconds for REST to show resolved_at once the browse
 def _get(path):
     """Through figma_client.py beside this file: paced with every other tool, and a 429 waited out.
     No token exits with figma_auth's message."""
-    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    if os.path.dirname(os.path.realpath(__file__)) not in sys.path: sys.path.append(os.path.dirname(os.path.realpath(__file__)))
     import figma_auth
     import figma_client
     return figma_client.get(API + path, token=figma_auth.token(), tool="figma_attach", timeout=120)
@@ -1746,7 +1746,7 @@ def _selftest():
     # figma_client refuses a comment write that does not pass comment_write=True. This file's REST calls are reads
     # (its writes are the browser's), so they go through the client with no opt-in: one read of a file's comments
     # through the real client and its local mock, and the same path as a POST is refused before it is sent.
-    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    if os.path.dirname(os.path.realpath(__file__)) not in sys.path: sys.path.append(os.path.dirname(os.path.realpath(__file__)))
     import figma_client
     mock = figma_client._Mock()
     env_saved = {k: os.environ.get(k) for k in ("FIGMA_API_BASE", "FIGMA_CLIENT_DIR", "FIGMA_CLIENT_MIRROR",
@@ -1823,7 +1823,7 @@ if __name__ == "__main__":
             i = rest.index("--again")
             why = rest[i + 1] if i + 1 < len(rest) and not rest[i + 1].startswith("--") else None
             del rest[i:i + (2 if why is not None else 1)]
-            sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+            if os.path.dirname(os.path.realpath(__file__)) not in sys.path: sys.path.append(os.path.dirname(os.path.realpath(__file__)))
             import ask_rules
             refused = ask_rules.override("--again", why)
             if refused:

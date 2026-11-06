@@ -82,7 +82,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 if HERE not in sys.path:
-    sys.path.insert(0, HERE)
+    if HERE not in sys.path: sys.path.append(HERE)
 
 
 def default_logs(project=None):

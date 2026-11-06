@@ -158,7 +158,7 @@ def check():
         return False, None, "no token found"
     import urllib.error
     if HERE not in sys.path:
-        sys.path.insert(0, HERE)
+        if HERE not in sys.path: sys.path.append(HERE)
     import figma_client
 
     try:

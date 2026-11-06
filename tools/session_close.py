@@ -527,7 +527,7 @@ def commits_check(g, repos, as_of):
 def configured_drafts():
     """session_close.drafts from the config (kit_config.py), or () when it or the module is absent."""
     try:
-        sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+        if os.path.dirname(os.path.realpath(__file__)) not in sys.path: sys.path.append(os.path.dirname(os.path.realpath(__file__)))
         import kit_config
         v = kit_config.get("session_close", "drafts")
     except ImportError:
@@ -538,7 +538,7 @@ def configured_drafts():
 def drafts_shape(paths):
     """drafts_store.py's shape rules on each drafts file this session edited, read as of now:
     [(file, line, rule, words)]. A file gone from disk has none. Raises when drafts_store can't load."""
-    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    if os.path.dirname(os.path.realpath(__file__)) not in sys.path: sys.path.append(os.path.dirname(os.path.realpath(__file__)))
     import drafts_store
     out = []
     for p in paths:
@@ -553,7 +553,7 @@ def drafts_shape(paths):
 def sweep_task():
     """session_close.sweep_task from the config: the scheduled task id of your close sweep, else None."""
     try:
-        sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+        if os.path.dirname(os.path.realpath(__file__)) not in sys.path: sys.path.append(os.path.dirname(os.path.realpath(__file__)))
         import kit_config
         v = kit_config.get("session_close", "sweep_task")
     except ImportError:
@@ -1716,7 +1716,7 @@ def _selftest(check, results, DR):
     # The real drafts_store must answer the call the drafts check makes: structure(text, name) -> a list.
     sys.modules.pop("drafts_store", None)
     try:
-        sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+        if os.path.dirname(os.path.realpath(__file__)) not in sys.path: sys.path.append(os.path.dirname(os.path.realpath(__file__)))
         import drafts_store as real
         got = real.structure("", "outbound-drafts.md")
         why = "" if isinstance(got, list) else f"returned {type(got).__name__}"

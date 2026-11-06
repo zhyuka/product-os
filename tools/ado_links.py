@@ -67,7 +67,7 @@ import re
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+if os.path.dirname(os.path.realpath(__file__)) not in sys.path: sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 import kit_config
 
 if __name__ == "__main__":

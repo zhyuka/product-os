@@ -81,7 +81,7 @@ if __name__ == "__main__" and any(_a in ("-h", "--help") for _a in sys.argv[1:])
     print((__doc__ or "").strip())
     raise SystemExit(0)
 
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+if os.path.dirname(os.path.realpath(__file__)) not in sys.path: sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 try:
     import kit_config
 except ImportError:          # the linter must still run where the config module is absent

@@ -194,7 +194,7 @@ import time
 import zlib
 
 TOOLS = os.path.dirname(os.path.realpath(__file__))
-sys.path.insert(0, TOOLS)
+if TOOLS not in sys.path: sys.path.append(TOOLS)
 import kit_config  # noqa: E402
 
 HOME = os.path.expanduser("~")

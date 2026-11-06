@@ -122,7 +122,7 @@ import time
 
 TOOLS = os.path.dirname(os.path.realpath(__file__))
 if TOOLS not in sys.path:
-    sys.path.insert(0, TOOLS)
+    if TOOLS not in sys.path: sys.path.append(TOOLS)
 import kit_config  # noqa: E402
 
 PROJECT = None   # --project: the project kit_config reads, in place of $CLAUDE_PROJECT_DIR or the working folder

@@ -83,7 +83,7 @@ import tempfile
 import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
-sys.path.insert(0, HERE)
+if HERE not in sys.path: sys.path.append(HERE)
 import bare_ids  # noqa: E402
 import kit_config  # noqa: E402
 import pushback_score  # noqa: E402

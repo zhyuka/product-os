@@ -36,7 +36,7 @@ import re
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+if os.path.dirname(os.path.realpath(__file__)) not in sys.path: sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 import ledger  # noqa: E402
 
 OPEN_MAX = 40            # this machine's; other machines' are listed in full at the end

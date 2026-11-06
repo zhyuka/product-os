@@ -74,7 +74,7 @@ def configured_folders():
     extra = []
     try:
         if TOOLS not in sys.path:
-            sys.path.insert(0, TOOLS)
+            if TOOLS not in sys.path: sys.path.append(TOOLS)
         import kit_config
         v = kit_config.get('tool_time', 'tools')
         extra = [v] if isinstance(v, str) else list(v or [])

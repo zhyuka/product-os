@@ -694,7 +694,7 @@ def mirror_files():
     if raw is None:
         try:
             if HERE not in sys.path:
-                sys.path.insert(0, HERE)
+                if HERE not in sys.path: sys.path.append(HERE)
             import kit_config
             conf = kit_config.get("figma", "mirror") or {}
         except Exception:  # noqa: BLE001 -- no config (or none readable) means no mirror, never a crash
