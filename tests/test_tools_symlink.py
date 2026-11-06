@@ -2,8 +2,10 @@
 
 A setup can swap one of its own tools for a symlink to this plugin's copy. A tool that finds its
 folder with abspath(__file__) finds the link's folder, so `import kit_config` loads whatever
-kit_config sits there. Every tool finds its folder with realpath instead.
+kit_config sits there. Every tool finds its folder with realpath instead. On Windows, Python itself
+leaves the link's folder first on sys.path, so a tool run as a script puts its own there first.
 """
+import ast
 import os
 import re
 import shutil
@@ -18,6 +20,8 @@ ABSPATH_FOLDER = re.compile(r"os\.path\.dirname\(\s*os\.path\.abspath\(\s*__file
 FRONT_INSERT = re.compile(r"sys\.path\.insert\(\s*0\s*,")
 # A folder put in front and taken out again a few lines on, so nothing outlasts the call.
 INSERT_THEN_REMOVE = {"doctor.py", "figma_client.py", "ledger.py", "triage_lists.py"}
+# What a tool run as a script does first: a link's folder at sys.path[0] becomes the tool's own.
+OWN_FOLDER_FIRST = re.compile(r"(?m)^    sys\.path\[0\] = os\.path\.dirname\(os\.path\.realpath\(__file__\)\)")
 
 
 class SymlinkedTools(unittest.TestCase):
@@ -57,6 +61,46 @@ class SymlinkedTools(unittest.TestCase):
                     for way in ("abspath", "realpath")}
             self.assertIn("planted kit_config", runs["abspath"].stdout + runs["abspath"].stderr)
             self.assertIn("the plugin kit_config", runs["realpath"].stdout)
+
+    def test_with_the_links_folder_first_as_on_windows_a_symlinked_tool_imports_the_plugins_kit_config(self):
+        # CPython puts a linked script's real folder first on sys.path only where it has readlink, so
+        # not on Windows (PC/pyconfig.h.in: HAVE_READLINK undefined): there the link's own folder stays
+        # first. Planted here by running the linked tool as __main__ with that sys.path[0].
+        with tempfile.TemporaryDirectory() as tmp:
+            live = Path(tmp) / "live"
+            live.mkdir()
+            (live / "kit_config.py").write_text("raise SystemExit('the planted kit_config was imported')\n")
+            try:
+                os.symlink(TOOLS / "archive.py", live / "archive.py")
+            except (OSError, NotImplementedError) as e:
+                self.skipTest(f"no symlinks here: {e}")
+            link = str(live / "archive.py")
+            code = (f"import runpy, sys; sys.path[0] = {str(live)!r}; sys.argv = [{link!r}, '--help']; "
+                    f"runpy.run_path({link!r}, run_name='__main__')")
+            env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+            r = subprocess.run([sys.executable, "-c", code], cwd=tmp, env=env, capture_output=True, text=True, timeout=60)
+            self.assertNotIn("planted kit_config", r.stdout + r.stderr)
+            self.assertEqual(r.returncode, 0, r.stderr[-400:])
+
+    def test_every_tool_that_imports_a_sibling_takes_its_own_folder_first(self):
+        # The run above, as a rule for every tool: one that imports a sibling replaces a link's folder at
+        # sys.path[0] with its own before its first sibling import.
+        sibs = {p.stem for p in TOOLS.glob("*.py")}
+        missing, checked = [], 0
+        for p in sorted(TOOLS.glob("*.py")):
+            text = p.read_text(encoding="utf-8")
+            lines = [n.lineno for n in ast.walk(ast.parse(text))
+                     if isinstance(n, ast.Import) and {a.name.split(".")[0] for a in n.names} & sibs - {p.stem}
+                     or isinstance(n, ast.ImportFrom) and not n.level and (n.module or "").split(".")[0] in sibs - {p.stem}]
+            if not lines:
+                continue
+            checked += 1
+            fix = OWN_FOLDER_FIRST.search(text)
+            if not fix or text.count("\n", 0, fix.start()) + 1 >= min(lines):
+                missing.append(f"{p.name}:{min(lines)}")
+        self.assertGreater(checked, 0)
+        self.assertEqual(missing, [], f"{len(missing)} of {checked} tools that import a sibling keep a link's folder first")
+        self.assertIsNone(OWN_FOLDER_FIRST.search("sys.path.append(os.path.dirname(os.path.realpath(__file__)))"))
 
     def test_no_tool_puts_its_folder_in_front_for_good(self):
         # Each front insert must be taken out again in the same function (the files listed above).

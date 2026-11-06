@@ -52,6 +52,11 @@ BLIND TO:
   - Subject. A same-layer thread can be about something else. Read it, as with SAME NODE, OTHER
     SUBJECT in figma_comments.py.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import hashlib, json, os, pickle, re, sys, tempfile, time, urllib.error, urllib.request
 from collections import defaultdict
 

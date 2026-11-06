@@ -125,6 +125,11 @@ what was linked and which ids were left bare as no item of the project; the read
 went out. Every line that names a work item ends with the URL of each id on it
 (kit_config.ado_linked), so whichever line a session copies, the link comes with it.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import base64, datetime, json, os, re, sys, urllib.request, urllib.error, urllib.parse
 from html.parser import HTMLParser
 

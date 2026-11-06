@@ -70,6 +70,11 @@ It reads only; it runs no suite and spends nothing. Running a stale suite is a s
 Exit 0 when every unit is CURRENT or ACCEPTED; 1 when any is STALE, FAILED or UNTESTED; 2 when it
 can't tell (no suites folder set, no session log, an unreadable suite, a version it can't read).
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse
 import collections
 import glob

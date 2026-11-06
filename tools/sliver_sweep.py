@@ -47,6 +47,11 @@ BLIND TO
   Elliptical radii, position: fixed, a target not wholly inside every clipping ancestor (a carousel
   slide half out of its track), clip-path shapes other than inset(... round R), leaks under 12 in sRGB
   distance, and every page and width you don't pass."""
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import sys, io, os, math, json
 # A missing third-party module is a could-not-run: main() reports it and returns 2.
 try:

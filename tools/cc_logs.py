@@ -85,6 +85,11 @@ clean answer.
 HELPERS for other tools: project_dir(cwd) is ~/.claude/projects/<the folder Claude Code keeps for
 cwd>; memory_dir(arg, cwd) is arg, else that folder's memory/.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse, collections, contextlib, errno, hashlib, io, json, os, re, struct, subprocess, sys, tempfile, time, zipfile, zlib
 
 try:

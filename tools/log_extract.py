@@ -34,6 +34,11 @@ THE THREE THINGS A NAIVE GREP MISSES, all of them load-bearing:
 OUTPUT. `user-turns.md`, one block per turn, newest last, with session id and timestamp so a claim
 can be traced back. Plus `INDEX.md` with the per-session counts - that is the denominator.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse
 import contextlib
 import hashlib

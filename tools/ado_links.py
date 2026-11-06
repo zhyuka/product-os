@@ -59,6 +59,11 @@ Exit: scan 0 none bare, 1 some bare, 2 a file could not be read; link 0 written 
 1 a write was refused (the check below failed), 2 unreadable; scan and link 2 also when ado.org or
 ado.project is unset; census 0; selftest 0 all pass.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse
 import html as _html
 import json

@@ -78,6 +78,11 @@ no node id (a topic only). A Cut row's hyphen id (1234-5678) is not matched, rep
 the Cut table, and an unreadable drafts file lets every post through. A live item overtaken by events
 with no hold or date in its heading reads as live.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import difflib, os, re, sys, tempfile
 
 if os.path.dirname(os.path.realpath(__file__)) not in sys.path: sys.path.append(os.path.dirname(os.path.realpath(__file__)))

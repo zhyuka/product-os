@@ -26,6 +26,11 @@ out, "1440:900" is not) reads as a node id, and a node id right after [ is left 
 instance path's inner ids too. Subagent and headless logs are not read, since the user doesn't read
 them. Text another session relays is counted where that session writes it.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse
 import datetime as dt
 import glob

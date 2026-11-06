@@ -71,6 +71,11 @@ Linux `secret-tool lookup service product-os account ADO_PAT`. The value is retu
 The project is --project when given, else $CLAUDE_PROJECT_DIR, else the working folder, but never a
 folder inside the plugin's own folder that has no .claude folder of its own (project_dir()).
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import hashlib, json, os, shutil, subprocess, sys, urllib.parse
 
 NAME = "product-os"

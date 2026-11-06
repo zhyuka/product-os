@@ -54,6 +54,11 @@ dispatch shape DISPATCH's patterns don't know, beside ones they do.
 Exit 0 when every write prompts, no read does and every dispatched subcommand is listed; 1 on a miss,
 a missing file or a dispatch it could not read; 2 when no settings file is named or configured.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse
 import json
 import os

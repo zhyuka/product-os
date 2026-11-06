@@ -46,6 +46,11 @@ THEN, printed when a sheet is written:
 
 EXIT  0 written, 1 refused, 2 did not run (no token, API error).
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import io, json, os, sys, urllib.error, urllib.parse, urllib.request
 
 API = "/v1"   # a Figma REST path; _get sends it through figma_client.py

@@ -9,6 +9,11 @@ Usage: python tools/shot_gpu.py <url> <width> <out.png> [hoverSelector] [clipSel
 A hover or clip selector that matches nothing exits 2 and captures nothing.
 The browser is $EDGE_PATH or $CHROME_PATH, else the usual Edge and Chrome install locations on
 Windows and macOS, else msedge, google-chrome, chromium or chrome on PATH."""
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import json,os,subprocess,sys,tempfile,time,base64,socket,urllib.request,struct
 
 # Answer -h/--help with this module's own docstring, before any module-level work can pre-empt it.

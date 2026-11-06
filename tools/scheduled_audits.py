@@ -122,6 +122,11 @@ launchd loads every plist in ~/Library/LaunchAgents again at the next login.
 Exit 0 when every audit was clean; 1 when any audit had findings; 2 when none had findings but at
 least one did not run, or the log could not be written.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse
 import datetime
 import json

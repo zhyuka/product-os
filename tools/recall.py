@@ -147,6 +147,11 @@ ENCODING GUARD. A UnicodeEncodeError on a star or an arrow in a snippet would ex
   mid-report, and non-zero reads as "nothing found". stdout and stderr are reconfigured below so that
   cannot happen.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse, bisect, collections, datetime, difflib, glob, gzip, hashlib, io, json, math, os, re, subprocess, sys
 import sqlite3, tempfile, time, urllib.parse, zipfile, zlib
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor

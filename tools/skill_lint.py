@@ -59,6 +59,11 @@ current project's .claude/skills (SKILL_LINT_PROJECT_SKILLS), each less any skil
 project's memory index MEMORY.md (SKILL_LINT_ALWAYS, a path list). The project is $CLAUDE_PROJECT_DIR,
 else the folder you run in.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import os, re, sys, glob, itertools, subprocess
 
 HERE = os.path.dirname(os.path.realpath(__file__))

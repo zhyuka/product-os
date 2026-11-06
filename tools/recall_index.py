@@ -48,6 +48,11 @@ copy passed, 1 any miss (the first one named).
 BLIND TO: a copy that only a cloud placeholder holds, which is never read; a copy deleted from disk,
 which stays in the index, never searched, until `update --rebuild`.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse, collections, fcntl, hashlib, io, json, os, sqlite3, subprocess, sys, time, zipfile, zlib
 
 TOOLS = os.path.dirname(os.path.realpath(__file__))

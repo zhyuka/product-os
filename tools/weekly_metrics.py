@@ -63,6 +63,11 @@ Read-only except for the TSV, which is written atomically under a lock. Prints c
 text. Exit 0 when the row was written or already there; 1 when it could not be written; 2 when it was
 written but a source did not run.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse
 import datetime as dt
 import fcntl

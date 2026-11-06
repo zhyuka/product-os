@@ -34,6 +34,11 @@ The token value is NEVER printed, logged, or written anywhere by this module. `d
 only the NAME of the source it came from. `main()` prints a source name and a live/dead verdict.
 If you add a code path here, it prints the source, never the secret.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 
 import argparse
 import os

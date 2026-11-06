@@ -40,6 +40,11 @@ Exit codes: 0 clean, 1 findings, 2 usage/IO error (no folder configured or found
 word the alias map lacks with no hits (a did-not-run). Never prints file contents wholesale.
 """
 from __future__ import annotations
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 
 import argparse
 import difflib

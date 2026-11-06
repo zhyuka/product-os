@@ -68,6 +68,11 @@ WHAT THE CHECKS ENCODE. Each one is a rule that was prose and was still violated
 
 It is a REPORT by default. `--expect clean` turns it into a gate so it can fail a run.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse
 import base64
 import difflib

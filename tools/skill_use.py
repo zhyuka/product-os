@@ -33,6 +33,11 @@ BLIND TO. Steps run by a subagent (its own log); work done to a skill's rules bu
 use_figma code that writes through a helper the pattern doesn't name; logs only in backups (older than
 any window). Exit 0 no miss, 1 a miss, 2 no log read.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse
 import collections
 import datetime

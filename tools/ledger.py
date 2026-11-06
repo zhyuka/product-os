@@ -177,6 +177,11 @@ linked again every run.
 
 Exit 0 written; 2 a log or a store could not be read (named), the ledger is still written.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse
 import bisect
 import contextlib

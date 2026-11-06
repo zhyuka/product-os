@@ -69,6 +69,11 @@ doesn't count (an ADO id without #, a node id in its dashed form) passes as link
 Not here either: pinning a named knowledge page above a question; it needs a knowledge index whose names
 recall can match.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse
 import collections
 import datetime as dt

@@ -23,6 +23,11 @@ searches, its own last line says where the lines go.
 Exit 0 when every list ran, 1 when one did not, 2 when a tool could not be started.
 """
 import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
+import os
 import re
 import subprocess
 import sys

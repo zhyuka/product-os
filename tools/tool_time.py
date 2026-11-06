@@ -43,6 +43,11 @@ or a scheduler starts is not seen, and a tool whose name changed counts as two t
 differ in cost (a quick check mode and a slow proof mode) is judged on its mix, so its typical week can
 swing when the mix shifts.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse
 import collections
 import datetime

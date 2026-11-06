@@ -82,6 +82,11 @@ calls scheduled_audits.py's watchdog, so each of the two jobs notices the other 
 Exit 0 when the copy is current; 1 when rsync or a git backup failed (its message is printed); 2 when
 it could not run: the backup folder is not configured or missing, or the source failed the guard.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse
 import datetime
 import hashlib

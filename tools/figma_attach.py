@@ -111,6 +111,11 @@ caller's call; and a thread resolved by someone else during the run reads as one
 at, not as this tool's. Figma's comment UI selectors (aria-labels such as "Comment actions", "Mark as
 resolved") are read off the live page and break when Figma changes it: `probe` is the check.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import contextlib, io, json, os, re, shutil, sys, tempfile, time, urllib.error, urllib.parse, urllib.request
 
 API = "/v1"   # a Figma REST path; _get sends it through figma_client.py

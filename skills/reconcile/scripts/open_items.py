@@ -19,11 +19,13 @@ rebase.surfaces`); until then nothing runs and the run says so. Yours, in ~/.cla
 `--surfaces FILE` reads the list from FILE instead, a JSON list or {"rebase": {"surfaces": [...]}}, one
 you hand it yourself, so it needs no accept.
 
-THE PROTOCOL, as reconcile runs a surface. Each `cmd` runs through /bin/sh in the project folder,
-with `RECONCILE_SINCE` set to a YYYY-MM-DD date (`--since`, a date or an ISO date-time, whose day it
-takes; default 7 days ago). Exit 0: no items. Exit 1: each line it
-prints is an item. Any other exit, exit 1 with no line, or no exit within 5 minutes: DID NOT RUN,
-with the first line of its error. All sources run at once.
+THE PROTOCOL, as reconcile runs a surface. Each `cmd` runs through a POSIX shell in the project
+folder: /bin/sh, or on Windows Git Bash, found the way Claude Code finds it for a hook command
+(CLAUDE_CODE_GIT_BASH_PATH, Git for Windows' own folder, then a Git bash on PATH; with none, each
+source did not run and says what to set). `RECONCILE_SINCE` is set to a YYYY-MM-DD date
+(`--since`, a date or an ISO date-time, whose day it takes; default 7 days ago). Exit 0: no
+items. Exit 1: each line it prints is an item. Any other exit, exit 1 with no line, or no exit
+within 5 minutes: DID NOT RUN, with the first line of its error. All sources run at once.
 
 MARKS. Each item is one of: `start now`, `running (<holder>)`, `waits on <who> (<for what>)` or
 `paused`. A line marks itself by starting with the mark in brackets, `[start now] plan:s12 ...`;
@@ -35,12 +37,13 @@ not printed (past a source's top, or another mark than --mark). uncovered: the s
 run, named, since nothing they hold is in the total.
 
 WRAP turns a tool that doesn't speak the protocol into one that does, so a list entry stays one
-line: it runs the command (no shell), takes the lines matching --items (default every non-blank
-line) less those matching --drop as items, and exits 1 with them, 0 with none. An exit code outside
---ok (default 0) exits 2 quoting its error. `--mark RE=MARK` marks an item RE matches (the first
-that matches wins; MARK may use \\1). `--age FILE` adds FILE's age to each item and exits 2 when the
-file is missing or older than --max-age hours. `--with RE` puts the last line before an item that
-matches RE (a thread's header, say) in front of it.
+line: it runs the command (no shell; on Windows found with PATHEXT, so `az` starts az.cmd), takes
+the lines matching --items (default every non-blank line) less those matching --drop as items, and
+exits 1 with them, 0 with none. An exit code outside --ok (default 0) exits 2 quoting its error.
+`--mark RE=MARK` marks an item RE matches (the first that matches wins; MARK may use \\1). `--age
+FILE` adds FILE's age to each item and exits 2 when the file is missing or older than --max-age
+hours. `--with RE` puts the last line before an item that matches RE (a thread's header, say) in
+front of it.
 
 ADO lists the tracker items assigned to NAME (display or sign-in name) in the given states (default
 New,Active), from the cache `ado_rest.py pull` writes, with the cache's age on each line. A cache it
@@ -58,6 +61,8 @@ import datetime as dt
 import json
 import os
 import re
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -102,10 +107,45 @@ def first_error(out, err):
     return (hit or (lines[-1] if lines else "it printed nothing"))[:240]
 
 
-def run_cmd(cmd, cwd, env, cap=CAP):
-    """(exit code or None on timeout, stdout, stderr) for cmd through /bin/sh; a timeout kills its group."""
+def shell(env):
+    """The POSIX shell a source's cmd runs in, found as Claude Code finds one for a hook's shell command: /bin/sh,
+    or on Windows Git Bash at CLAUDE_CODE_GIT_BASH_PATH, Git for Windows' own folder, or a Git bash on PATH (not
+    System32's, which is WSL's). None when Windows has no Git Bash."""
+    if os.name != "nt":
+        return "/bin/sh"
+    on_path = shutil.which("bash", path=env.get("PATH")) or ""
+    for cand in (env.get("CLAUDE_CODE_GIT_BASH_PATH", ""),
+                 os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Git", "bin", "bash.exe"),
+                 on_path if "git" in on_path.lower() else ""):
+        if cand and os.path.isfile(cand):
+            return cand
+    return None
+
+
+def kill_tree(p):
+    """Kill p and what it started: its process group on POSIX, its process tree on Windows."""
     try:
-        p = subprocess.Popen(["/bin/sh", "-c", cmd], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        else:
+            os.killpg(p.pid, signal.SIGKILL)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        p.kill()
+    except OSError:
+        pass
+
+
+def run_cmd(cmd, cwd, env, cap=CAP):
+    """(exit code or None on timeout, stdout, stderr) for cmd through shell(); a timeout kills its tree."""
+    sh = shell(env)
+    if not sh:
+        return -1, "", ("could not start: no Git Bash for its POSIX shell; install Git for Windows or set "
+                        "CLAUDE_CODE_GIT_BASH_PATH to its bash.exe")
+    try:
+        p = subprocess.Popen([sh, "-c", cmd], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
     except OSError as e:
         return -1, "", f"could not start: {type(e).__name__}: {e}"
@@ -113,11 +153,11 @@ def run_cmd(cmd, cwd, env, cap=CAP):
         out, err = p.communicate(timeout=cap)
         return p.returncode, out, err
     except subprocess.TimeoutExpired:
+        kill_tree(p)
         try:
-            os.killpg(p.pid, signal.SIGKILL)
-        except OSError:
-            pass
-        out, err = p.communicate()
+            out, err = p.communicate(timeout=30)  # a child that left the group can still hold the pipes
+        except subprocess.TimeoutExpired:
+            out, err = "", ""
         return None, out, err
 
 
@@ -280,6 +320,8 @@ def wrap(argv):
             print(f"wrap: {path} is {hours:.1f} h old, past --max-age {a.max_age:g}", file=sys.stderr)
             return 2
         tail = f" ({os.path.basename(path)} written {hours:.1f} h ago)"
+    if os.name == "nt":  # CreateProcess adds only .exe; PATHEXT finds az.cmd for az
+        cmd = [shutil.which(cmd[0]) or cmd[0]] + cmd[1:]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=CAP - 10)
     except (OSError, subprocess.TimeoutExpired) as e:
@@ -406,6 +448,8 @@ def selftest():
 
     py = sys.executable
     me = os.path.realpath(__file__)
+    # Python as a source's cmd names it, quoted for its shell; Git Bash starts a program by a path with a forward slash.
+    shpy = shlex.quote(py.replace("\\", "/") if os.name == "nt" else py)
 
     def body():
         work = os.getcwd()
@@ -420,8 +464,9 @@ def selftest():
                     "if re.search(r'(?m)^status: accepted', txt) and sys.argv[1] not in items:\n"
                     "    print('[start now] plan file ' + sys.argv[1] + ': accepted, no item names it'); sys.exit(1)\n")
         surfaces = [
-            {"name": "erroring", "cmd": f"{py} -c \"import sys; sys.stderr.write('Error: no store here\\n'); sys.exit(2)\""},
-            {"name": "plans", "cmd": f"{py} {lister} {plan}", "probe": f"{py} {lister} {plan}"},
+            {"name": "erroring", "cmd": f"{shpy} -c \"import sys; sys.stderr.write('Error: no store here\\n'); sys.exit(2)\""},
+            {"name": "plans", "cmd": f"{shpy} {shlex.quote(lister)} {shlex.quote(plan)}",
+             "probe": f"{shpy} {shlex.quote(lister)} {shlex.quote(plan)}"},
             {"name": "blind", "cmd": "true", "probe": "true"},
             {"name": "quiet", "cmd": "true"},
             {"name": "held", "cmd": "printf 'a\\nb\\n'; exit 1", "mark": "waits on the owner (an answer)"},

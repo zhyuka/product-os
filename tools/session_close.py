@@ -116,6 +116,11 @@ miss, and names each verdict that differs from the saved one.
 Exit 0 can archive, 1 owes, 2 the log could not be found or read, or a hard check did not run.
 --calibrate exits 0 once it has printed, 2 when FILE can't be read.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse
 import datetime as dt
 import glob

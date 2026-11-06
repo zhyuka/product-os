@@ -99,6 +99,11 @@ teammate's reply posted after a resolve is not counted either.
 Auth: resolved by figma_auth.py (FIGMA_TOKEN or the OS keychain). Never printed. Run
 `python figma_auth.py` to see which source is in play.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse, json, os, re, sys, tempfile, urllib.request, urllib.error
 
 # Windows consoles are cp1252 by default, so ONE non-ASCII glyph raises UnicodeEncodeError and

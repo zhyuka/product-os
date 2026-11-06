@@ -47,6 +47,11 @@ BLIND TO what the steps do; it counts launches (LAUNCHES), it does not check the
 answers any local process on its port while it is up. A folder reaped by pid could in principle
 belong to a new process that reused the pid; it is then only reaped later.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import contextlib, json, os, re, shutil, signal, sys, tempfile, time, urllib.parse
 
 if os.path.dirname(os.path.realpath(__file__)) not in sys.path: sys.path.append(os.path.dirname(os.path.realpath(__file__)))

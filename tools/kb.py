@@ -106,6 +106,11 @@ after it. A `none` with no --cite is marked apart there (bare).
 
 History: the store need not be in a git repo, so every add appends the whole entry to log.jsonl.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse
 import contextlib
 import datetime as dt

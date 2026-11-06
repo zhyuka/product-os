@@ -56,6 +56,11 @@ NOT COPIED. ~/.claude/history.jsonl (a dot-folder in a cloud drive is not reliab
 Exit 0 when every file is copied or current; 1 when any file failed (each is named); 2 when it could
 not run: no backup folder configured or it is missing, or ~/.claude/projects is missing.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse
 import contextlib
 import datetime

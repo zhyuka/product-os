@@ -224,6 +224,11 @@ NOTE: the REST API cannot @-mention, cannot edit a comment, and cannot resolve a
 the mention and figma_attach.py the edit, both in the browser; resolving stays in the UI, so do not
 promise it in a reply.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import atexit, hashlib, json, os, re, shutil, sys, tempfile, time, urllib.request, urllib.error
 
 import figma_auth

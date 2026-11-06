@@ -49,6 +49,11 @@ Exit codes
   2  nothing to audit (root missing or not configured), so any claim about it is vacuous
   2  also when a check had nothing to inspect and no other check failed (PARTIAL)
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 
 import argparse
 import json

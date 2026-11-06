@@ -29,6 +29,11 @@ Each tool finds markers in the folders it reads, before it reads any: recall.py 
 transcripts folders, log_extract.py in recall's notes folders. A marker outside those folders is never
 found.
 """
+import os
+import sys
+# Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
+if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
+    sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import collections
 import datetime
 import json
