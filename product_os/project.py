@@ -425,7 +425,12 @@ def named_files(check, root):
     for word in words:
         if not word or "{" in word:
             continue
-        path = (root / word).resolve()
+        try:
+            path = (root / word).resolve()
+        except (OSError, ValueError):
+            # A word no path can hold names no file: an inline `python -c` program on Windows,
+            # where Python 3.9's resolve() raises on such a name, or a NUL anywhere.
+            continue
         if root not in path.parents or not path.exists():
             continue
         if path.is_dir() and (path == target or path in target.parents):

@@ -155,6 +155,26 @@ class ProveTest(ProjectTest):
                           "checks/cases/no-print/good/app.py"],
                          "a folder that holds the target is left out, and a file is listed once")
 
+    def test_a_word_no_path_can_hold_names_no_file(self):
+        # An inline `python -c` program is a word Python 3.9's resolve() raises on, on Windows,
+        # and a NUL makes every Python raise. Such a word names no file, and the rest still count.
+        def named(run):
+            check = project.parse([{**NO_PRINT, "run": run}], "test", "test")[0]
+            return [p.relative_to(self.root).as_posix() for p in project.named_files(check, self.root)]
+
+        inline = ["{python}", "-c", "import sys; sys.exit(0)", "checks/no_print.py", "{target}"]
+        self.assertEqual(named(inline + ["a\0b"]), ["checks/no_print.py"])
+        real = Path.resolve
+
+        def windows_39(path, *args, **kwargs):
+            if ";" in path.name:
+                raise OSError(22, "The filename, directory name, or volume label syntax is incorrect",
+                              str(path), 123)
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "resolve", windows_39):
+            self.assertEqual(named(inline), ["checks/no_print.py"])
+
     def test_check_prove_runs_the_cases_instead_of_trusting_the_record(self):
         # A record can be written by hand. --prove, which CI runs, runs the cases again.
         self.configure(NEVER_OBJECTS)
