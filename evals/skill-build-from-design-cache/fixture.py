@@ -9,5 +9,5 @@ FRAME = '{"id":"1:1","type":"FRAME","name":"Release plan / Desktop","clipsConten
 os.makedirs(".figma-check", exist_ok=True)
 with open("index.html", "w", encoding="utf-8") as f:
     f.write(PAGE)
-with open(os.path.join(".figma-check", "FIXTUREKEY-1-1.json"), "w", encoding="utf-8") as f:
+with open(os.path.join(".figma-check", "FIXTUREKEY-1-1-paths.json"), "w", encoding="utf-8") as f:
     json.dump(json.loads(FRAME), f)

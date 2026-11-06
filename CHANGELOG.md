@@ -2,6 +2,10 @@
 
 Each version here matches `version` in `.claude-plugin/plugin.json`, the marketplace entry in `.claude-plugin/marketplace.json`, and `pyproject.toml`. Claude Code installs an update only when that number changes.
 
+## Unreleased
+
+- `build-from-design`'s design check tells which icon is drawn. It reads the frames with Figma's shape paths (`geometry=paths`), draws each icon's paths and the build's SVG in the page's browser, and compares them to 1/64 px, so an unturned chevron-down in chevron-up's place, or another icon of the same size, is a miss. An icon whose paths are missing is DID NOT RUN, and the check exits 2. Frames cached before this are read again.
+
 ## 0.1.0
 
 The first release.

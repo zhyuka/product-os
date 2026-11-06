@@ -6,16 +6,20 @@ where the design puts it, and it is smoothed the way Figma draws text. For every
 (a LINE layer) and every side of a box's stroke, it checks the rows the page draws it on and its
 colour, and a line's run. For every box with a solid fill, it reads the fill where no child
 covers it. For every icon (an instance, frame or group of at most 64px holding only vector
-shapes), it checks the box, the turn, the drawn shape's box, the stroke and the colour. Lines,
-edges and fills are read from a full-page picture, everything else from the page's own values. It
-prints how many checks were met, lists every miss, and names what it doesn't compare. Zero-width
-characters in Figma's copy are ignored.
+shapes), it checks the box, the turn, the drawn shape's box, the shape itself, the stroke and the
+colour. The shape is Figma's own paths for the icon (each vector's fillGeometry and
+strokeGeometry) drawn in the page's browser beside the build's SVG, each in its own box as the
+page turns it, and compared point by point. Lines, edges and fills are read from a full-page
+picture, everything else from the page's own values. It prints how many checks were met, lists
+every miss, and names what it doesn't compare. Zero-width characters in Figma's copy are ignored.
 
 Every value is compared exactly, at the precision the browser keeps. A length matches when it is
 the same length in Chrome's layout steps of 1/64 px (Figma's 19.2px can only be laid out as
 19.1875px). A CSS colour matches when each channel is Figma's value rounded to 8 bits. A drawn
-pixel matches when it is one of the two 8-bit values either side of Figma's exact blend. Nothing
-else is allowed: a value off by one step or more is a miss.
+pixel matches when it is one of the two 8-bit values either side of Figma's exact blend. An icon's
+shape matches when no point of either drawing is more than 1/64 px from the other. Nothing else is
+allowed: a value off by one step or more is a miss. A check that can't be made, such as an icon
+whose Figma paths are missing, prints DID NOT RUN and is never counted as met.
 
   python figma_check.py <page url or path> --file <figma file key> --frame <node id> [--frame <node id> ...]
                         [--root <css selector>] [--json <out.json>] [--shots <dir>] [--cache <dir>]
@@ -28,13 +32,15 @@ frames as the check does but needs no browser, so it prints even where the check
 
 Each --frame is measured at its own width, so pass the desktop frame and the phone frame (and any
 other width the design draws). Figma values come from Figma's REST API with a personal access
-token in FIGMA_TOKEN, and are cached in .figma-check/ (or --cache <dir>). Where the plugin's Figma
-client is found (figma_client.py in FIGMA_CLIENT_DIR, else in the plugin's tools/ folder under
-CLAUDE_PLUGIN_ROOT or three folders up from this script), the reads go through it and its token
-lookup. --root measures one section of a longer page: its top-left corner stands for the frame's
-top-left corner.
+token in FIGMA_TOKEN, read with their shapes' paths (geometry=paths) and cached in .figma-check/
+(or --cache <dir>) under names that say so, so a cache read without paths is never used. Where
+the plugin's Figma client is found (figma_client.py in FIGMA_CLIENT_DIR, else in the plugin's
+tools/ folder under CLAUDE_PLUGIN_ROOT or three folders up from this script), the reads go through
+it and its token lookup. --root measures one section of a longer page: its top-left corner stands
+for the frame's top-left corner.
 
-Exit codes: 0 every check met, 1 some checks missed, 2 the check could not run.
+Exit codes: 0 every check met, 1 some checks missed, 2 the check could not run or some of its
+checks did not.
 Needs Python 3.9+, `pip install playwright pillow` and `python -m playwright install chromium`.
 """
 import argparse, base64, io, json, math, os, re, sys, urllib.request, urllib.parse
@@ -43,9 +49,9 @@ STEP = 1 / 64  # Chrome lays out in 1/64 px: lengths closer than this are the sa
 EXACT = 1e-3  # px: font size, line height and letter spacing are kept as decimals, not in steps
 NEAR = 8  # px: how far from Figma's place an icon or line is looked for, to name how far off it is
 NOT_COMPARED = ("corner radii, shadows and other effects, gradient and image fills, images, padding (seen "
-                "only through where text, lines and edges land), the path of an icon's shape (two icons with "
-                "the same box and stroke, such as a chevron up and down, can't be told apart), and vector "
-                "shapes outside an icon")
+                "only through where text, lines and edges land), and vector shapes outside an icon")
+SHAPE_SCALE = 64  # an icon's shape is drawn at 64 canvas pixels to the CSS px: one pixel is one layout step
+SHAPE_MARGIN = 4  # px drawn round an icon's box, for a stroke Figma lets run past it
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -95,24 +101,31 @@ def figma_get(path):
         return json.loads(r.read().decode("utf-8"))
 
 
+def cache_file(cache_dir, file_key, node_id):
+    """Where a frame read with its paths is cached. The name says geometry=paths, so a frame cached
+    by an older check, read without them, is read again rather than taken for one that has them."""
+    return os.path.join(cache_dir, f"{file_key}-{node_id.replace(':', '-')}-paths.json")
+
+
 def fetch_frames(file_key, ids, cache_dir=".figma-check"):
-    """Figma REST nodes for these ids, cached on disk. Returns {id: document}."""
+    """Figma REST nodes for these ids, with their shapes' paths (geometry=paths), cached on disk.
+    Returns {id: document}."""
     os.makedirs(cache_dir, exist_ok=True)
     out, missing = {}, []
     for i in ids:
-        f = os.path.join(cache_dir, f"{file_key}-{i.replace(':', '-')}.json")
+        f = cache_file(cache_dir, file_key, i)
         if os.path.exists(f):
             out[i] = json.load(open(f, encoding="utf-8"))
         else:
             missing.append(i)
     if missing:
-        data = figma_get(f"files/{file_key}/nodes?" + urllib.parse.urlencode({"ids": ",".join(missing)}))
+        data = figma_get(f"files/{file_key}/nodes?" + urllib.parse.urlencode({"ids": ",".join(missing), "geometry": "paths"}))
         for i in missing:
             node = (data.get("nodes") or {}).get(i)
             if not node:
                 raise SystemExit(f"could not run: Figma returned nothing for frame {i}")
             out[i] = node["document"]
-            json.dump(node["document"], open(os.path.join(cache_dir, f"{file_key}-{i.replace(':', '-')}.json"), "w", encoding="utf-8"))
+            json.dump(node["document"], open(cache_file(cache_dir, file_key, i), "w", encoding="utf-8"))
     return out
 
 
@@ -218,14 +231,165 @@ def rotation(n):
     return math.degrees(n.get("rotation", 0) or 0)
 
 
+# ---------- an icon's shape, from Figma's paths ----------
+
+GROUPS = ("GROUP", "BOOLEAN_OPERATION")  # Figma lays their children out in the group's parent's space
+PLACED = 0.01  # px: how far a node's transform may put its box from the box Figma states for it
+
+
+def mul(a, b):
+    """Two 2x3 affine transforms (Figma's relativeTransform rows), a after b."""
+    return [[a[0][0] * b[0][0] + a[0][1] * b[1][0], a[0][0] * b[0][1] + a[0][1] * b[1][1], a[0][0] * b[0][2] + a[0][1] * b[1][2] + a[0][2]],
+            [a[1][0] * b[0][0] + a[1][1] * b[1][0], a[1][0] * b[0][1] + a[1][1] * b[1][1], a[1][0] * b[0][2] + a[1][1] * b[1][2] + a[1][2]]]
+
+
+def lands(m, size, bb):
+    """Whether transform m puts a node of this size on its stated box."""
+    pts = [(m[0][0] * x + m[0][1] * y + m[0][2], m[1][0] * x + m[1][1] * y + m[1][2]) for x in (0, size["x"]) for y in (0, size["y"])]
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    got = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+    return all(abs(g - e) <= PLACED for g, e in zip(got, (bb["x"], bb["y"], bb["width"], bb["height"])))
+
+
+def transforms(doc):
+    """Each node's transform from its own space to the canvas, from the relativeTransform a
+    geometry=paths read carries. A node inside a group or boolean operation is laid out in the
+    group's parent's space, as Figma documents; where its stated box says otherwise, the group's
+    own space is tried. A node whose box neither puts it on, or that has no relativeTransform, is
+    left out with everything under it, so an icon holding it can't be drawn."""
+    bb = doc["absoluteBoundingBox"]
+    root = [[1.0, 0.0, bb["x"]], [0.0, 1.0, bb["y"]]]
+    out = {doc["id"]: root}
+
+    def walk(n, own, space):
+        for c in n.get("children", []):
+            rt = c.get("relativeTransform")
+            if not rt:
+                continue
+            tries = [mul(p, rt) for p in ([space, own] if n["type"] in GROUPS else [own])]
+            cb, size = c.get("absoluteBoundingBox"), c.get("size")
+            m = next((t for t in tries if not (cb and size) or lands(t, size, cb)), None)
+            if m is None:
+                continue
+            out[c["id"]] = m
+            walk(c, m, space if c["type"] in GROUPS else m)
+
+    walk(doc, root, root)
+    return out
+
+
+PATH_PART = re.compile(r"[A-Za-z]|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
+PATH_ARGS = {"M": 2, "L": 2, "Q": 4, "C": 6, "Z": 0}
+
+
+def place_path(d, m):
+    """Figma's path, written with the absolute M, L, Q, C and Z its REST geometry uses, moved
+    through transform m. Every point of such a path is an end or control point, so moving each
+    moves the shape exactly. None for any other command."""
+    parts = PATH_PART.findall(d)
+    if re.sub(PATH_PART.pattern, "", d).strip(" ,\t\r\n"):
+        return None
+    out, cmd, nums = [], None, []
+
+    def flush():
+        if cmd is None or (PATH_ARGS[cmd] and (not nums or len(nums) % PATH_ARGS[cmd])) or (not PATH_ARGS[cmd] and nums):
+            return False
+        out.append(cmd)
+        for k in range(0, len(nums), 2):
+            x, y = nums[k], nums[k + 1]
+            out.append(fmt_path(m[0][0] * x + m[0][1] * y + m[0][2]))
+            out.append(fmt_path(m[1][0] * x + m[1][1] * y + m[1][2]))
+        return True
+
+    for p in parts:
+        if p.isalpha():
+            if cmd is not None and not flush():
+                return None
+            if p not in PATH_ARGS:
+                return None
+            cmd, nums = p, []
+        else:
+            nums.append(float(p))
+    if cmd is None or not flush():
+        return None
+    return " ".join(out)
+
+
+def fmt_path(v):
+    s = f"{v:.6f}".rstrip("0").rstrip(".")
+    return "0" if s in ("-0", "") else s
+
+
+def rect_path(w, h):
+    return f"M0 0L{w} 0L{w} {h}L0 {h}Z"
+
+
+def icon_shape(n, tf):
+    """What Figma draws for an icon: each visible fill's fillGeometry and each visible stroke's
+    strokeGeometry under it, moved into the icon's box (its top-left corner at 0,0), with how
+    opaque each is and the box of every frame above it that clips. A boolean operation draws its
+    own result, not its parts. Returns (shapes, None), or (None, why) when Figma's paths or
+    transforms are missing, so the shape is DID NOT RUN, never a pass."""
+    bb = n["absoluteBoundingBox"]
+    shift = [[1.0, 0.0, -bb["x"]], [0.0, 1.0, -bb["y"]]]
+    shapes = []
+
+    def paints(ps):
+        return [p for p in ps or [] if p.get("visible", True) and p.get("opacity", 1) > 0]
+
+    def alpha(ps, op):
+        clear = 1.0
+        for p in ps:
+            clear *= 1 - (p["color"].get("a", 1) if p.get("type") == "SOLID" and p.get("color") else 1) * p.get("opacity", 1)
+        return (1 - clear) * op
+
+    def walk(m, op, clips):
+        if m.get("visible", True) is False or m.get("opacity", 1) == 0:
+            return None
+        op *= m.get("opacity", 1)
+        name = m.get("name") or m["id"]
+        if m.get("isMask"):
+            return f"{name} is a mask, which the check doesn't draw"
+        t = tf.get(m["id"])
+        if t is None:
+            return f"Figma's transform for {name} is missing, or doesn't put it on its box"
+        local = mul(shift, t)
+        for ps, key, drawn in ((m.get("fills"), "fillGeometry", True),
+                               (m.get("strokes"), "strokeGeometry", (m.get("strokeWeight", 1) or 0) > 0 or any((m.get("individualStrokeWeights") or {}).values()))):
+            vis = paints(ps)
+            if not vis or not drawn:
+                continue
+            if key not in m:
+                return f"Figma's paths for {name} are missing: the frames were read without geometry=paths"
+            for g in m[key]:
+                d = place_path(g.get("path", ""), local)
+                if d is None:
+                    return f"Figma's path for {name} uses a command the check doesn't read"
+                shapes.append({"d": d, "rule": "evenodd" if g.get("windingRule") == "EVENODD" else "nonzero",
+                               "alpha": alpha(vis, op), "clips": clips})
+        if m["type"] == "BOOLEAN_OPERATION":
+            return None
+        if m.get("clipsContent") and m.get("size") and m["type"] not in GROUPS:
+            clips = clips + [place_path(rect_path(m["size"]["x"], m["size"]["y"]), local)]
+        for c in m.get("children", []):
+            why = walk(c, op, clips)
+            if why:
+                return why
+        return None
+
+    why = walk(n, 1.0, [])
+    return (None, why) if why else (shapes, None)
+
+
 def frame_shapes(doc):
     """Visible lines, box edges, fills and icons of a frame, with values relative to the frame's
     top-left corner. A line is where Figma draws it (absoluteRenderBounds), with its stroke blended
     over the nearest solid fill behind it; a box's stroke is four such lines, corners left out. A
     fill is read at a point no child covers. An icon is an instance, frame or group of at most 64px
-    whose visible descendants are all vector shapes."""
+    whose visible descendants are all vector shapes; its shape is Figma's paths for it (icon_shape)."""
     ox, oy = doc["absoluteBoundingBox"]["x"], doc["absoluteBoundingBox"]["y"]
     lines, icons, fills = [], [], []
+    tf = transforms(doc)
 
     def rel(bb):
         return [bb["x"] - ox, bb["y"] - oy, bb["width"], bb["height"]]
@@ -332,6 +496,7 @@ def frame_shapes(doc):
             stroked = next((k for k in kids if solid(k.get("strokes"))), None)
             icon = {"kind": "icon", "id": n["id"], "name": n.get("name", ""), "box": rel(bb),
                     "rotation": rotation(n), "glyph": [x1 - ox, y1 - oy, x2 - x1, y2 - y1]}
+            icon["shape"], icon["shape_why"] = icon_shape(n, tf)
             if stroked:
                 rgb, a = solid(stroked.get("strokes"), op)
                 icon["stroke"] = {"weight": stroked.get("strokeWeight", 1), "cap": CAP.get(stroked.get("strokeCap", "NONE"), "butt"),
@@ -469,6 +634,27 @@ ICON_JS = r"""
   const turn = el => { let d = 0; for (let e = el; e && e !== document.documentElement; e = e.parentElement) {
       const t = getComputedStyle(e).transform; if (t && t !== 'none') { const m = new DOMMatrixReadOnly(t); d += Math.atan2(m.b, m.a) * 180 / Math.PI; } }
     d = ((d % 360) + 540) % 360 - 180; return d === -180 ? 180 : d; };
+  // the element's own box to the page: every transform above it, without their moves (the box's
+  // centre lands on its drawn box's centre whatever the origins)
+  const linear = el => { let m = new DOMMatrix();
+    for (let e = el; e && e !== document.documentElement; e = e.parentElement) {
+      const t = getComputedStyle(e).transform;
+      if (t && t !== 'none') { const k = new DOMMatrixReadOnly(t); m = new DOMMatrix([k.a, k.b, k.c, k.d, 0, 0]).multiply(m); } }
+    return [m.a, m.b, m.c, m.d]; };
+  // an inline svg as a file of its own: the values the page's CSS gives each part written on it,
+  // and the parts a <use> takes from elsewhere in the page copied in
+  const PAINT = ['fill', 'fill-opacity', 'fill-rule', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-linecap',
+                 'stroke-linejoin', 'stroke-miterlimit', 'stroke-dasharray', 'stroke-dashoffset', 'opacity', 'display',
+                 'visibility', 'vector-effect', 'clip-rule', 'paint-order'];
+  const own = svg => { const c = svg.cloneNode(true), a = [svg, ...svg.querySelectorAll('*')], b = [c, ...c.querySelectorAll('*')];
+    a.forEach((el, i) => { const cs = getComputedStyle(el); b[i].removeAttribute('class');
+      b[i].setAttribute('style', PAINT.map(p => p + ':' + cs.getPropertyValue(p)).join(';')); });
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    for (const u of c.querySelectorAll('use')) { const h = u.getAttribute('href') || u.getAttribute('xlink:href') || '';
+      const t = h.startsWith('#') && document.getElementById(h.slice(1));
+      if (t && !c.querySelector('#' + CSS.escape(h.slice(1)))) defs.appendChild(t.cloneNode(true)); }
+    if (defs.children.length) c.insertBefore(defs, c.firstChild);
+    return new XMLSerializer().serializeToString(c); };
   const used = new Set();
   return icons.map(ic => {
     let best = null, bestD = Infinity;
@@ -484,8 +670,9 @@ ICON_JS = r"""
     // a page turns clockwise for a positive angle, Figma counter-clockwise
     let op = 1; for (let a = e; a; a = a.parentElement) op *= parseFloat(getComputedStyle(a).opacity);
     const out = {found: true, tag: t, box: rel(r), rotation: -turn(e), size: [parseFloat(cs.width), parseFloat(cs.height)], opacity: op,
-                 centre: [(r.left + r.right) / 2 - rr.left, (r.top + r.bottom) / 2 - rr.top]};
+                 centre: [(r.left + r.right) / 2 - rr.left, (r.top + r.bottom) / 2 - rr.top], linear: linear(e)};
     if (t === 'svg') {
+      out.svg = own(e);
       const shapes = drawn(e);
       if (shapes.length) {
         const bs = shapes.map(s => s.getBoundingClientRect());
@@ -522,6 +709,42 @@ GLYPH_JS = r"""
   if (st) { const c = getComputedStyle(st); out.stroke = {weight: parseFloat(c.strokeWidth), cap: c.strokeLinecap, join: c.strokeLinejoin, color: c.stroke, opacity: parseFloat(c.strokeOpacity)}; }
   else { const c = getComputedStyle(shapes[0]); out.fill = {color: c.fill, opacity: parseFloat(c.fillOpacity)}; }
   d.remove();
+  return out;
+}
+"""
+
+# An icon's shape twice, on a blank page so no page CSS reaches either: Figma's paths, and the
+# build's SVG file in the element's box as the page turns it. Each is drawn black, at `scale` canvas
+# pixels to the px, with `margin` px round its own box, and comes back as a PNG whose alpha is how
+# much of each pixel the shape covers.
+SHAPE_JS = r"""
+async ([shapes, svg, g]) => {
+  const S = g.scale, M = g.margin;
+  const canvas = () => { const c = document.createElement('canvas');
+    c.width = Math.ceil((g.w + 2 * M) * S); c.height = Math.ceil((g.h + 2 * M) * S); return c; };
+  const fc = canvas(), f = fc.getContext('2d');
+  for (const s of shapes) {
+    f.save(); f.setTransform(S, 0, 0, S, M * S, M * S);
+    for (const c of s.clips) f.clip(new Path2D(c));
+    f.globalAlpha = s.alpha; f.fillStyle = '#000'; f.fill(new Path2D(s.d), s.rule); f.restore();
+  }
+  const out = {figma: fc.toDataURL('image/png'), build: null};
+  fc.width = 0;
+  if (!svg) return out;
+  const doc = new DOMParser().parseFromString(svg, 'image/svg+xml'), root = doc.documentElement;
+  if (root.localName !== 'svg' || doc.querySelector('parsererror')) { out.why = 'its SVG does not parse'; return out; }
+  const [W, H] = g.size;
+  if (!root.getAttribute('viewBox')) root.setAttribute('viewBox', '0 0 ' + (parseFloat(root.getAttribute('width')) || W) + ' ' + (parseFloat(root.getAttribute('height')) || H));
+  root.setAttribute('width', W * S); root.setAttribute('height', H * S);
+  const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(root)], {type: 'image/svg+xml'}));
+  const img = new Image(); img.src = url;
+  try { await img.decode(); } catch (e) { out.why = 'its SVG does not draw as an image'; return out; }
+  const bc = canvas(), b = bc.getContext('2d'), L = g.linear;
+  b.setTransform(L[0], L[1], L[2], L[3], (M + g.bw / 2) * S, (M + g.bh / 2) * S);
+  b.drawImage(img, -W * S / 2, -H * S / 2, W * S, H * S);
+  URL.revokeObjectURL(url);
+  out.build = bc.toDataURL('image/png');
+  bc.width = 0;
   return out;
 }
 """
@@ -698,6 +921,50 @@ def css_rgba(paint):
     return [round(p[0]), round(p[1]), round(p[2]), (p[3] if len(p) > 3 else 1) * paint.get("opacity", 1)]
 
 
+def mask(png):
+    """A drawn shape as a mask: 255 where the shape covers more than half of a pixel at the
+    drawing's own opacity (its most opaque pixel), else 0. A data URL or a PIL image."""
+    from PIL import Image
+    if isinstance(png, str):
+        png = Image.open(io.BytesIO(base64.b64decode(png.partition(",")[2])))
+    a = png.convert("RGBA").getchannel("A")
+    peak = a.getextrema()[1]
+    return a.point(lambda v: 255 if peak and 2 * v > peak else 0)
+
+
+def same_shape(a, b, scale=SHAPE_SCALE):
+    """Whether two masks drawn at `scale` pixels to the px are the same shape to 1/scale px: every
+    pixel one covers, the other covers or touches. Returns (same, the area off in px², the box of
+    the pixels off, in px from the drawing's corner)."""
+    from PIL import ImageChops, ImageFilter
+    near_a, near_b = a.filter(ImageFilter.MaxFilter(3)), b.filter(ImageFilter.MaxFilter(3))
+    off = ImageChops.lighter(ImageChops.subtract(a, near_b), ImageChops.subtract(b, near_a))
+    n = off.histogram()[255]
+    box = off.getbbox()
+    return n == 0, n / scale ** 2, [v / scale for v in box] if box else None
+
+
+def shape_check(f, d, page, text):
+    """The icon's shape check: Figma's paths and the build's SVG, each drawn in its own box,
+    the same shape to a layout step. Figma's paths missing is DID NOT RUN, never a pass."""
+    exp = f"Figma's paths for {f['name'] or 'the icon'}"
+    if f.get("shape") is None:
+        return (None, exp, "DID NOT RUN: " + (f.get("shape_why") or "Figma's paths are missing"))
+    if not text:
+        return (False, exp, "unreadable: not an SVG the check can open")
+    g = {"scale": SHAPE_SCALE, "margin": SHAPE_MARGIN, "size": d["size"], "linear": d.get("linear") or [1, 0, 0, 1],
+         "bw": d["box"][2], "bh": d["box"][3], "w": max(f["box"][2], d["box"][2]), "h": max(f["box"][3], d["box"][3])}
+    got = page.evaluate(SHAPE_JS, [f["shape"], text, g])
+    if not got.get("build"):
+        return (False, exp, "unreadable: " + got.get("why", "its SVG does not draw"))
+    ok, area, box = same_shape(mask(got["figma"]), mask(got["build"]))
+    if ok:
+        return (True, exp, "the same shape, to 1/64px")
+    x, y = box[0] - SHAPE_MARGIN, box[1] - SHAPE_MARGIN
+    return (False, exp, f"another shape: {fmt(area)}px² lies more than 1/64px from Figma's, within "
+                        f"{box_text([x, y, box[2] - box[0], box[3] - box[1]])} of the icon's box")
+
+
 def compare_icon(f, d):
     if not d.get("found"):
         return {"icon": (False, f"an img or svg at {box_text(f['box'])}", f"none within {NEAR}px")}
@@ -709,6 +976,8 @@ def compare_icon(f, d):
         checks["drawn shape"] = (all(same(a, b) for a, b in zip(d["glyph"], f["glyph"])), box_text(f["glyph"]), box_text(d["glyph"]))
     else:
         checks["drawn shape"] = (False, box_text(f["glyph"]), "unreadable: not an SVG the check can open")
+    if d.get("shape_check"):
+        checks["icon shape"] = d["shape_check"]
     fs, ds = f.get("stroke"), d.get("stroke")
     say = lambda s: f"{fmt(s['weight'])}px {s['cap']} cap, {s['join']} join" if s else "no stroke"
     if fs or ds:
@@ -733,6 +1002,7 @@ def check(url, frames, root=None, shots=None, plant=None):
     report = {"url": url, "frames": [], "not_compared": NOT_COMPARED}
     with sync_playwright() as pw:
         br = pw.chromium.launch()
+        blank = br.new_page()  # where icon shapes are drawn, away from the page's own CSS
         for fid, doc in frames.items():
             texts, (W, H) = frame_texts(doc)
             lines, icons, fills = frame_shapes(doc)
@@ -753,11 +1023,13 @@ def check(url, frames, root=None, shots=None, plant=None):
                 if "error" in dom:
                     raise RuntimeError(dom["error"])
                 found = pg.evaluate(ICON_JS, [[{"box": i["box"]} for i in icons], root, NEAR]) if icons else []
-                for d in found:
+                for f, d in zip(icons, found):
                     text = svg_text(d["src"]) if d.get("src") else None
                     g = pg.evaluate(GLYPH_JS, text) if text else None
                     if g:
                         place_glyph(g, d)
+                    if d.get("found"):
+                        d["shape_check"] = shape_check(f, d, blank, text or d.get("svg"))
                 picture = Image.open(io.BytesIO(pg.screenshot(full_page=True))).convert("RGB") if (lines or fills) else None
                 if shots:
                     os.makedirs(shots, exist_ok=True)
@@ -780,22 +1052,39 @@ def check(url, frames, root=None, shots=None, plant=None):
                 fr["rows"].append({"text": f"{f['name']} (icon)", "figma_id": f["id"], "checks": compare_icon(f, d)})
             pg.close()
             report["frames"].append(fr)
+        blank.close()
         br.close()
-    met = tot = 0
+    met = tot = dnr = 0
     for fr in report["frames"]:
-        fr["met"] = sum(1 for r in fr["rows"] for v in r["checks"].values() if v[0])
+        fr["met"] = sum(1 for r in fr["rows"] for v in r["checks"].values() if v[0] is True)
+        fr["did_not_run"] = sum(1 for r in fr["rows"] for v in r["checks"].values() if v[0] is None)
         fr["total"] = sum(len(r["checks"]) for r in fr["rows"])
         met += fr["met"]
         tot += fr["total"]
-    report["met"], report["total"] = met, tot
+        dnr += fr["did_not_run"]
+    report["met"], report["total"], report["did_not_run"] = met, tot, dnr
     report["could_not_run"] = [fr["frame"] for fr in report["frames"] if "error" in fr]
     return report
 
 
+def status(rep):
+    if rep["could_not_run"]:
+        return "could not run"
+    if rep["met"] == rep["total"]:
+        return "every check met"
+    dnr = rep.get("did_not_run", 0)
+    return ", ".join((["checks missed"] if rep["total"] - rep["met"] - dnr else []) + ([f"{dnr} did not run"] if dnr else []))
+
+
+def exit_code(rep):
+    if rep["could_not_run"] or rep.get("did_not_run"):
+        return 2
+    return 0 if rep["met"] == rep["total"] else 1
+
+
 def print_report(rep, out=sys.stdout):
     w = out.write
-    status = "could not run" if rep["could_not_run"] else ("every check met" if rep["met"] == rep["total"] else "checks missed")
-    w(f"figma-check: {rep['met']} of {rep['total']} checks met ({status}), every value compared exactly\n")
+    w(f"figma-check: {rep['met']} of {rep['total']} checks met ({status(rep)}), every value compared exactly\n")
     w(f"Not compared: {rep.get('not_compared', NOT_COMPARED)}.\n")
     for fr in rep["frames"]:
         if "error" in fr:
@@ -807,11 +1096,20 @@ def print_report(rep, out=sys.stdout):
           f" page {fr['page_height']}px tall against {fr['height']}px in Figma\n")
         for r in fr["rows"]:
             for name, (ok, exp, got) in r["checks"].items():
-                if not ok:
+                if ok is False:
                     w(f"  MISS  {name:14} \"{r['text'][:44]}\"  expected {exp}, got {got}\n")
+                elif ok is None:
+                    w(f"  DID NOT RUN  {name:14} \"{r['text'][:44]}\"  {got.replace('DID NOT RUN: ', '')}\n")
 
 
 # ---------- self-test ----------
+
+def icon_svg(path, stroke=2):
+    """A 24px icon file drawing one path the way the self-test page's icon is drawn, as a data URL."""
+    return "data:image/svg+xml," + urllib.parse.quote(
+        f'<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="{path}" '
+        f'stroke="#111113" stroke-width="{stroke}" stroke-linecap="round" stroke-linejoin="round"/></svg>')
+
 
 PLANTS = [
     ("heading size", "document.querySelector('h1').style.fontSize='44px'", "size"),
@@ -831,8 +1129,12 @@ PLANTS = [
     ("card fill one step off", "document.querySelector('.card').style.background='#f4f4f6'", "fill"),
     ("icon turned 180 degrees", "document.querySelector('.icon').style.transform='rotate(180deg)'", "icon turn"),
     ("icon 1px across", "document.querySelector('.icon').style.right='25px'", "icon box"),
-    ("icon stroke 2.5px", "document.querySelector('.icon').src='data:image/svg+xml,' + encodeURIComponent('<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M6 9L12 15L18 9\" stroke=\"#111113\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>')", "stroke"),
+    ("icon stroke 2.5px", "document.querySelector('.icon').src=" + json.dumps(icon_svg("M6 15L12 9L18 15", 2.5)), "stroke"),
     ("icon at half opacity", "document.querySelector('.icon').style.opacity='0.5'", "icon colour"),
+    # each of these has the box, turn, drawn-shape box, stroke and colour of Figma's chevron-up, so
+    # only the shape tells them apart, and it must be the one check they miss
+    ("chevron-down, unturned, in chevron-up's place", "document.querySelector('.icon').src=" + json.dumps(icon_svg("M6 9L12 15L18 9")), "icon shape", True),
+    ("a same-box icon of another shape", "document.querySelector('.icon').src=" + json.dumps(icon_svg("M6 15L10 9L14 15L18 9")), "icon shape", True),
 ]
 
 
@@ -841,20 +1143,21 @@ def selftest():
     frames = json.load(open(os.path.join(fx, "figma.json"), encoding="utf-8"))
     page = os.path.join(fx, "page.html")
     good = check(page, frames)
-    ok_good = good["met"] == good["total"] and not good["could_not_run"]
+    ok_good = good["met"] == good["total"] and not good["could_not_run"] and not good["did_not_run"]
     caught = 0
     lines = []
-    for name, js, kind in PLANTS:
+    for name, js, kind, *only in PLANTS:
         rep = check(page, frames, plant=js)
-        missed_kinds = {n for fr in rep["frames"] for r in fr["rows"] for n, v in r["checks"].items() if not v[0]}
-        hit = kind in missed_kinds
+        missed = [(r["text"], n) for fr in rep["frames"] for r in fr["rows"] for n, v in r["checks"].items() if v[0] is False]
+        hit = kind in {n for _, n in missed} and (not only or len(missed) == 1)
         caught += hit
-        lines.append(f"  {'caught' if hit else 'MISSED'}  {name}")
+        lines.append(f"  {'caught' if hit else 'MISSED'}  {name}" + (f" (misses: {missed})" if only and not hit else ""))
     print("\n".join(lines))
     if not ok_good:
         print_report(good)
     print(f"{caught} of {len(PLANTS)} planted mistakes caught; known good page "
-          f"{'passed' if ok_good else 'FAILED'} ({good['met']} of {good['total']})")
+          f"{'passed' if ok_good else 'FAILED'} ({good['met']} of {good['total']}"
+          f"{', %d did not run' % good['did_not_run'] if good['did_not_run'] else ''})")
     return 0 if (ok_good and caught == len(PLANTS)) else 2
 
 
@@ -899,9 +1202,7 @@ def main(argv=None):
     print_report(rep)
     if a.json:
         json.dump(rep, open(a.json, "w", encoding="utf-8"), indent=1)
-    if rep["could_not_run"]:
-        return 2
-    return 0 if rep["met"] == rep["total"] else 1
+    return exit_code(rep)
 
 
 if __name__ == "__main__":

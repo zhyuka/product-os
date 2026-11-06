@@ -30,7 +30,7 @@ class FramesTest(unittest.TestCase):
         check = load()
         with tempfile.TemporaryDirectory() as cache:
             for doc in cached:
-                Path(cache, f"KEY-{doc['id'].replace(':', '-')}.json").write_text(json.dumps(doc), encoding="utf-8")
+                Path(check.cache_file(cache, "KEY", doc["id"])).write_text(json.dumps(doc), encoding="utf-8")
             args = ["--frames", "--file", "KEY", "--cache", cache]
             for fid in ids:
                 args += ["--frame", fid]
@@ -61,6 +61,27 @@ class FramesTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(out.strip(), "Frames: 1:1, widths unknown: could not run: set FIGMA_TOKEN to a Figma "
                                       "personal access token")
+
+
+class PathsTest(unittest.TestCase):
+    def test_frames_are_read_with_their_paths_and_a_cache_without_them_is_not_used(self):
+        check = load()
+        asked = []
+
+        def figma_get(path):
+            asked.append(path)
+            return {"nodes": {"1:1": {"document": frame("1:1", "Desktop", 1440)}}}
+        with tempfile.TemporaryDirectory() as cache:
+            # what the check cached before it read paths
+            Path(cache, "KEY-1-1.json").write_text(json.dumps(frame("1:1", "Old", 1440)), encoding="utf-8")
+            with mock.patch.object(check, "figma_get", figma_get):
+                got = check.fetch_frames("KEY", ["1:1"], cache)
+                again = check.fetch_frames("KEY", ["1:1"], cache)
+            self.assertEqual(got["1:1"]["name"], "Desktop")
+            self.assertEqual(again["1:1"]["name"], "Desktop")
+            self.assertEqual(len(asked), 1)  # the second read came from the cache it wrote
+            self.assertIn("geometry=paths", asked[0])
+            self.assertTrue(Path(check.cache_file(cache, "KEY", "1:1")).exists())
 
 
 class NoBrowserTest(unittest.TestCase):

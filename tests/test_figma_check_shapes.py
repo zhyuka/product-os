@@ -1,6 +1,7 @@
 """figma_check.py's reading of a Figma frame's lines, box edges, fills and icons, and its exact
-comparisons, without a browser."""
+comparisons, without a browser; and, where Playwright is installed, an icon's shape drawn in one."""
 import importlib.util
+import re
 import unittest
 from pathlib import Path
 
@@ -107,6 +108,158 @@ class ShapesTest(unittest.TestCase):
                              "stroke": {"weight": 1.2, "cap": "round", "join": "round"}}, d)
         self.assertAlmostEqual(d["glyph"][0], 341.2, places=1)
         self.assertAlmostEqual(d["glyph"][1], 141.6, places=1)
+
+
+# A chevron-up drawn as a 2px stroke with butt caps and a mitred join, as the polygon Figma fills
+# for it (its strokeGeometry), in the vector's own 12 x 6 space: the line runs 0,6 to 6,0 to 12,6.
+R = 2 ** -0.5
+CHEVRON_UP = [(-R, 6 - R), (6, -2 * R), (12 + R, 6 - R), (12 - R, 6 + R), (6, 2 * R), (R, 6 + R)]
+
+
+def polygon(points):
+    return "M" + "L".join(f"{x} {y}" for x, y in points) + "Z"
+
+
+def geo_icon(nid, x, y, vector_rt, vector_size, points, glyph=None):
+    """A 24px icon instance at x, y holding one stroked vector whose paths a geometry=paths read gave."""
+    gx, gy, gw, gh = glyph or (x + 6, y + 9, 12, 6)
+    return {"id": nid, "type": "INSTANCE", "name": "Icon / chevron-up", "absoluteBoundingBox": box(x, y, 24, 24),
+            "relativeTransform": [[1, 0, x - 1000], [0, 1, y - 2000]], "size": {"x": 24, "y": 24}, "clipsContent": True,
+            "fills": [], "strokes": [], "fillGeometry": [{"path": "M0 0L24 0L24 24L0 24L0 0Z", "windingRule": "NONZERO"}],
+            "children": [{"id": nid + "v", "type": "VECTOR", "name": "Vector", "strokes": solid(17, 17, 19), "strokeWeight": 2,
+                          "strokeCap": "NONE", "strokeJoin": "MITER", "absoluteBoundingBox": box(gx, gy, gw, gh),
+                          "relativeTransform": vector_rt, "size": {"x": vector_size[0], "y": vector_size[1]},
+                          "fillGeometry": [], "strokeGeometry": [{"path": polygon(points), "windingRule": "NONZERO"}]}]}
+
+
+def numbers(d):
+    return [float(v) for v in re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", d)]
+
+
+def draw(fc, shapes, size=24):
+    """Figma's shapes for an icon, as the mask the check compares, drawn here without a browser.
+    Only M, L and Z paths, which these tests use."""
+    from PIL import Image, ImageDraw
+    S, M = fc.SHAPE_SCALE, fc.SHAPE_MARGIN
+    im = Image.new("RGBA", ((size + 2 * M) * S, (size + 2 * M) * S))
+    pen = ImageDraw.Draw(im)
+    for s in shapes:
+        for part in s["d"].split("Z"):
+            v = numbers(part)
+            if v:
+                pen.polygon([((x + M) * S, (y + M) * S) for x, y in zip(v[::2], v[1::2])], fill=(0, 0, 0, 255))
+    return fc.mask(im)
+
+
+class IconShapeTest(unittest.TestCase):
+    def setUp(self):
+        self.fc = load()
+
+    def icon(self, *args, **kw):
+        _, icons, _ = self.fc.frame_shapes(frame(geo_icon("6:1", *args, **kw)))
+        self.assertEqual(len(icons), 1)
+        return icons[0]
+
+    def test_figma_s_paths_are_moved_into_the_icon_s_box(self):
+        icon = self.icon(1336, 2134, [[1, 0, 6], [0, 1, 9]], (12, 6), CHEVRON_UP)
+        self.assertIsNone(icon["shape_why"])
+        self.assertEqual(len(icon["shape"]), 1)  # the instance's box has no visible fill, so only the stroke is drawn
+        got = numbers(icon["shape"][0]["d"])
+        want = [v + (6 if k % 2 == 0 else 9) for k, v in enumerate(numbers(polygon(CHEVRON_UP)))]
+        for g, w in zip(got, want):
+            self.assertAlmostEqual(g, w, places=5)
+        self.assertEqual(icon["shape"][0]["clips"], ["M 0 0 L 24 0 L 24 24 L 0 24 Z"])  # the instance clips
+
+    def test_a_path_moved_or_scaled_into_the_box_is_the_same_shape_and_a_mirrored_one_is_not(self):
+        plain = self.icon(1336, 2134, [[1, 0, 6], [0, 1, 9]], (12, 6), CHEVRON_UP)
+        moved = self.icon(1100, 2210, [[1, 0, 6], [0, 1, 9]], (12, 6), CHEVRON_UP)  # the icon elsewhere in the frame
+        half = [(x / 2, y / 2) for x, y in CHEVRON_UP]
+        scaled = self.icon(1336, 2134, [[2, 0, 6], [0, 2, 9]], (6, 3), half)  # drawn half size, scaled up by its transform
+        mirrored = self.icon(1336, 2134, [[1, 0, 6], [0, -1, 15]], (12, 6), CHEVRON_UP)  # flipped top to bottom
+        self.assertEqual(mirrored["glyph"], plain["glyph"])  # the boxes can't tell them apart
+        base = draw(self.fc, plain["shape"])
+        for name, icon in (("moved", moved), ("scaled", scaled)):
+            same, area, _ = self.fc.same_shape(base, draw(self.fc, icon["shape"]))
+            self.assertTrue(same, f"{name}: {area}px² off")
+        same, area, where = self.fc.same_shape(base, draw(self.fc, mirrored["shape"]))
+        self.assertFalse(same)
+        self.assertGreater(area, 10)
+
+    def test_shapes_match_to_one_layout_step_and_no_further(self):
+        from PIL import ImageChops
+        base = draw(self.fc, self.icon(1336, 2134, [[1, 0, 6], [0, 1, 9]], (12, 6), CHEVRON_UP)["shape"])
+        self.assertTrue(self.fc.same_shape(base, ImageChops.offset(base, 1, 0))[0])  # 1/64 px across
+        same, area, where = self.fc.same_shape(base, ImageChops.offset(base, 2, 1))  # 2/64 px across
+        self.assertFalse(same)
+        self.assertLess(area, 1)
+
+    def test_an_icon_without_figma_s_paths_did_not_run(self):
+        node = geo_icon("6:1", 1336, 2134, [[1, 0, 6], [0, 1, 9]], (12, 6), CHEVRON_UP)
+        del node["children"][0]["strokeGeometry"]
+        _, icons, _ = self.fc.frame_shapes(frame(node))
+        self.assertIsNone(icons[0]["shape"])
+        self.assertIn("geometry=paths", icons[0]["shape_why"])
+        ok, _, got = self.fc.shape_check(icons[0], {"found": True}, page=None, text="<svg/>")
+        self.assertIsNone(ok)
+        self.assertTrue(got.startswith("DID NOT RUN: "))
+        rep = {"could_not_run": [], "met": 90, "total": 91, "did_not_run": 1}
+        self.assertEqual(self.fc.exit_code(rep), 2)
+        self.assertEqual(self.fc.status(rep), "1 did not run")
+
+    def test_an_icon_whose_transform_is_missing_did_not_run(self):
+        node = geo_icon("6:1", 1336, 2134, [[1, 0, 6], [0, 1, 9]], (12, 6), CHEVRON_UP)
+        del node["children"][0]["relativeTransform"]
+        _, icons, _ = self.fc.frame_shapes(frame(node))
+        self.assertIsNone(icons[0]["shape"])
+        self.assertIn("transform", icons[0]["shape_why"])
+
+    def test_figma_s_path_commands_are_moved_exactly(self):
+        m = [[2, 0, 1], [0, -1, 3]]
+        self.assertEqual(self.fc.place_path("M0 0L1 2Q2 3 4 5C1 1 2 2 3 3Z", m), "M 1 3 L 3 1 Q 5 0 9 -2 C 3 2 5 1 7 0 Z")
+        self.assertIsNone(self.fc.place_path("M0 0A1 1 0 0 1 2 2", m))  # an arc, which REST geometry never writes
+        self.assertIsNone(self.fc.place_path("m0 0l1 1", m))
+
+
+def has_browser():
+    try:
+        from playwright.sync_api import sync_playwright  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+@unittest.skipUnless(has_browser(), "needs Playwright and its Chromium")
+class IconShapeInBrowserTest(unittest.TestCase):
+    """The check's own drawing in Chromium: Figma's chevron-up polygon against an SVG file."""
+
+    def svg(self, view, body):
+        return (f'<svg width="24" height="24" viewBox="{view}" fill="none" xmlns="http://www.w3.org/2000/svg">{body}</svg>')
+
+    def path(self, d, width=2):
+        return f'<path d="{d}" stroke="#111113" stroke-width="{width}" stroke-linecap="butt" stroke-linejoin="miter"/>'
+
+    def test_an_svg_path_moved_or_scaled_into_the_box_matches_and_a_mirrored_one_does_not(self):
+        from playwright.sync_api import sync_playwright
+        fc = load()
+        _, icons, _ = fc.frame_shapes(frame(geo_icon("6:1", 1336, 2134, [[1, 0, 6], [0, 1, 9]], (12, 6), CHEVRON_UP)))
+        f = icons[0]
+        cases = {
+            "drawn as in Figma": (self.svg("0 0 24 24", self.path("M6 15L12 9L18 15")), [1, 0, 0, 1], True),
+            "moved into the box": (self.svg("0 0 24 24", '<g transform="translate(6 9)">' + self.path("M0 6L6 0L12 6") + "</g>"), [1, 0, 0, 1], True),
+            "scaled into the box": (self.svg("0 0 48 48", self.path("M12 30L24 18L36 30", 4)), [1, 0, 0, 1], True),
+            "chevron-down turned 180 degrees": (self.svg("0 0 24 24", self.path("M6 9L12 15L18 9")), [-1, 0, 0, -1], True),
+            "mirrored": (self.svg("0 0 24 24", self.path("M6 9L12 15L18 9")), [1, 0, 0, 1], False),
+        }
+        with sync_playwright() as pw:
+            br = pw.chromium.launch()
+            page = br.new_page()
+            try:
+                for name, (text, linear, want) in cases.items():
+                    d = {"found": True, "size": [24, 24], "box": [336, 134, 24, 24], "linear": linear}
+                    ok, _, got = fc.shape_check(f, d, page, text)
+                    self.assertIs(ok, want, f"{name}: {got}")
+            finally:
+                br.close()
 
 
 if __name__ == "__main__":

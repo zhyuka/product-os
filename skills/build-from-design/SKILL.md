@@ -89,11 +89,12 @@ question for a person.
 ## 5. Look at what the check can't see
 
 The check measures text (copy, type, colour, position and smoothing), lines, box edges and solid
-fills, and icons (box, turn, the drawn shape's box, stroke and colour), each exactly: off by one
-step of what the browser keeps is a miss. Its report names what it doesn't compare: corner radii,
-shadows, gradient and image fills, images, padding, which icon is drawn where two share a box and
-stroke, and hover states. Screenshot each width (`--shots <dir>` saves them), put each next to the
-frame's `get_screenshot`, and fix what differs there. List anything you couldn't compare.
+fills, and icons (box, turn, the drawn shape's box, the shape itself from Figma's own paths, stroke
+and colour), each exactly: off by one step of what the browser keeps is a miss. An icon whose
+Figma paths it can't read is DID NOT RUN, never a pass. Its report names what it doesn't compare:
+corner radii, shadows, gradient and image fills, images, padding, and hover states. Screenshot
+each width (`--shots <dir>` saves them), put each next to the frame's `get_screenshot`, and fix
+what differs there. List anything you couldn't compare.
 
 ## 6. Register the check
 
