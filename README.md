@@ -2,9 +2,7 @@
 
 [![tests](https://github.com/zhyuka/product-os/actions/workflows/tests.yml/badge.svg)](https://github.com/zhyuka/product-os/actions/workflows/tests.yml)
 
-Product OS is a Claude Code plugin for building a product with agents, from the first ask to keeping it running. It follows the six stages of Anthropic's [AI-native SDLC playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook): plan, design, build, test, deploy and maintain.
-
-Two rules run through all of it. Each stage leaves a file the next stage reads, so you review files instead of watching edits. And nothing an agent built counts until something other than that agent has checked it: a reviewer that can't edit files, a check proven on a planted bad case, a builder that can't stop before its QA passes.
+Product OS is a Claude Code plugin for building a product with agents, from the first ask to keeping it running. Nothing an agent built counts until something other than that agent has checked it. That means a reviewer that can't edit files, a check proven on a planted bad case, and a builder that can't stop until QA passes. Each stage of the work leaves a file the next stage reads, so you review files instead of watching edits.
 
 It holds 21 skills, 6 agents, 54 Python tools (`product-os --list` names them), a `product-os` command, and hooks for Claude Code.
 
@@ -34,6 +32,8 @@ Playwright: `pip install playwright`, then `playwright install chromium`.
 The exact wording lives in [docs/install.md](docs/install.md).
 
 ## The stages
+
+The six stages, and the files that pass between them, come from Anthropic's [AI-native SDLC playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook). Product OS adds the hooks and checks an agent can't pass for itself, described after this table.
 
 | Stage | Skills and agents | Commands |
 |---|---|---|
