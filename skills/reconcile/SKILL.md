@@ -52,6 +52,8 @@ whose setting is unset is reported as "not set up", and one whose tool exits 2 a
 4. **The project's surfaces**, each accepted `rebase.surfaces` entry whose `pass` is `catch-up`, run
    as `references/surfaces.md` says. Its exit code decides: 0 nothing changed, 1 its lines are
    candidates, anything else "did not run" with the first line of its error.
+   `python3 "${CLAUDE_PLUGIN_ROOT}/skills/reconcile/scripts/open_items.py" --since <last pass>` runs them
+   all that way at once; quote each source's ran or DID NOT RUN line and its closing counts.
 5. **Workspace.** If `scheduled_audits.py` runs on a schedule, read the `today.md` it writes beside
    its log first: each red audit with its failing lines, and what `upkeep.py cleanup` removed and
    kept. If it's from today, re-run only the checks it shows red; if older, or there is none, run
