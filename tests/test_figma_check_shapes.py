@@ -1,6 +1,7 @@
 """figma_check.py's reading of a Figma frame's lines, box edges, fills and icons, and its exact
 comparisons, without a browser; and, where Playwright is installed, an icon's shape drawn in one."""
 import importlib.util
+import math
 import os
 import re
 import sys
@@ -141,18 +142,33 @@ def numbers(d):
 
 
 def draw(fc, shapes, size=24):
-    """Figma's shapes for an icon, as the mask the check compares, drawn here without a browser.
-    Only M, L and Z paths, which these tests use."""
-    from PIL import Image, ImageDraw
+    """Figma's shapes for an icon as the mask the check compares, (width, rows), filled here with
+    the standard library alone: a pixel is in when its centre is inside one of the polygons. Only
+    M, L and Z paths, which these tests use."""
     S, M = fc.SHAPE_SCALE, fc.SHAPE_MARGIN
-    im = Image.new("RGBA", ((size + 2 * M) * S, (size + 2 * M) * S))
-    pen = ImageDraw.Draw(im)
+    w = h = (size + 2 * M) * S
+    rows = [0] * h
     for s in shapes:
         for part in s["d"].split("Z"):
             v = numbers(part)
-            if v:
-                pen.polygon([((x + M) * S, (y + M) * S) for x, y in zip(v[::2], v[1::2])], fill=(0, 0, 0, 255))
-    return fc.mask(im)
+            pts = [((x + M) * S, (y + M) * S) for x, y in zip(v[::2], v[1::2])]
+            if len(pts) < 3:
+                continue
+            edges = list(zip(pts, pts[1:] + pts[:1]))
+            for y in range(max(0, int(min(p[1] for p in pts))), min(h, int(max(p[1] for p in pts)) + 1)):
+                c = y + 0.5
+                xs = sorted(x0 + (c - y0) * (x1 - x0) / (y1 - y0) for (x0, y0), (x1, y1) in edges if (y0 <= c) != (y1 <= c))
+                for a, b in zip(xs[::2], xs[1::2]):
+                    lo, hi = max(0, math.ceil(a - 0.5)), min(w, math.floor(b - 0.5) + 1)
+                    if hi > lo:
+                        rows[y] |= ((1 << (hi - lo)) - 1) << (w - hi)
+    return w, rows
+
+
+def shift(m, dx, dy):
+    """A mask moved dx pixels right and dy down."""
+    w, rows = m
+    return w, [0] * dy + [r >> dx for r in rows[:len(rows) - dy]]
 
 
 class IconShapeTest(unittest.TestCase):
@@ -190,12 +206,23 @@ class IconShapeTest(unittest.TestCase):
         self.assertGreater(area, 10)
 
     def test_shapes_match_to_one_layout_step_and_no_further(self):
-        from PIL import ImageChops
         base = draw(self.fc, self.icon(1336, 2134, [[1, 0, 6], [0, 1, 9]], (12, 6), CHEVRON_UP)["shape"])
-        self.assertTrue(self.fc.same_shape(base, ImageChops.offset(base, 1, 0))[0])  # 1/64 px across
-        same, area, where = self.fc.same_shape(base, ImageChops.offset(base, 2, 1))  # 2/64 px across
+        self.assertTrue(self.fc.same_shape(base, shift(base, 1, 0))[0])  # 1/64 px across
+        self.assertTrue(self.fc.same_shape(base, shift(base, 1, 1))[0])  # and 1/64 px down
+        same, area, where = self.fc.same_shape(base, shift(base, 2, 1))  # 2/64 px across
         self.assertFalse(same)
         self.assertLess(area, 1)
+        # the pixels off run the length of the stroke, so their box is the stroke's, give or take a step
+        M, xs, ys = self.fc.SHAPE_MARGIN, [x + 6 for x, _ in CHEVRON_UP], [y + 9 for _, y in CHEVRON_UP]
+        for got, want in zip(where, (min(xs), min(ys), max(xs), max(ys))):
+            self.assertAlmostEqual(got, M + want, delta=0.1, msg=where)
+
+    def test_a_mask_from_the_browser_reads_its_rows_left_pixel_first(self):
+        import base64
+        # 10 pixels wide, so each row is 2 bytes with 6 bits left over; row 0 has pixel 0, row 1 pixels 8 and 9
+        packed = {"width": 10, "height": 2, "bits": base64.b64encode(bytes([0b10000000, 0, 0, 0b11000000])).decode()}
+        w, rows = self.fc.mask(packed)
+        self.assertEqual((w, rows), (10, [1 << 9, 0b11]))
 
     def test_an_icon_without_figma_s_paths_did_not_run(self):
         node = geo_icon("6:1", 1336, 2134, [[1, 0, 6], [0, 1, 9]], (12, 6), CHEVRON_UP)

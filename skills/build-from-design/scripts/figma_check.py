@@ -737,21 +737,29 @@ GLYPH_JS = r"""
 
 # An icon's shape twice, on a blank page so no page CSS reaches either: Figma's paths, and the
 # build's SVG file in the element's box as the page turns it. Each is drawn black, at `scale` canvas
-# pixels to the px, with `margin` px round its own box, and comes back as a PNG whose alpha is how
-# much of each pixel the shape covers.
+# pixels to the px, with `margin` px round its own box, and comes back as a mask: a pixel is in
+# when the shape covers more than half of it at the drawing's own opacity (its most opaque pixel).
+# The mask is packed one bit a pixel, each row whole bytes, the leftmost pixel in the top bit.
 SHAPE_JS = r"""
 async ([shapes, svg, g]) => {
   const S = g.scale, M = g.margin;
   const canvas = () => { const c = document.createElement('canvas');
     c.width = Math.ceil((g.w + 2 * M) * S); c.height = Math.ceil((g.h + 2 * M) * S); return c; };
+  const pack = c => { const w = c.width, h = c.height, a = c.getContext('2d').getImageData(0, 0, w, h).data;
+    let peak = 0; for (let i = 3; i < a.length; i += 4) if (a[i] > peak) peak = a[i];
+    const rb = Math.ceil(w / 8), bits = new Uint8Array(rb * h);
+    if (peak) for (let y = 0; y < h; y++) for (let x = 0; x < w; x++)
+      if (2 * a[(y * w + x) * 4 + 3] > peak) bits[y * rb + (x >> 3)] |= 128 >> (x & 7);
+    let s = ''; for (let i = 0; i < bits.length; i += 0x8000) s += String.fromCharCode.apply(null, bits.subarray(i, i + 0x8000));
+    c.width = 0;
+    return {width: w, height: h, bits: btoa(s)}; };
   const fc = canvas(), f = fc.getContext('2d');
   for (const s of shapes) {
     f.save(); f.setTransform(S, 0, 0, S, M * S, M * S);
     for (const c of s.clips) f.clip(new Path2D(c));
     f.globalAlpha = s.alpha; f.fillStyle = '#000'; f.fill(new Path2D(s.d), s.rule); f.restore();
   }
-  const out = {figma: fc.toDataURL('image/png'), build: null};
-  fc.width = 0;
+  const out = {figma: pack(fc), build: null};
   if (!svg) return out;
   const doc = new DOMParser().parseFromString(svg, 'image/svg+xml'), root = doc.documentElement;
   if (root.localName !== 'svg' || doc.querySelector('parsererror')) { out.why = 'its SVG does not parse'; return out; }
@@ -765,8 +773,7 @@ async ([shapes, svg, g]) => {
   b.setTransform(L[0], L[1], L[2], L[3], (M + g.bw / 2) * S, (M + g.bh / 2) * S);
   b.drawImage(img, -W * S / 2, -H * S / 2, W * S, H * S);
   URL.revokeObjectURL(url);
-  out.build = bc.toDataURL('image/png');
-  bc.width = 0;
+  out.build = pack(bc);
   return out;
 }
 """
@@ -943,27 +950,34 @@ def css_rgba(paint):
     return [round(p[0]), round(p[1]), round(p[2]), (p[3] if len(p) > 3 else 1) * paint.get("opacity", 1)]
 
 
-def mask(png):
-    """A drawn shape as a mask: 255 where the shape covers more than half of a pixel at the
-    drawing's own opacity (its most opaque pixel), else 0. A data URL or a PIL image."""
-    from PIL import Image
-    if isinstance(png, str):
-        png = Image.open(io.BytesIO(base64.b64decode(png.partition(",")[2])))
-    a = png.convert("RGBA").getchannel("A")
-    peak = a.getextrema()[1]
-    return a.point(lambda v: 255 if peak and 2 * v > peak else 0)
+def mask(packed):
+    """A mask SHAPE_JS packed, as (width, rows): one int a row, its pixel x at bit width-1-x."""
+    w, h = packed["width"], packed["height"]
+    data, rb = base64.b64decode(packed["bits"]), (packed["width"] + 7) // 8
+    return w, [int.from_bytes(data[y * rb:(y + 1) * rb], "big") >> (rb * 8 - w) for y in range(h)]
+
+
+def spread(rows, w):
+    """Each pixel of a mask grown into the eight around it."""
+    full = (1 << w) - 1
+    across = [(r | r << 1 | r >> 1) & full for r in rows]
+    return [across[y] | (across[y - 1] if y else 0) | (across[y + 1] if y + 1 < len(across) else 0) for y in range(len(across))]
 
 
 def same_shape(a, b, scale=SHAPE_SCALE):
-    """Whether two masks drawn at `scale` pixels to the px are the same shape to 1/scale px: every
-    pixel one covers, the other covers or touches. Returns (same, the area off in px², the box of
-    the pixels off, in px from the drawing's corner)."""
-    from PIL import ImageChops, ImageFilter
-    near_a, near_b = a.filter(ImageFilter.MaxFilter(3)), b.filter(ImageFilter.MaxFilter(3))
-    off = ImageChops.lighter(ImageChops.subtract(a, near_b), ImageChops.subtract(b, near_a))
-    n = off.histogram()[255]
-    box = off.getbbox()
-    return n == 0, n / scale ** 2, [v / scale for v in box] if box else None
+    """Whether two masks of one size, drawn at `scale` pixels to the px, are the same shape to
+    1/scale px: every pixel one covers, the other covers or touches. Returns (same, the area off in
+    px², the box of the pixels off as left, top, right, bottom in px from the drawing's corner)."""
+    (w, ra), (_, rb) = a, b
+    near_a, near_b = spread(ra, w), spread(rb, w)
+    off = [(x & ~nb) | (y & ~na) for x, y, na, nb in zip(ra, rb, near_a, near_b)]
+    hit = [i for i, r in enumerate(off) if r]
+    if not hit:
+        return True, 0.0, None
+    n = sum(bin(r).count("1") for r in off)
+    left = min(w - r.bit_length() for r in off if r)
+    right = max(w - (r & -r).bit_length() for r in off if r) + 1
+    return False, n / scale ** 2, [v / scale for v in (left, hit[0], right, hit[-1] + 1)]
 
 
 def shape_check(f, d, page, text):
