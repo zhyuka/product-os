@@ -1,17 +1,21 @@
 """open_items.py, the reconcile skill's runner for rebase.surfaces: its own selftest, run on planted
 sources with no settings of yours in reach, and a run from a fixture list with no settings file."""
 import importlib.util
+import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "skills" / "reconcile" / "scripts" / "open_items.py"
+WINDOWS = os.name == "nt"  # read once, before any test plants os.name
 
 
 class OpenItemsTest(unittest.TestCase):
@@ -44,11 +48,26 @@ def load():
 
 class AsOnWindowsTest(unittest.TestCase):
     """Windows has no /bin/sh, so a source's cmd runs in Git Bash, found as Claude Code finds it for a hook's
-    shell command: CLAUDE_CODE_GIT_BASH_PATH first. Planted here: os.name is "nt", /bin/sh can't be started (as
-    CI's Windows runs said, FileNotFoundError), and CLAUDE_CODE_GIT_BASH_PATH names a stand-in bash."""
+    shell command. Off Windows, setUp plants what windows-latest has: os.name "nt", a /bin/sh that can't start
+    (FileNotFoundError, as CI said), ProgramFiles set to C:\\Program Files with Git for Windows in it, and a Git
+    bash on PATH. On Windows the machine's own Git Bash and PATHEXT do it. No Path() in a test: with os.name
+    "nt", pathlib makes a WindowsPath."""
 
-    def run_as_windows(self, cmd, bash_path):
-        oi = load()
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        self.oi = load()
+        if WINDOWS:
+            return
+        # Off Windows, C:\Program Files joined with Git\bin\bash.exe is a path in the working folder, so it's
+        # planted there.
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.tmp)
+        for bash in (self.tmp / "C:\\Program Files" / "Git" / "bin" / "bash.exe",
+                     self.tmp / "Git" / "usr" / "bin" / "bash"):
+            bash.parent.mkdir(parents=True)
+            os.symlink("/bin/sh", bash)
         real = subprocess.Popen
 
         def no_bin_sh(args, *a, **k):
@@ -56,27 +75,95 @@ class AsOnWindowsTest(unittest.TestCase):
                 raise FileNotFoundError(2, "The system cannot find the file specified")
             return real(args, *a, **k)
 
-        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_GIT_BASH_PATH"}
-        env["PATH"] = os.path.dirname(bash_path or "/nowhere/bash")  # no Git bash found on PATH either
-        if bash_path:
-            env["CLAUDE_CODE_GIT_BASH_PATH"] = bash_path
-        with mock.patch.object(oi.os, "name", "nt"), mock.patch.object(oi.subprocess, "Popen", no_bin_sh), \
-                mock.patch.dict(os.environ, env, clear=True):
-            return oi.run_source({"name": "planted", "cmd": cmd}, os.path.dirname(bash_path or SCRIPT), "2026-11-01")
+        machine = {"ProgramFiles": "C:\\Program Files",
+                   "PATH": str(self.tmp / "Git" / "usr" / "bin") + os.pathsep + os.environ.get("PATH", "")}
+        for p in (mock.patch.dict(os.environ, machine), mock.patch.object(self.oi.os, "name", "nt"),
+                  mock.patch.object(self.oi.subprocess, "Popen", no_bin_sh)):
+            p.start()
+            self.addCleanup(p.stop)
 
-    def test_a_source_runs_in_git_bash(self):
-        with tempfile.TemporaryDirectory() as d:
-            bash = Path(d) / "bash.exe"
-            bash.write_text(f"#!/bin/sh\necho ran > '{d}/used'\nexec /bin/sh \"$@\"\n", encoding="utf-8")
-            bash.chmod(0o755)
-            r = self.run_as_windows('printf "[start now] an item since %s\\n" "$RECONCILE_SINCE"; exit 1', str(bash))
-            self.assertTrue((Path(d) / "used").exists(), r)
+    def hidden(self, git_bash=None):
+        """os.environ with each place the lookup searches taken away: CLAUDE_CODE_GIT_BASH_PATH (git_bash when
+        given), ProgramFiles, and PATH (an empty folder, plus System32 on Windows)."""
+        empty = self.tmp / "empty"
+        empty.mkdir(exist_ok=True)
+        env = {k: v for k, v in os.environ.items()
+               if k.upper() not in ("CLAUDE_CODE_GIT_BASH_PATH", "PROGRAMFILES", "PATH")}
+        env["PATH"] = str(empty)
+        if WINDOWS:
+            env["PATH"] += os.pathsep + os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+        if git_bash:
+            env["CLAUDE_CODE_GIT_BASH_PATH"] = git_bash
+        return env
+
+    def machine_git_bash(self):
+        """The Git Bash windows-latest has: the planted one off Windows, else this machine's."""
+        if not WINDOWS:
+            return str(self.tmp / "C:\\Program Files" / "Git" / "bin" / "bash.exe")
+        found = os.environ.get("CLAUDE_CODE_GIT_BASH_PATH") or os.path.join(
+            os.environ.get("ProgramFiles", r"C:\Program Files"), "Git", "bin", "bash.exe")
+        if not os.path.isfile(found):
+            if "git-bash" in os.environ.get("REQUIRE_SHELLS", ""):
+                self.fail(f"no Git Bash at {found}, and REQUIRE_SHELLS wants one")
+            self.skipTest(f"no Git Bash at {found}")
+        return found
+
+    def run_source(self, cmd, env):
+        with mock.patch.dict(os.environ, env, clear=True):
+            return self.oi.run_source({"name": "planted", "cmd": cmd}, str(self.tmp), "2026-11-01")
+
+    def test_a_source_runs_in_the_git_bash_its_variable_names(self):
+        # ProgramFiles and PATH are hidden, so only CLAUDE_CODE_GIT_BASH_PATH leads to it.
+        r = self.run_source('printf "[start now] an item since %s\\n" "$RECONCILE_SINCE"; exit 1',
+                            self.hidden(self.machine_git_bash()))
         self.assertEqual(r["items"], [("start now", "an item since 2026-11-01")], r)
 
-    def test_no_git_bash_did_not_run_and_names_the_fix(self):
-        r = self.run_as_windows("exit 1", None)
+    def test_each_route_shown_alone_finds_a_git_bash(self):
+        # So the runs here hide routes that work: each one, left visible by itself, leads to a Git Bash.
+        bash = self.machine_git_bash()
+        if WINDOWS:
+            pf, on_path = os.environ.get("ProgramFiles", r"C:\Program Files"), os.path.dirname(bash)
+        else:
+            pf, on_path = "C:\\Program Files", str(self.tmp / "Git" / "usr" / "bin")
+        where = lambda p: os.path.normcase(os.path.join(os.path.realpath(os.path.dirname(p)), os.path.basename(p)))
+        routes = {"CLAUDE_CODE_GIT_BASH_PATH": ({"CLAUDE_CODE_GIT_BASH_PATH": bash}, bash),
+                  "ProgramFiles": ({"ProgramFiles": pf}, os.path.join(pf, "Git", "bin", "bash.exe")),
+                  "PATH": ({"PATH": on_path}, shutil.which("bash", path=on_path) or "(none on PATH)")}
+        for route, (shown, expected) in routes.items():
+            env = self.hidden()
+            env.update(shown)
+            got = self.oi.shell(env)
+            self.assertEqual(where(got) if got else None, where(expected), route)
+
+    def test_with_every_route_hidden_no_git_bash_did_not_run_and_names_the_fix(self):
+        r = self.run_source("exit 1", self.hidden())
         self.assertFalse(r["ran"], r)
         self.assertIn("CLAUDE_CODE_GIT_BASH_PATH", r["why"], r)
+
+    def test_wrap_quotes_a_tool_by_the_name_it_was_given(self):
+        # PATHEXT finds python as python.EXE on Windows (CI's selftest quoted cat.EXE); wrap's error names the tool
+        # as the list entry gave it. Off Windows the lookup is planted: a python.EXE and a PATHEXT search for it.
+        tools = self.tmp / "tools"
+        tools.mkdir()
+        env = dict(os.environ, PATHEXT=".COM;.EXE")
+        if WINDOWS:
+            env["PATH"] = os.path.dirname(sys.executable)
+            which = shutil.which
+        else:
+            os.symlink(os.path.realpath(sys.executable), tools / "python.EXE")
+            env["PATH"] = str(tools)
+
+            def which(name, mode=os.F_OK | os.X_OK, path=None):
+                for d in (path or os.environ.get("PATH", "")).split(os.pathsep):
+                    for ext in os.environ.get("PATHEXT", "").split(";"):
+                        if os.path.isfile(os.path.join(d, name + ext)):
+                            return os.path.join(d, name + ext)
+                return None
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, env), mock.patch.object(self.oi.shutil, "which", which), redirect_stderr(err):
+            code = self.oi.wrap(["--", "python", "-c", "import sys; sys.stderr.write('Error: planted\\n'); sys.exit(1)"])
+        self.assertEqual(code, 2, err.getvalue())
+        self.assertIn("wrap: python exited 1: Error: planted", err.getvalue())
 
     @unittest.skipUnless(os.name == "nt", "PATHEXT is Windows' own lookup")
     def test_wrap_starts_a_tool_found_by_pathext(self):

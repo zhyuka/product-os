@@ -109,13 +109,14 @@ def first_error(out, err):
 
 def shell(env):
     """The POSIX shell a source's cmd runs in, found as Claude Code finds one for a hook's shell command: /bin/sh,
-    or on Windows Git Bash at CLAUDE_CODE_GIT_BASH_PATH, Git for Windows' own folder, or a Git bash on PATH (not
-    System32's, which is WSL's). None when Windows has no Git Bash."""
+    or on Windows Git Bash at CLAUDE_CODE_GIT_BASH_PATH, in Git for Windows' folder under ProgramFiles, or a Git
+    bash on PATH (not System32's, which is WSL's), each read from env alone. None when Windows has no Git Bash."""
     if os.name != "nt":
         return "/bin/sh"
-    on_path = shutil.which("bash", path=env.get("PATH")) or ""
-    for cand in (env.get("CLAUDE_CODE_GIT_BASH_PATH", ""),
-                 os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Git", "bin", "bash.exe"),
+    var = {k.upper(): v for k, v in env.items()}  # Windows reads its variable names in any case
+    on_path = shutil.which("bash", path=var.get("PATH", "")) or ""
+    for cand in (var.get("CLAUDE_CODE_GIT_BASH_PATH", ""),
+                 os.path.join(var["PROGRAMFILES"], "Git", "bin", "bash.exe") if var.get("PROGRAMFILES") else "",
                  on_path if "git" in on_path.lower() else ""):
         if cand and os.path.isfile(cand):
             return cand
@@ -320,16 +321,17 @@ def wrap(argv):
             print(f"wrap: {path} is {hours:.1f} h old, past --max-age {a.max_age:g}", file=sys.stderr)
             return 2
         tail = f" ({os.path.basename(path)} written {hours:.1f} h ago)"
+    name = cmd[0]  # each message names the tool as the entry gave it, not the file PATHEXT found
     if os.name == "nt":  # CreateProcess adds only .exe; PATHEXT finds az.cmd for az
-        cmd = [shutil.which(cmd[0]) or cmd[0]] + cmd[1:]
+        cmd = [shutil.which(name) or name] + cmd[1:]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=CAP - 10)
     except (OSError, subprocess.TimeoutExpired) as e:
-        print(f"wrap: {cmd[0]} could not run: {type(e).__name__}", file=sys.stderr)
+        print(f"wrap: {name} could not run: {type(e).__name__}", file=sys.stderr)
         return 2
     ok = {int(c) for c in a.ok.split(",") if c.strip()}
     if p.returncode not in ok:
-        print(f"wrap: {os.path.basename(cmd[0])} exited {p.returncode}: {first_error(p.stdout, p.stderr)}", file=sys.stderr)
+        print(f"wrap: {os.path.basename(name)} exited {p.returncode}: {first_error(p.stdout, p.stderr)}", file=sys.stderr)
         return 2
     keep = re.compile(a.items)
     drops = [re.compile(d) for d in a.drop]
