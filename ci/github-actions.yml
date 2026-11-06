@@ -35,7 +35,7 @@ jobs:
       # A fixed release from outside the repository, so a change can't edit the checker.
       # For a pin that can't move, put the release's commit SHA in place of the tag.
       - name: Install product-os
-        run: python -m pip install "product-os @ git+https://github.com/zhyuka/product-os@v0.1.0"
+        run: python -m pip install "product-os @ git+https://github.com/zhyuka/product-os@v0.1.1"
       - name: Run the checks
         env:
           BASE: ${{ github.base_ref }}

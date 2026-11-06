@@ -2,8 +2,11 @@
 
 Each version here matches `version` in `.claude-plugin/plugin.json`, the marketplace entry in `.claude-plugin/marketplace.json`, and `pyproject.toml`. Claude Code installs an update only when that number changes.
 
-## Unreleased
+## 0.1.1
 
+- `reconcile` has a runner for its open-items sweep, `skills/reconcile/scripts/open_items.py`. It runs each source in the project's `rebase.surfaces` list with a 5-minute cap, prints ran or DID NOT RUN for each, the count and the top items, then the total, listed, skipped and uncovered. `--surfaces FILE` reads the list from a file instead.
+- The design check finds the Figma client only in the plugin's own `tools/` folder, and no longer reads `FIGMA_CLIENT_DIR`. The client uses that variable for its state folder, so setting it for one meaning broke the other.
+- A tool run through a symlink imports the modules beside its real file, and a tool imported by another no longer puts its own folder ahead of the importer's imports.
 - doclint can lint AGENTS.md and a skill's own files, for a setup whose skills and agent notes are written for people to read. `doclint.lint_names` lists built-in exempt names to lint anyway, such as `["AGENTS.md"]`, and `doclint.exempt_skill_files: false` lints `skills/<name>/<file>.md` outside a plugin. A plugin's `skills/` folder stays exempt. Unset, nothing changes.
 - The README now opens with what Product OS adds: checks an agent can't pass for itself. It credits Anthropic's AI-native SDLC playbook for the six stages and the files between them, instead of saying the plugin follows it.
 - `build-from-design`'s design check tells which icon is drawn. It reads the frames with Figma's shape paths (`geometry=paths`), draws each icon's paths and the build's SVG in the page's browser, and compares them to 1/64 px, so an unturned chevron-down in chevron-up's place, or another icon of the same size, is a miss. An icon whose paths are missing is DID NOT RUN, and the check exits 2. Frames cached before this are read again.

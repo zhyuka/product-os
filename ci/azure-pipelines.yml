@@ -34,7 +34,7 @@ steps:
 
   # A fixed release from outside the repository, so a change can't edit the checker.
   # For a pin that can't move, put the release's commit SHA in place of the tag.
-  - script: python -m pip install "product-os @ git+https://github.com/zhyuka/product-os@v0.1.0"
+  - script: python -m pip install "product-os @ git+https://github.com/zhyuka/product-os@v0.1.1"
     displayName: Install product-os
 
   - script: |
