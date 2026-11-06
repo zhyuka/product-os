@@ -402,9 +402,9 @@ DRAFTISH = re.compile(r"drafts\.md|\bFigma (?:comment|note|draft)s?\b"
 
 def settled_rules():
     """drafts_store's structure rules whose problem means the card asks about a draft that shouldn't be posted as
-    it is, and the own-open check that could not run, which is named, never passed."""
+    it is, and the own-open and ask checks that could not run, which are named, never passed."""
     import drafts_store
-    return ("override", "own-open", drafts_store.OWN_NOT_RUN)
+    return ("ask", "override", "own-open", drafts_store.OWN_NOT_RUN, drafts_store.ASK_NOT_RUN)
 
 
 def drafts_file():

@@ -469,7 +469,7 @@ def structure(text, name, drafts_file=None, files=None, own_check=None, settled=
     ask       a draft under a section naming a file in figma.settled_files asks design something the record
               settles, by figma_post's eighteenth rule (ask_refusal, citing the post command's --asks): fix
               it where the record says, and draft an ask only for what it leaves a question. A check that
-              could not run is listed too, never passed
+              could not run is listed as ask not run, which exits 2, never passed
     cutfile   a Cut row in the drafts file names a node id and no figma.com URL, so it refuses that id in
               every file: add the node's URL
     own-open  a NEW draft in the drafts file links an open root comment of the token owner's, which
@@ -513,6 +513,8 @@ def structure(text, name, drafts_file=None, files=None, own_check=None, settled=
 
 
 OWN_NOT_RUN = "own-open not run"   # listed with the structure problems, but it is a check that didn't run: exit 2
+ASK_NOT_RUN = "ask not run"        # the same for the ask rule
+NOT_RUN = (OWN_NOT_RUN, ASK_NOT_RUN)
 
 
 def own_open_drafts(text, name, own_check=None):
@@ -578,7 +580,9 @@ def ask_drafts(text, name, settled=None, ask_check=None):
         try:
             why = ask_check(body, cid.group(1) if cid else None, None if b["node"] or not b["comment"] else "")
         except Exception as e:  # noqa: BLE001 -- a check that could not run is named, never passed
-            why = f"the ask check did not run ({type(e).__name__}: {e})"
+            out.append((name, b["first"] + 1, ASK_NOT_RUN, f"the ask check did not run ({type(e).__name__}: {e}): "
+                        f"{b['head'][:70]}"))
+            continue
         if why:
             out.append((name, b["first"] + 1, "ask",
                         f"it asks design, and {why}. Fix it where the record says so; draft an ask only for what the "
@@ -813,7 +817,7 @@ def count_line(r):
 
 def stale_exit(r):
     act = any(h["verdict"] not in ("held", "not checked") for h in r["holds"])
-    found = [x for x in r["structure"] if x[2] != OWN_NOT_RUN]
+    found = [x for x in r["structure"] if x[2] not in NOT_RUN]
     if act or found or r["cut_gone"]:
         return 1
     return 2 if (r["unread"] or r["cut_unread"] or len(found) < len(r["structure"])
@@ -1167,8 +1171,13 @@ def selftest_stale(case):
         raise RuntimeError("planted")
     got = {(x[2], x[1]): x[3] for x in structure(ASK_DRAFTS, "drafts.md", True, set(), lambda k, b: [],
                                                   {"PlantedFileKey00000001"}, broken)}
-    case("a check that could not run is listed as an ask that did not run, never passed",
-         "did not run (RuntimeError: planted)" in got.get(("ask", aat("Band name")), ""))
+    case("a check that could not run is listed as ask not run, never as an ask or a pass",
+         "did not run (RuntimeError: planted)" in got.get((ASK_NOT_RUN, aat("Band name")), "")
+         and ("ask", aat("Band name")) not in got)
+    down = [x for x in structure(ASK_DRAFTS, "drafts.md", True, set(), lambda k, b: [], {"PlantedFileKey00000001"},
+                                 broken)]
+    case("... and a stale run whose only problem is an ask not run exits 2, not 1",
+         stale_exit({"holds": [], "cut_gone": [], "cut_unread": None, "unread": [], "structure": down}) == 2)
     calls.clear()
     case("with no file in figma.settled_files, the ask rule reads nothing",
          not [x for x in structure(ASK_DRAFTS, "drafts.md", True, set(), lambda k, b: [], set(), asked)

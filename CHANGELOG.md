@@ -4,7 +4,7 @@ Each version here matches `version` in `.claude-plugin/plugin.json`, the marketp
 
 ## Unreleased
 
-- figma_post refuses a comment that asks design something your record already settles, on the files you list in `figma.settled_files` (its eighteenth rule). It runs on `new`, `reply`, a batch `edit` and `figma_attach.py edit`. `--asks <id>` (batch: `"asks"`) names the record entry an ask is about. Your own command in `figma.settled_cmd` says what the record holds: it reads one JSON request on stdin and prints each reason, and a listed file with no command refuses every ask. drafts_store runs the same rule on drafts still in the drafts file (rule `ask`). Unset, nothing changes.
+- figma_post refuses a comment that asks design something your record already settles, on the files you list in `figma.settled_files` (its eighteenth rule). It runs on `new`, `reply`, a batch `edit` and `figma_attach.py edit`. `--asks <id>` (batch: `"asks"`) names the record entry an ask is about. Your own command in `figma.settled_cmd` says what the record holds: it reads one JSON request on stdin and prints each reason, and a listed file with no command refuses every ask. drafts_store runs the same rule on drafts still in the drafts file (rule `ask`, or `ask not run`, which exits 2, when the command couldn't judge a draft), and card_check counts both. Unset, nothing changes.
 
 ## 0.1.1
 

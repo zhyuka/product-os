@@ -178,7 +178,8 @@ layer's lineage, page first}, prints each reason a line, and exits 0 for none, 1
 could not run. ask_refusal is the same rule on a text alone, with no layer ("node" null), for a draft
 still in the drafts file (drafts_store). A file in figma.settled_files with no command, or a command
 that can't run, refuses: the rule never passes unread. figma.settled_cmd runs a command, so a project's
-own config sets it only once accepted (product-os accept).
+own config sets it only once accepted: `python kit_config.py accept figma.settled_cmd`, run in the
+project's folder.
 
 LINKS. Each line this file prints that names a node ends with that node's link (figma_comments.linked), so
 whichever line is copied opens the node; the posted and replied lines end with the thread's link. The text
@@ -1014,7 +1015,8 @@ def settled(request):
     except ImportError:
         cmd = None
     if not cmd:
-        return [], "figma.settled_cmd is not set, or this project's value is not accepted (product-os accept)"
+        return [], ("figma.settled_cmd is not set, or this project's value is not accepted (`python kit_config.py "
+                    "accept figma.settled_cmd`, in the project's folder)")
     import shlex, subprocess
     try:
         p = subprocess.run(shlex.split(cmd) if isinstance(cmd, str) else [str(c) for c in cmd],
@@ -1029,14 +1031,20 @@ def settled(request):
     return [], f"figma.settled_cmd exited {p.returncode}" + (f": {lines[-1][:200]}" if lines else "")
 
 
+class SettledNotRun(RuntimeError):
+    """THE EIGHTEENTH RULE could not judge a text: figma.settled_cmd is unset, unaccepted or failed."""
+
+
 def ask_refusal(text, cid=None, old=None):
     """THE EIGHTEENTH RULE on a text alone, with no Figma read: None when the text does not ask, or when
-    figma.settled_cmd finds no reason; else why not. settled_gate adds what needs the layer."""
+    figma.settled_cmd finds no reason; else why not. Raises SettledNotRun when the command did not run, so a
+    caller lists it as a check that didn't run, never as a refusal or a pass. settled_gate adds what needs the
+    layer."""
     if not is_ask(text, old):
         return None
     reasons, why = settled({"asks": True, "cites": cid, "node": None, "path": None})
     if why:
-        return f"THE EIGHTEENTH RULE did not run: {why}"
+        raise SettledNotRun(f"THE EIGHTEENTH RULE did not run: {why}")
     return "; ".join(reasons) or None
 
 
@@ -1910,8 +1918,14 @@ def settled_selftest(case, tmp):
         case("a command that did not run refuses: the rule never passes unread",
              got if got and "did not run" in got else None, True)
         case("ask_refusal: a text that does not ask is None", ask_refusal("Done, thanks.", None, ""), False)
-        got = ask_refusal("Q: which?", "c-1")
-        case("ask_refusal: a command that did not run says so", got if got and "did not run" in got else None, True)
+        try:
+            got = ask_refusal("Q: which?", "c-1")
+        except SettledNotRun as e:
+            got = str(e)
+        else:
+            got = None
+        case("ask_refusal: a command that did not run raises SettledNotRun, so it is never read as a pass or a refusal",
+             got if got and "did not run" in got else None, True)
         SETTLED = lambda req: seen.append(req) or (["planted reason"], None)
         got = ask_refusal("Q: which?", "c-1")
         case("ask_refusal: an ask the record settles gives the reason, with no layer",
