@@ -34,16 +34,16 @@ Each --frame is measured at its own width, so pass the desktop frame and the pho
 other width the design draws). Figma values come from Figma's REST API with a personal access
 token in FIGMA_TOKEN, read with their shapes' paths (geometry=paths) and cached in .figma-check/
 (or --cache <dir>) under names that say so, so a cache read without paths is never used. Where
-the plugin's Figma client is found (figma_client.py in FIGMA_CLIENT_DIR, else in the plugin's
-tools/ folder under CLAUDE_PLUGIN_ROOT or three folders up from this script), the reads go through
-it and its token lookup. --root measures one section of a longer page: its top-left corner stands
-for the frame's top-left corner.
+the plugin's Figma client is found (figma_client.py in the plugin's tools/ folder, under
+CLAUDE_PLUGIN_ROOT or three folders up from this script), the reads go through it and its token
+lookup; FIGMA_CLIENT_DIR is that client's state folder and is never searched for it. --root
+measures one section of a longer page: its top-left corner stands for the frame's top-left corner.
 
 Exit codes: 0 every check met, 1 some checks missed, 2 the check could not run or some of its
 checks did not.
 Needs Python 3.9+, `pip install playwright pillow` and `python -m playwright install chromium`.
 """
-import argparse, base64, io, json, math, os, re, sys, urllib.request, urllib.parse
+import argparse, base64, importlib.util, io, json, math, os, re, sys, urllib.request, urllib.parse
 
 STEP = 1 / 64  # Chrome lays out in 1/64 px: lengths closer than this are the same length on the page
 EXACT = 1e-3  # px: font size, line height and letter spacing are kept as decimals, not in steps
@@ -75,23 +75,45 @@ def fmt(v):
 
 # ---------- Figma side ----------
 
-def figma_get(path):
-    """GET one Figma REST path, parsed. Where the plugin's Figma client is found (figma_client.py in
-    FIGMA_CLIENT_DIR, else in tools/ under CLAUDE_PLUGIN_ROOT or three folders up from this script)
-    the call goes through it: one rate budget with every other Figma tool on the machine, a 429
-    waited out, each call logged; its token comes from figma_auth.py beside it. Anywhere else the
-    call goes straight to the API with FIGMA_TOKEN."""
+def client_dir():
+    """The plugin's tools/ folder, when it holds figma_client.py: under CLAUDE_PLUGIN_ROOT, else three
+    folders up from this script. Never FIGMA_CLIENT_DIR, which figma_client.py and the tools beside
+    it read as the client's own state, cache and log folder, not where its code is."""
     plugin = os.environ.get("CLAUDE_PLUGIN_ROOT")
-    dirs = [os.environ.get("FIGMA_CLIENT_DIR"), plugin and os.path.join(plugin, "tools"),
-            os.path.join(HERE, os.pardir, os.pardir, os.pardir, "tools")]
-    d = next((x for x in dirs if x and os.path.exists(os.path.join(x, "figma_client.py"))), "")
+    for d in (plugin and os.path.join(plugin, "tools"), os.path.join(HERE, os.pardir, os.pardir, os.pardir, "tools")):
+        if d and os.path.exists(os.path.join(d, "figma_client.py")):
+            return os.path.normpath(d)
+    return None
+
+
+_CLIENTS = {}
+
+
+def load_client(d):
+    """figma_client.py from folder d, loaded from its own path, so a figma_client imported from
+    anywhere else, or found first on sys.path, is never used in its place."""
+    path = os.path.join(d, "figma_client.py")
+    if path not in _CLIENTS:
+        name = "_figma_check_client_%d" % len(_CLIENTS)
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+        _CLIENTS[path] = module
+    return _CLIENTS[path]
+
+
+def figma_get(path):
+    """GET one Figma REST path, parsed. Where the plugin's Figma client is found (client_dir) the
+    call goes through it: one rate budget with every other Figma tool on the machine, a 429 waited
+    out, each call logged; its token comes from figma_auth.py beside it. Anywhere else the call goes
+    straight to the API with FIGMA_TOKEN."""
+    d = client_dir()
     if d:
-        if d not in sys.path:
-            sys.path.append(d)
-        import figma_client
+        client = load_client(d)
         try:
-            return figma_client.get(path, default_lane="batch", tool="figma_check")
-        except figma_client.NoToken:
+            return client.get(path, default_lane="batch", tool="figma_check")
+        except client.NoToken:
             raise SystemExit(f"could not run: no Figma token; `python {d}/figma_auth.py --source` says where it looked")
     token = os.environ.get("FIGMA_TOKEN")
     if not token:

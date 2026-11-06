@@ -1,9 +1,13 @@
 """figma_check.py's reading of a Figma frame's lines, box edges, fills and icons, and its exact
 comparisons, without a browser; and, where Playwright is installed, an icon's shape drawn in one."""
 import importlib.util
+import os
 import re
+import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "skills" / "build-from-design" / "scripts" / "figma_check.py"
@@ -260,6 +264,51 @@ class IconShapeInBrowserTest(unittest.TestCase):
                     self.assertIs(ok, want, f"{name}: {got}")
             finally:
                 br.close()
+
+
+# figma_client.py reads FIGMA_CLIENT_DIR as its own state, cache and log folder. A state folder can
+# hold anything, so the one planted there writes a mark if it is ever run.
+PLANTED = ("import os\nclass NoToken(Exception):\n    pass\ndef get(path, **kw):\n"
+           "    open(os.path.join(os.path.dirname(__file__), 'planted-client-ran'), 'w').write(path)\n"
+           "    return {'from': 'the state folder'}\n")
+PLUGIN = "class NoToken(Exception):\n    pass\ndef get(path, **kw):\n    return {'from': 'the plugin'}\n"
+
+
+class ClientTest(unittest.TestCase):
+    """Where the check finds the plugin's Figma client: in the plugin's tools/ folder only."""
+
+    def call(self, env):
+        """figma_get with this environment, from a clean import state, put back afterwards."""
+        fc = load()
+        module, path = sys.modules.pop("figma_client", None), list(sys.path)
+        try:
+            with mock.patch.dict(os.environ, env):
+                return fc.figma_get("files/KEY/nodes?ids=1:1")
+        finally:
+            sys.modules.pop("figma_client", None)
+            if module is not None:
+                sys.modules["figma_client"] = module
+            sys.path[:] = path
+
+    def test_a_state_folder_in_figma_client_dir_is_never_read_as_the_client(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state, tools = Path(tmp, "state"), Path(tmp, "plugin", "tools")
+            state.mkdir()
+            tools.mkdir(parents=True)
+            (state / "bucket.json").write_text("{}", encoding="utf-8")
+            (state / "figma_client.py").write_text(PLANTED, encoding="utf-8")
+            (tools / "figma_client.py").write_text(PLUGIN, encoding="utf-8")
+            before = sorted(str(p.relative_to(state)) for p in state.rglob("*"))
+            got = self.call({"FIGMA_CLIENT_DIR": str(state), "CLAUDE_PLUGIN_ROOT": str(tools.parent)})
+            self.assertEqual(got, {"from": "the plugin"})
+            self.assertEqual(sorted(str(p.relative_to(state)) for p in state.rglob("*")), before)  # nothing written there
+
+    def test_without_claude_plugin_root_the_client_is_the_one_three_folders_up(self):
+        with tempfile.TemporaryDirectory() as state:
+            fc = load()
+            with mock.patch.dict(os.environ, {"FIGMA_CLIENT_DIR": state}):
+                os.environ.pop("CLAUDE_PLUGIN_ROOT", None)
+                self.assertEqual(Path(fc.client_dir()), ROOT / "tools")
 
 
 if __name__ == "__main__":
