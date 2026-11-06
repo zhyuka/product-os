@@ -88,7 +88,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import ado_links  # a bare #1234 in the body goes out as a link (ado_links.py)
 import kit_config
 

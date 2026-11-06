@@ -53,7 +53,7 @@ except Exception:
 
 # Which logs exist is cc_logs.py's job: every Claude Code log on this machine, on disk or inside a backup
 # zip. Reading two fixed folders would miss every archived and backed-up log.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import cc_logs  # noqa: E402
 import seals as sealing  # noqa: E402  the .recall-sealed rule, shared with recall.py
 

@@ -57,7 +57,7 @@ def _get(url, raw=False):
     person waits on it): the client reads a 429's Retry-After and waits it out. A full URL on the API host (a
     versions next_page link) goes the same way. A render URL Figma hands back, on another host, is
     fetched as it is, with no token. Anything else that fails is DID NOT RUN, exit 2."""
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
     import figma_client
     try:
         if "://" in url and urllib.parse.urlsplit(url).netloc != figma_client.FIGMA_HOST:
@@ -110,14 +110,14 @@ def render(key, frame, version=None):
 
 
 def _client():
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
     import figma_client
     return figma_client
 
 
 def _linked(key, text):
     """text with each line ending in the link of every node id on it, in file `key`."""
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
     import figma_comments
     return figma_comments.linked(key, text)
 

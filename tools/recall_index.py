@@ -50,7 +50,7 @@ which stays in the index, never searched, until `update --rebuild`.
 """
 import argparse, collections, fcntl, hashlib, io, json, os, sqlite3, subprocess, sys, time, zipfile, zlib
 
-TOOLS = os.path.dirname(os.path.abspath(__file__))
+TOOLS = os.path.dirname(os.path.realpath(__file__))
 if TOOLS not in sys.path:
     sys.path.insert(0, TOOLS)
 import cc_logs  # noqa: E402

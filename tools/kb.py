@@ -120,7 +120,7 @@ import sys
 import tempfile
 import time
 
-TOOLS = os.path.dirname(os.path.abspath(__file__))
+TOOLS = os.path.dirname(os.path.realpath(__file__))
 if TOOLS not in sys.path:
     sys.path.insert(0, TOOLS)
 import kit_config  # noqa: E402

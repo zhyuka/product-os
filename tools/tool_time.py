@@ -56,7 +56,7 @@ import sys
 import tempfile
 
 HOME = os.path.expanduser('~')
-TOOLS = os.path.dirname(os.path.abspath(__file__))
+TOOLS = os.path.dirname(os.path.realpath(__file__))
 LOGS = os.path.join(HOME, '.claude*', 'projects', '**', '*.jsonl')
 STATE = os.path.join(HOME, '.cache', 'tool_time_flags.json')
 WEEK = 7 * 86400

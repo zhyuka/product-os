@@ -57,7 +57,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 try:
     import kit_config
 except ImportError:

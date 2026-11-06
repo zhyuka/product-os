@@ -36,7 +36,7 @@ import re
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import ado_links  # the one #1234 pattern, shared with the doc and ADO linker
 
 PROJECTS = os.path.join(os.path.expanduser("~"), ".claude", "projects")

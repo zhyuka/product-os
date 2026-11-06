@@ -51,7 +51,7 @@ _keychain_note = None
 
 # check()'s one call, made through figma_client.py beside this file like every other Figma call.
 API = "me"
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.realpath(__file__))
 
 
 def _service():

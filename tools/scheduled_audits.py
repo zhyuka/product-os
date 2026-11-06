@@ -135,7 +135,7 @@ import sys
 import tempfile
 import time
 
-TOOLS = os.path.dirname(os.path.abspath(__file__))
+TOOLS = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, TOOLS)
 import kit_config  # noqa: E402
 from desktop_mirror import LOG_DIR, notify  # noqa: E402

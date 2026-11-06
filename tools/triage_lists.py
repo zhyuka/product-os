@@ -33,7 +33,7 @@ try:
 except ImportError:
     kit_config = None
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.realpath(__file__))
 LEDGER_FILE = os.path.join('.claude', 'open-questions.md')
 # The closing line. A session that ran this before its recall searches pasted the lines first in 7 of 12
 # runs on the triage eval with it, 3 of 18 without.

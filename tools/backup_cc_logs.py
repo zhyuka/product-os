@@ -69,7 +69,7 @@ import shutil
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import kit_config
 
 HOME = os.path.expanduser("~")
@@ -166,7 +166,7 @@ def _jobs(src, skills=None, history=None):
 
 def _detector():
     """workspace_audit.SECRET, or None when it won't import (then HELD above holds every guarded file)."""
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
     try:
         import workspace_audit
         return workspace_audit.SECRET

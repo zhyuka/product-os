@@ -526,7 +526,7 @@ def accept(keys, start=None):
 
 def selftest():
     import tempfile
-    here = os.path.dirname(os.path.abspath(__file__))
+    here = os.path.dirname(os.path.realpath(__file__))
     base, results = [], []
 
     def check(name, ok, detail=""):
@@ -748,9 +748,13 @@ def selftest():
               _plugin_root(os.path.join(plug, "tools")) == plug
               and _plugin_root(os.path.join(root, "copy", "tools")) is None
               and _plugin_root(os.path.join(root, "other", "tools")) is None)
-        saved = (PLUGIN, os.getcwd(), os.environ.pop("CLAUDE_PROJECT_DIR", None), os.environ.get("OLDPWD"))
+        saved = (PLUGIN, os.getcwd(), os.environ.pop("CLAUDE_PROJECT_DIR", None), os.environ.get("OLDPWD"),
+                 os.environ.get("HOME"))
         PLUGIN = plug
         try:
+            # An empty home, so the person's own settings can't answer need() for the planted project.
+            os.environ["HOME"] = os.path.join(root, "plugin-home")
+            os.makedirs(os.path.join(root, "plugin-home", ".claude"), exist_ok=True)
             os.chdir(os.path.join(plug, "tools"))
             os.environ["OLDPWD"] = pproj
             reset()
@@ -802,7 +806,7 @@ def selftest():
         finally:
             PLUGIN = saved[0]
             os.chdir(saved[1])
-            for k, v in (("CLAUDE_PROJECT_DIR", saved[2]), ("OLDPWD", saved[3])):
+            for k, v in (("CLAUDE_PROJECT_DIR", saved[2]), ("OLDPWD", saved[3]), ("HOME", saved[4])):
                 if v is None:
                     os.environ.pop(k, None)
                 else:

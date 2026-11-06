@@ -80,7 +80,7 @@ with no hold or date in its heading reads as live.
 """
 import difflib, os, re, sys, tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 try:
     import kit_config
 except ImportError:
@@ -296,7 +296,7 @@ def cut_refusal(node_id, file_key=None, path=None):
 
 
 # ---------------------------------------------------------------- stale: holds and the files' structure
-TOOLS = os.path.dirname(os.path.abspath(__file__))
+TOOLS = os.path.dirname(os.path.realpath(__file__))
 HOLD = re.compile(r"\b(?:held|holds?|holding|waiting|waits)\b|\bmatters only\b", re.I)
 UNTIL = re.compile(r"\bheld until\s+(.*)", re.I | re.S)
 WITH_SECTION = re.compile(r"\bheld with the section\b", re.I)

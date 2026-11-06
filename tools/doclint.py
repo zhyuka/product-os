@@ -81,7 +81,7 @@ if __name__ == "__main__" and any(_a in ("-h", "--help") for _a in sys.argv[1:])
     print((__doc__ or "").strip())
     raise SystemExit(0)
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 try:
     import kit_config
 except ImportError:          # the linter must still run where the config module is absent
@@ -426,7 +426,7 @@ def cli(paths, added=None) -> int:
                 print(f"  {kind:8} L{line:<5} {hit!r}  in: {ctx}")
             if any(f[0] == "ado-id" for f in findings):
                 print(f"  ado-id: link each one to its item; python "
-                      f"{os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ado_links.py')} link {p}")
+                      f"{os.path.join(os.path.dirname(os.path.realpath(__file__)), 'ado_links.py')} link {p}")
             if old:
                 print(f"  {len(old)} finding(s) on lines this commit does not add, so not blocking"
                       f"{'' if findings else '; none on the lines it adds'}:")

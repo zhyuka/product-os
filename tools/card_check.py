@@ -82,7 +82,7 @@ import sys
 import tempfile
 import time
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import bare_ids  # noqa: E402
 import kit_config  # noqa: E402

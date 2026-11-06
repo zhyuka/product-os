@@ -157,7 +157,7 @@ try:
 except Exception:
     pass
 
-TOOLS = os.path.dirname(os.path.abspath(__file__))
+TOOLS = os.path.dirname(os.path.realpath(__file__))
 if TOOLS not in sys.path:
     sys.path.insert(0, TOOLS)
 import cc_logs  # noqa: E402

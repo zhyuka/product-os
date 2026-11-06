@@ -177,7 +177,7 @@ except ImportError:  # Windows: msvcrt locks a byte instead
     fcntl = None
     import msvcrt
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.realpath(__file__))
 FIGMA_HOST = "api.figma.com"
 DEFAULT_BASE = "https://" + FIGMA_HOST
 LIMITS = {1: 18, 2: 90, 3: 135}            # per PERIOD seconds

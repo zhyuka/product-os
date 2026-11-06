@@ -41,7 +41,7 @@ import os
 import re
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 
 FIGMA_WRITE = re.compile(r'\b(create[A-Z]\w*\(|appendChild|insertChild|\.remove\(\)|setReactionsAsync|swapComponent'

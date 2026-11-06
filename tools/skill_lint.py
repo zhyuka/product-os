@@ -61,7 +61,7 @@ else the folder you run in.
 """
 import os, re, sys, glob, itertools, subprocess
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.realpath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import cc_logs  # noqa: E402  cc_logs.redact: an 8-gram check 2 prints can hold a clone URL's token

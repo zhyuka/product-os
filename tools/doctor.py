@@ -25,7 +25,7 @@ Exit 0 every check passed, 1 a miss, 2 could not run.
 """
 import argparse, json, os, re, shutil, subprocess, sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 KEY = "CLAUDE_CODE_PLUGIN_DIRS"
 COMMANDS = {"check", "prove", "accept", "gates", "design", "demo"}
 CALL = re.compile(r"(?<![\w-])product-os ([a-z_][a-z0-9_]*)(?:\.py)?(?![\w-])")

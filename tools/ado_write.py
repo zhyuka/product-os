@@ -128,7 +128,7 @@ went out. Every line that names a work item ends with the URL of each id on it
 import base64, datetime, json, os, re, sys, urllib.request, urllib.error, urllib.parse
 from html.parser import HTMLParser
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import ado_links  # a bare #1234 in a field or comment goes out as a link (ado_links.py)
 import ask_rules  # an override's reason is plain words, the one rule every override flag takes
 import kit_config

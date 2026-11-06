@@ -87,14 +87,14 @@ def _token():
 def _get(url, timeout):
     """JSON from Figma, through figma_client.py beside this file: paced with every other tool, and a
     429 waited out. Raises on any other failure; a caller turns that into DID NOT RUN."""
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
     import figma_client
     return figma_client.get(url, token=_token(), tool="figma_family", timeout=timeout)
 
 
 def _lineage(key, ids, timeout):
     """figma_client.lineage without kids, the way _get reads: {id: [page, ..., node] or None}."""
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
     import figma_client
     return figma_client.lineage(key, ids, kids=False, token=_token(), tool="figma_family", timeout=timeout)
 

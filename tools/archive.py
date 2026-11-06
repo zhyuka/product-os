@@ -37,7 +37,7 @@ import shutil
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import kit_config
 
 DESKTOP = None          # the workspace root; main() reads it from config or --root
@@ -189,7 +189,7 @@ def note(entry, why, status=None, dry=False, desktop=None, today=None):
 
 
 def selftest():
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
     import workspace_audit as wa
     global OFF_LIMITS
     OFF_LIMITS = ('repos',)

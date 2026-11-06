@@ -27,7 +27,7 @@ Exit 0 previewed, set or already set, 1 refused, 2 could not run.
 """
 import argparse, json, os, sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 KEY = "CLAUDE_CODE_PLUGIN_DIRS"
 
 

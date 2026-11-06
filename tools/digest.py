@@ -36,14 +36,14 @@ import re
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import ledger  # noqa: E402
 
 OPEN_MAX = 40            # this machine's; other machines' are listed in full at the end
 QUESTION_MAX = 40
 ANSWER_LINES = 28
 PER_TOPIC = 3
-TOOLS = os.path.dirname(os.path.abspath(__file__))
+TOOLS = os.path.dirname(os.path.realpath(__file__))
 
 
 def one_line(s, n):

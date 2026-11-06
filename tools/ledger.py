@@ -193,7 +193,7 @@ import tempfile
 import time
 import zlib
 
-TOOLS = os.path.dirname(os.path.abspath(__file__))
+TOOLS = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, TOOLS)
 import kit_config  # noqa: E402
 
