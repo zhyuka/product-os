@@ -1,3 +1,7 @@
+# Every text file checks out with LF, on Windows too: Git for Windows checks text out with CRLF
+# by default, and Claude Code reads a skill's or agent's frontmatter more strictly with CRLF
+# (tests/test_frontmatter.py).
+* text=auto eol=lf
 # Example builds are hashed byte for byte (examples/runs/reviewer-read-only/run.json).
 examples/** -text
 # sh rejects CRLF, and Git for Windows checks files out with CRLF by default.

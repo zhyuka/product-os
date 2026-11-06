@@ -1,6 +1,6 @@
 ---
 name: ado
-description: Azure DevOps work items end to end: search before creating, formalize, resolve when the code ships, reconcile the board. Use for "file a ticket", "open a bug", "close these out", "audit the backlog".
+description: 'Azure DevOps work items end to end: search before creating, formalize, resolve when the code ships, reconcile the board. Use for "file a ticket", "open a bug", "close these out", "audit the backlog".'
 ---
 
 # ADO - work-item lifecycle

@@ -5,6 +5,7 @@ Each version here matches `version` in `.claude-plugin/plugin.json`, the marketp
 ## Unreleased
 
 - `build-from-design`'s design check tells which icon is drawn. It reads the frames with Figma's shape paths (`geometry=paths`), draws each icon's paths and the build's SVG in the page's browser, and compares them to 1/64 px, so an unturned chevron-down in chevron-up's place, or another icon of the same size, is a miss. An icon whose paths are missing is DID NOT RUN, and the check exits 2. Frames cached before this are read again.
+- On a Windows git clone, the ado skill loaded with no name or description, and `claude plugin validate` failed on it. Git for Windows checks text out with CRLF, and with CRLF Claude Code can't read an unquoted description that holds `: `. `.gitattributes` now checks every text file out with LF, and the description is quoted. `tests/test_frontmatter.py` and a Windows run of `claude plugin validate` in `tests.yml` catch it on every push.
 
 ## 0.1.0
 

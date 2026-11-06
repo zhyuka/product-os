@@ -94,19 +94,43 @@ jobs:
           if (-not ($answer -match '"permissionDecision": "deny"')) { exit 1 }
 
   validate:
-    # Claude Code installs from npm without signing in, and plugin validate
-    # reads local files only.
-    runs-on: ubuntu-latest
+    # Claude Code installs without signing in, and plugin validate reads local
+    # files only. On Windows the checkout gets the line endings a Git for
+    # Windows clone gets: with CRLF, v0.1.0's ado skill failed to parse there
+    # and nowhere else.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     env:
       DISABLE_AUTOUPDATER: "1"
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
-      - name: Install Claude Code
+      - name: Install Claude Code (Linux)
+        if: runner.os != 'Windows'
         run: npm install -g @anthropic-ai/claude-code
-      - name: Validate the marketplace and the plugin
+      - name: Install Claude Code (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & ([scriptblock]::Create((irm https://claude.ai/install.ps1))) latest
+          "$env:USERPROFILE\.local\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      # The two commands live.yml runs before its evals.
+      - name: Validate the plugin and the marketplace
         run: |
           claude --version
+          claude plugin validate .claude-plugin/plugin.json
+          claude plugin validate .
+
+      - name: Validate the marketplace and the plugin, strictly
+        if: runner.os != 'Windows'
+        run: |
           claude plugin validate --strict .
           # Before Claude Code 2.1.289, validating the repo root checks only the
           # marketplace. A copy without marketplace.json checks the plugin's
