@@ -536,6 +536,17 @@ So a release tag costs at most $10. `tests.yml` and `install.yml` run on every p
 
 The paid jobs sign in through [Anthropic workload identity federation](https://platform.claude.com/docs/en/manage-claude/wif-providers/github-actions), so no key is stored. Each job asks GitHub for an OIDC token with the audience `https://api.anthropic.com` and writes it to the file `ANTHROPIC_IDENTITY_TOKEN_FILE` names, and Claude Code exchanges it. A token lasts about 5 minutes and is good for one exchange, so the job writes a fresh one every 2 minutes while Claude Code runs. The rule, organization, service account and workspace come from four repository variables: `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_WORKSPACE_ID`. With any of them unset, the paid jobs are skipped with a notice. On Anthropic's side, the federation rule accepts only a push of a `v` tag from this repository.
 
+The rule's `subject_prefix` has to match how the token's `sub` claim starts, and GitHub writes `sub` in one of two formats. Read your repository's format before you write the rule:
+
+```bash
+gh api repos/OWNER/REPO/actions/oidc/customization/sub
+```
+
+- With `use_immutable_subject` false or absent, `sub` starts with the names alone. A tag push gives `repo:OWNER/REPO:ref:refs/tags/v0.1.1`.
+- With `use_immutable_subject` true, each name carries its numeric ID, and the response's `sub_claim_prefix` is how `sub` starts. A tag push gives `repo:OWNER@OWNER-ID/REPO@REPO-ID:ref:refs/tags/v0.1.1`.
+
+GitHub gives the second format to repositories created since mid-2026, and an older one can opt in. This repository uses it. With `use_default` false, `include_claim_keys` lists the claims `sub` is built from instead. Each paid job's "Fetch GitHub OIDC token" step prints the token's `sub`, `ref` and `event_name`, never the token, so a mismatch shows in the job log. On a refused sign-in, the Console's authentication history names the check that failed, such as `match_subject_prefix`.
+
 Where federation isn't available, as in a fork, an API key works instead. Store it as a repository secret named `ANTHROPIC_API_KEY`, and set `ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}` in the env of the step that runs `claude`. This repository doesn't, and its workflow test refuses it. An API key, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` or an `apiKeyHelper` each outranks federation, so a job that sets one isn't federated. `claude --bare` doesn't read the federation variables either.
 
 ## License

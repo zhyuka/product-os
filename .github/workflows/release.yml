@@ -84,14 +84,30 @@ jobs:
           python-version: "3.13"
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
-      # GitHub's OIDC token, with Anthropic's audience, in the file Claude Code reads it from.
+      # GitHub's OIDC token, with Anthropic's audience, in the file Claude Code reads it from. It
+      # prints the claims the federation rule matches, sub, ref and event_name, never the token,
+      # so a rule that doesn't match the subject format shows here (docs/checks.md).
       - name: Fetch GitHub OIDC token
         run: |
           echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/gha-jwt" >> "$GITHUB_ENV"
           curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
             | jq -r .value > "$RUNNER_TEMP/gha-jwt"
-          [ -s "$RUNNER_TEMP/gha-jwt" ] && [ "$(cat "$RUNNER_TEMP/gha-jwt")" != null ]
+          python3 - "$RUNNER_TEMP/gha-jwt" <<'EOF'
+          import base64, json, sys
+          token = open(sys.argv[1], encoding="utf-8").read().strip()
+          if token in ("", "null"):
+              sys.exit("No OIDC token: GitHub's response held no value.")
+          try:
+              body = token.split(".")[1]
+              claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+              if not isinstance(claims, dict):
+                  raise ValueError
+          except (IndexError, ValueError):
+              sys.exit("No OIDC token: GitHub's response is not a JWT.")
+          for key in ("sub", "ref", "event_name"):
+              print(f"{key}: {claims.get(key)}")
+          EOF
       # A GitHub token lasts about 5 minutes and is good for one exchange, so a loop writes a
       # fresh one every 2 minutes while the agent runs. claude's exit status is kept, so what
       # run.json says is printed even when claude fails, as on a refused sign-in; then the step
