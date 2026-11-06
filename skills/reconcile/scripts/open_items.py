@@ -20,7 +20,8 @@ rebase.surfaces`); until then nothing runs and the run says so. Yours, in ~/.cla
 you hand it yourself, so it needs no accept.
 
 THE PROTOCOL, as reconcile runs a surface. Each `cmd` runs through /bin/sh in the project folder,
-with `RECONCILE_SINCE` set (`--since`, default 7 days ago). Exit 0: no items. Exit 1: each line it
+with `RECONCILE_SINCE` set to a YYYY-MM-DD date (`--since`, a date or an ISO date-time, whose day it
+takes; default 7 days ago). Exit 0: no items. Exit 1: each line it
 prints is an item. Any other exit, exit 1 with no line, or no exit within 5 minutes: DID NOT RUN,
 with the first line of its error. All sources run at once.
 
@@ -129,6 +130,16 @@ def items_of(out, default_mark):
         m = MARK.match(ln.strip())
         got.append((m.group(1), m.group(2)) if m else (default_mark or "unmarked", ln.rstrip()))
     return got
+
+
+def since_date(text):
+    """RECONCILE_SINCE as the protocol gives it, YYYY-MM-DD, from a date or an ISO date-time (a Z allowed; its own
+    date, so the window opens at that day's start); None when it is neither. A source's own date parser gets one
+    form: BSD find's -newermt can't read 2026-11-05T22:17:00Z."""
+    try:
+        return dt.datetime.fromisoformat((text or "").strip().replace("Z", "+00:00")).date().isoformat()
+    except ValueError:
+        return None
 
 
 def run_source(entry, cwd, since, cap=CAP):
@@ -374,7 +385,10 @@ def main(argv=None):
         if not entries:
             print(f"open items: did not run: no rebase.surfaces entry is named {', '.join(sorted(names))}")
             return 2
-    since = a.since or (dt.date.today() - dt.timedelta(days=7)).isoformat()
+    since = since_date(a.since) if a.since else (dt.date.today() - dt.timedelta(days=7)).isoformat()
+    if not since:
+        print(f"open items: did not run: --since takes a date (2026-11-05) or an ISO date-time, not {a.since!r}")
+        return 2
     if a.probe:
         lines, code = probe(entries, project, since)
     else:
@@ -445,6 +459,15 @@ def selftest():
         check("a source past the cap did not run", not r["ran"] and "no exit within 1 s" in r["why"], r)
         r = run_source({"name": "since", "cmd": 'echo "$RECONCILE_SINCE"; exit 1'}, work, "2026-11-01")
         check("RECONCILE_SINCE reaches the source", r["items"] == [("unmarked", "2026-11-01")], r)
+        dated = os.path.join(work, "dated.json")
+        with open(dated, "w", encoding="utf-8") as f:
+            json.dump([{"name": "since", "cmd": 'echo "$RECONCILE_SINCE"; exit 1'}], f)
+        got = [subprocess.run([py, me, "--surfaces", dated, "--since", s], capture_output=True, text=True, cwd=work)
+               for s in ("2026-11-05T22:17:00Z", "2026-11-05 16:17", "2026-11-05", "last tuesday")]
+        check("known bad fixed: --since as an ISO date-time reaches a source as its YYYY-MM-DD date (BSD find's "
+              "-newermt can't read 2026-11-05T22:17:00Z); one that is no date did not run",
+              all("    [unmarked] 2026-11-05\n" in g.stdout for g in got[:3]) and got[3].returncode == 2
+              and "--since takes a date" in got[3].stdout, [g.stdout for g in got])
         src = os.path.join(work, "drafts.md")
         with open(src, "w", encoding="utf-8") as f:
             f.write("# Drafts\n### To A. NOT SENT. Held until q-1 (the call).\n### To B. NOT SENT. READY.\n### To C. Sent.\n")
