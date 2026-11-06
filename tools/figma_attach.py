@@ -6,6 +6,7 @@ browser.
     attach  <file_key> <comment_id> <picture> [<picture> ...] [--again "<why>"] [--wait-user SECONDS]
               --again takes its reason in plain words (ask_rules.plain), so the permission prompt shows it
     edit    <file_key> <comment_id> --text-file <file.txt> [<picture> ...] [--replace] [--wait-user SECONDS]
+            [--asks <id>]
               --replace takes off the pictures the comment holds, in the editor, before adding the new
               ones, and checks the thread then shows exactly the new ones (for a remade picture, so
               the old one does not stay beside it)
@@ -672,12 +673,25 @@ def attach(key, cid, pictures, again=False, wait_user=180):
     return run_jobs([{"key": key, "cid": cid, "pictures": pictures, "again": again}], wait_user)[0]
 
 
-def edit(key, cid, text, pictures=(), wait_user=180, replace=False):
+def edit(key, cid, text, pictures=(), wait_user=180, replace=False, asks=None, runner=None):
     """Replace comment `cid`'s text with `text` and attach `pictures` (in place of the ones it holds,
     with `replace`): run_jobs with one job. Exit code: 0, 1 or 2; 0 only when the API then returns the
-    new text."""
-    return run_jobs([{"key": key, "cid": cid, "text": text, "pictures": list(pictures), "replace": replace}],
-                    wait_user)[0]
+    new text. First figma_post.py's eighteenth rule, as a batch `edit` item runs it: on a file in
+    figma.settled_files an edit that adds an ask is judged against the record, citing `asks`."""
+    import figma_post
+    comments, _ = _read(key)
+    if comments is None:
+        return 2
+    mine = next((c for c in comments if str(c["id"]) == str(cid)), None)
+    if mine is not None:
+        root = figma_post._root_of(comments, cid) or mine
+        node = (root.get("client_meta") or {}).get("node_id") or ""
+        refused = figma_post.settled_gate(key, node, text, asks, old=mine.get("message") or "")
+        if refused:
+            print(refused)
+            return 1
+    return (runner or run_jobs)([{"key": key, "cid": cid, "text": text, "pictures": list(pictures),
+                                  "replace": replace}], wait_user)[0]
 
 
 def mention(key, cids, wait_user=180):
@@ -1769,6 +1783,27 @@ def _selftest():
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+    # figma_post's eighteenth rule runs on edit with the thread's layer, the comment's text and --asks as the cite,
+    # before any browser; a refusal runs no job.
+    import figma_post
+    saved_read, saved_gate = globals()["_read"], figma_post.settled_gate
+    try:
+        thread = [{"id": "50", "user": {"id": "me"}, "message": "Q: Is the intro short on purpose?",
+                   "client_meta": {"node_id": "7:7"}},
+                  {"id": "51", "parent_id": "50", "user": {"id": "me"}, "message": "Also the title."}]
+        globals()["_read"] = lambda key, md=False: (thread, {"id": "me"})
+        seen, jobs = [], []
+        runner = lambda js, wait: jobs.append(js) or [0]
+        figma_post.settled_gate = (lambda key, node, text, cid=None, old=None, **kw:
+                                   seen.append((node, cid, old)) or "REFUSED (THE EIGHTEENTH RULE): planted.")
+        code = edit("SF", "51", "Also the title?", asks="c-x", runner=runner)
+        case("edit: the eighteenth rule runs on the thread's layer with the old text and --asks, and its refusal runs "
+             "no job", code == 1 and seen == [("7:7", "c-x", "Also the title.")] and jobs == [])
+        figma_post.settled_gate = lambda *a, **kw: None
+        code = edit("SF", "51", "Also the title, now shorter.", runner=runner)
+        case("edit: ... and when it passes, the one job runs", code == 0 and len(jobs) == 1 and jobs[0][0]["cid"] == "51")
+    finally:
+        globals()["_read"], figma_post.settled_gate = saved_read, saved_gate
     # Past 5 pictures: the ones a comment holds count, the refusal names combine, and --replace starts from none.
     five = [f"s{i}.jpg" for i in range(5)]
     held = edit_refusal(old, "me", new, [pic], 0, five)
@@ -1846,7 +1881,12 @@ if __name__ == "__main__":
         i = rest.index("--text-file")
         text = open(rest[i + 1], encoding="utf-8").read()
         del rest[i:i + 2]
-        sys.exit(edit(rest[0], rest[1], text, rest[2:], wait_user=wait, replace=replace))
+        asks = None
+        if "--asks" in rest:
+            i = rest.index("--asks")
+            asks = rest[i + 1] if i + 1 < len(rest) else None
+            del rest[i:i + 2]
+        sys.exit(edit(rest[0], rest[1], text, rest[2:], wait_user=wait, replace=replace, asks=asks))
     if args[0] == "combine" and len(args) >= 3:
         rest = [a for a in args[1:] if a != "--side"]
         sys.exit(combine(rest[0], rest[1:], side="--side" in args))

@@ -7,10 +7,11 @@ accident - you have to reach for a different command.
 
     reply   <file_key> <comment_id> <text> [--own-last-ok "<why>"] [--multi-ok "<why>"] [--repost-ok "<why>"]
             [--edited <id>,<id>... --picture <file.jpg> --separate <id>,<id>... "<why>" --cause <slug>]
+            [--asks <id>]
                                               reply into an existing thread
     new     <file_key> <node_id> <text> [--separate <id>,<id>... "<why>"] [--pin-ok "<why>"] [--multi-ok "<why>"]
             [--repost-ok "<why>"] [--edited <id>,<id>... --picture <file.jpg> --cause <slug> [--new-cause "<why>"]]
-            [--new-thread "<why>"]
+            [--new-thread "<why>"] [--asks <id>]
                                               start a thread pinned to a node
     cause   <file_key> [<thread_id> <slug>]   tag an open FIX thread with its kind of fix; alone, list them
     fixnote <file_key> <comment_id> <text> --edited <id>,<id>... [--cause <slug>] [--separate <id>,<id>... "<why>"]
@@ -166,15 +167,29 @@ notes: the owner's open non-FIX root comments that share LEAD_FLOOR or more of t
 two, as a lead for a draft that names none. own_open_check is the same check, for a draft still in the
 drafts file.
 
+THE EIGHTEENTH RULE, on a file in figma.settled_files only: `new`, `reply`, a batch `edit` and
+`figma_attach.py edit`. A finding the record answers is settled, not asked, so a comment that asks
+design something the record already settles is refused. Every new comment but a FIX note asks, since a
+comment names an action for design, so an ask worded as a statement counts too; an edit or reply asks
+when it adds a question or an ask tag (Q, FLAG, ADD, FIX; new_asks). What the record says is the
+command in figma.settled_cmd, which this file runs once per comment: it reads one JSON object on stdin,
+{"asks": true or false, "cites": the --asks id (batch: "asks") or null, "node": the layer, "path": the
+layer's lineage, page first}, prints each reason a line, and exits 0 for none, 1 for some and 2 when it
+could not run. ask_refusal is the same rule on a text alone, with no layer ("node" null), for a draft
+still in the drafts file (drafts_store). A file in figma.settled_files with no command, or a command
+that can't run, refuses: the rule never passes unread. figma.settled_cmd runs a command, so a project's
+own config sets it only once accepted (product-os accept).
+
 LINKS. Each line this file prints that names a node ends with that node's link (figma_comments.linked), so
 whichever line is copied opens the node; the posted and replied lines end with the thread's link. The text
 a post sends, and the text the drafts file is matched against, stay as written.
 
 THE BATCH. Posting is one batch per review pass, and the browser opens once for it.
 `batch <items.json>` takes a JSON list, each item one of
-    {"kind": "new",   "key", "node", "text", "edited": [..], "picture", "cause"}
-    {"kind": "reply", "key", "parent", "text", "edited": [..], "picture", "cause"}
-    {"kind": "edit",  "key", "cid", "text" or "text_file", "pictures": [..], "replace", "edited": [..], "cause"}
+    {"kind": "new",   "key", "node", "text", "edited": [..], "picture", "cause", "asks"}
+    {"kind": "reply", "key", "parent", "text", "edited": [..], "picture", "cause", "asks"}
+    {"kind": "edit",  "key", "cid", "text" or "text_file", "pictures": [..], "replace", "edited": [..], "cause",
+                      "asks"}
 An item can't carry an override ("separate", "pin_ok", "own_last_ok", "multi_ok", "repost_ok",
 "new_cause"): the batch's permission prompt shows only its file's name, so nobody would read the
 reason. One such item refuses the batch; post it on its own command line with the flag and its
@@ -953,6 +968,98 @@ def read_only():
     return bool(kit_config.get("figma", "read_only"))
 
 
+# THE EIGHTEENTH RULE. An ask's tag starts a line, after any @mention; FIX (done in Figma) has no colon after FIX,
+# so it is none.
+ASK_TAG = re.compile(r"^\s*(?:@[^\n]*?\s)?(?:Q|FLAG|ADD|FIX)\s*:", re.M)
+SETTLED = None      # the selftest's and the tests' stand-in for figma.settled_cmd: SETTLED(request) -> (reasons, why)
+
+
+def new_asks(text, old):
+    """The asks in `text` that `old` (the text before an edit; "" for a reply) does not hold: a question, or a line
+    with an ask tag, unlike each of old's at 0.9 and neither holding the other (a reworded question is a new ask; a
+    note appended to an old ask line is not, and any question it adds is caught on its own)."""
+    import difflib
+    fold = lambda t: re.sub(r"\W+", " ", t).strip().lower()
+    tagged = lambda t: [ln for ln in (t or "").splitlines() if ASK_TAG.match(ln)]
+    had = [fold(q) for q in asks(old) + tagged(old)]
+    return [q for q in asks(text) + tagged(text)
+            if not any(difflib.SequenceMatcher(None, fold(q), h).ratio() >= 0.9 or fold(q) in h or h in fold(q)
+                       for h in had)]
+
+
+def is_ask(text, old=None):
+    """THE EIGHTEENTH RULE: whether text asks. A new comment names an action for design, so each one but a FIX note
+    asks, worded as a question or not. An edit or reply (`old` its text before, or "" for a reply) asks when it adds
+    one."""
+    return not text.startswith(DONE_PREFIX) if old is None else bool(new_asks(text, old))
+
+
+def settled_files():
+    """figma.settled_files in the product-os config: the files THE EIGHTEENTH RULE judges. Empty when unset."""
+    try:
+        import kit_config
+    except ImportError:
+        return set()
+    v = kit_config.get("figma", "settled_files") or []
+    return {v} if isinstance(v, str) else {str(k) for k in v}
+
+
+def settled(request):
+    """(reasons, why it did not run or None) from figma.settled_cmd for one request (THE EIGHTEENTH RULE)."""
+    if SETTLED is not None:
+        return SETTLED(request)
+    try:
+        import kit_config
+        cmd = kit_config.get("figma", "settled_cmd")
+    except ImportError:
+        cmd = None
+    if not cmd:
+        return [], "figma.settled_cmd is not set, or this project's value is not accepted (product-os accept)"
+    import shlex, subprocess
+    try:
+        p = subprocess.run(shlex.split(cmd) if isinstance(cmd, str) else [str(c) for c in cmd],
+                           input=json.dumps(request), capture_output=True, text=True, timeout=120)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        return [], f"figma.settled_cmd could not run ({type(e).__name__})"
+    lines = [ln for ln in p.stdout.splitlines() if ln.strip()]
+    if p.returncode == 0:
+        return [], None
+    if p.returncode == 1 and lines:
+        return lines, None
+    return [], f"figma.settled_cmd exited {p.returncode}" + (f": {lines[-1][:200]}" if lines else "")
+
+
+def ask_refusal(text, cid=None, old=None):
+    """THE EIGHTEENTH RULE on a text alone, with no Figma read: None when the text does not ask, or when
+    figma.settled_cmd finds no reason; else why not. settled_gate adds what needs the layer."""
+    if not is_ask(text, old):
+        return None
+    reasons, why = settled({"asks": True, "cites": cid, "node": None, "path": None})
+    if why:
+        return f"THE EIGHTEENTH RULE did not run: {why}"
+    return "; ".join(reasons) or None
+
+
+def settled_gate(key, node_id, text, cid=None, old=None, path=None):
+    """THE EIGHTEENTH RULE: None, or the refusal. `old`: the comment's text before an edit, or "" for a reply; None
+    for a new comment. `path`: the layer's lineage, page first (read here when None)."""
+    if key not in settled_files():
+        return None
+    ask = is_ask(text, old)
+    if old is not None and not ask:
+        return None
+    if path is None:
+        import figma_client
+        try:
+            path = figma_client.lineage(key, [_norm(node_id)], kids=False, tool="figma_post").get(_norm(node_id)) or []
+        except Exception as e:  # noqa: BLE001 -- a rate limit or no network: refuse, never pass unread
+            return f"REFUSED: could not read where {_norm(node_id)} sits ({type(e).__name__}), so THE EIGHTEENTH RULE did not run."
+    reasons, why = settled({"asks": ask, "cites": cid, "node": _norm(node_id), "path": path})
+    if why:
+        return f"REFUSED: THE EIGHTEENTH RULE did not run: {why}."
+    return ("REFUSED (THE EIGHTEENTH RULE): " + "; ".join(reasons) + ".") if reasons else None
+
+
 def node_components(ix, node):
     """The main components a node is part of, from figma_family's index: each copy on its path (an
     instance's main, a main itself, a detached copy's main), or every variant of a component set.
@@ -1356,13 +1463,13 @@ def own_open_gate(key, node_id, text, separate, comments, notes, me=None, read=N
 
 
 def check_reply(key, parent_id, text, own_last_ok=False, edited=(), evidence=None, multi_ok=False,
-                repost_ok=False, picture=None, separate=(), also=(), cause=None):
+                repost_ok=False, picture=None, separate=(), also=(), cause=None, asks_cid=None):
     """(refusal or None, plan): every gate for a reply, and what post() sends. Posts nothing. also: the
     threads this batch edits or replies in (THE FIFTEENTH RULE)."""
     cs = _req(f"{API}/files/{key}/comments").get("comments", [])
     node = anchor(key, parent_id, cs)
     root = _root_of(cs, parent_id)
-    refused = (question_gate(text, multi_ok) or _drafts_wrapped(text)
+    refused = (settled_gate(key, node, text, asks_cid, old="") or question_gate(text, multi_ok) or _drafts_wrapped(text)
                or (None if repost_ok or root is None else repost_gate(key, f"thread {root['id']}"))
                or (None if own_last_ok else own_last_gate(key, parent_id, cs, _me(), _link(key)))
                or gate(key, node) or drift_gate(key, node) or mention_gate(text, cs))
@@ -1380,7 +1487,8 @@ def check_reply(key, parent_id, text, own_last_ok=False, edited=(), evidence=Non
 
 
 def check_new(key, node_id, text, separate=(), edited=(), evidence=None, pin_ok=False, multi_ok=False,
-              repost_ok=False, picture=None, cause=None, new_cause=False, also=(), new_thread=None, in_batch=False):
+              repost_ok=False, picture=None, cause=None, new_cause=False, also=(), new_thread=None, in_batch=False,
+              asks_cid=None):
     """(refusal or None, plan): every gate for a new thread, and what post() sends. Posts nothing. also:
     the threads this batch edits or replies in (THE FIFTEENTH RULE)."""
     docs = {}
@@ -1389,7 +1497,8 @@ def check_new(key, node_id, text, separate=(), edited=(), evidence=None, pin_ok=
         if n not in docs:
             docs[n] = fetch_node(k, n)
         return docs[n]
-    refused = (pin_gate(node_id) or question_gate(text, multi_ok) or _drafts_wrapped(text) or _drafts_cut(node_id, key)
+    refused = (settled_gate(key, node_id, text, asks_cid) or pin_gate(node_id) or question_gate(text, multi_ok)
+               or _drafts_wrapped(text) or _drafts_cut(node_id, key)
                or (None if repost_ok else repost_gate(key, node_id))
                or search_gate(key) or gate(key, node_id) or drift_gate(key, node_id, fetch))
     notes, offset, cs = [], None, []
@@ -1486,9 +1595,9 @@ def run_after(jobs, runner=None):
 
 
 def reply(key, parent_id, text, own_last_ok=False, edited=(), evidence=None, multi_ok=False,
-          repost_ok=False, picture=None, separate=(), cause=None):
+          repost_ok=False, picture=None, separate=(), cause=None, asks_cid=None):
     refused, plan = check_reply(key, parent_id, text, own_last_ok, edited, evidence, multi_ok, repost_ok, picture,
-                                separate, cause=cause)
+                                separate, cause=cause, asks_cid=asks_cid)
     if refused:
         sys.exit(shown(key, refused))
     _, jobs = post(plan)
@@ -1496,9 +1605,9 @@ def reply(key, parent_id, text, own_last_ok=False, edited=(), evidence=None, mul
 
 
 def new(key, node_id, text, separate=(), edited=(), evidence=None, pin_ok=False, multi_ok=False,
-        repost_ok=False, picture=None, cause=None, new_cause=False, new_thread=None):
+        repost_ok=False, picture=None, cause=None, new_cause=False, new_thread=None, asks_cid=None):
     refused, plan = check_new(key, node_id, text, separate, edited, evidence, pin_ok, multi_ok, repost_ok, picture,
-                              cause, new_cause, new_thread=new_thread)
+                              cause, new_cause, new_thread=new_thread, asks_cid=asks_cid)
     if refused:
         sys.exit(shown(key, refused))
     _, jobs = post(plan)
@@ -1516,20 +1625,22 @@ def _check_item(it, extra_separate=()):
         return check_new(it["key"], it["node"], it["text"],
                          separate=tuple(it.get("separate", ())) + tuple(extra_separate),
                          pin_ok=it.get("pin_ok", False), cause=it.get("cause"),
-                         new_cause=it.get("new_cause", False), also=also, in_batch=True, **flags)
+                         new_cause=it.get("new_cause", False), also=also, in_batch=True, asks_cid=it.get("asks"),
+                         **flags)
     if kind == "reply":
         return check_reply(it["key"], it["parent"], it["text"], own_last_ok=it.get("own_last_ok", False),
-                           separate=tuple(it.get("separate", ())), also=also, cause=it.get("cause"), **flags)
+                           separate=tuple(it.get("separate", ())), also=also, cause=it.get("cause"),
+                           asks_cid=it.get("asks"), **flags)
     if kind == "edit":
         import figma_attach
         comments, me = figma_attach._read(it["key"])
         if comments is None:    # me holds why: a stale token's says "token stale"
             return f"DID NOT RUN: the Figma API failed{': ' + me if me else ''}.", None
-        root = _root_of(comments, it["cid"])
+        mine, root = next((c for c in comments if str(c["id"]) == str(it["cid"])), {}), _root_of(comments, it["cid"])
         node = ((root or {}).get("client_meta") or {}).get("node_id") or ""
         notes, fix = [], bool(root) and it["text"].startswith(DONE_PREFIX) and [root["id"], flags["edited"], node or None]
-        refused = None
-        if fix:
+        refused = settled_gate(it["key"], node, it["text"], it.get("asks"), old=mine.get("message") or "")
+        if fix and not refused:
             refused, notes = fix_line_gate(it["key"], comments, root, node, flags["edited"], it.get("cause"),
                                            tuple(it.get("separate", ())) + also, link=_link(it["key"]))
             refused = refused or picture_gate(it["text"], posting=False)
@@ -1757,6 +1868,97 @@ OWN_ASK = (
     "darkens its photo 25%, which puts the band heading under the contrast floor on two pages. Could the footer band "
     "move to 40% as well? One answer covers both: https://www.figma.com/design/{key}/File?node-id=4100-40001"
     "#1900000202")
+
+
+def settled_selftest(case, tmp):
+    """THE EIGHTEENTH RULE's planted cases: whether a text asks, the gate on a listed file with a stand-in record,
+    the command it runs, and the CLI's and the batch's --asks reaching the gate."""
+    global SETTLED
+    import figma_client
+    seen = []
+    last = lambda: seen[-1] if seen else {}
+    kept = (globals()["settled_files"], SETTLED, figma_client.lineage)
+    globals()["settled_files"] = lambda: {"SF"}
+    figma_client.lineage = lambda key, ids, **kw: {ids[0]: [{"id": "0:1", "type": "CANVAS"}, {"id": ids[0]}]}
+    try:
+        case("is_ask: a new comment that is not a FIX note asks, worded as a statement or not",
+             None if is_ask("The hero gap reads 24.") and is_ask("Q: which gap?") else "no", False)
+        case("is_ask: a new FIX note asks nothing", True if is_ask("FIX (done in Figma): the gap is 24.") else None, False)
+        case("is_ask: a reply that adds no question asks nothing", True if is_ask("Done, thanks.", "") else None, False)
+        case("is_ask: an edit that adds a Q line asks", None if is_ask("Old note.\nQ: which frame?", "Old note.") else "no",
+             False)
+        case("is_ask: an edit that leaves its question as it was asks nothing",
+             True if is_ask("Which frame is current? Noted.", "Which frame is current?") else None, False)
+        SETTLED = lambda req: seen.append(req) or (["planted: the record settles it"], None)
+        case("a file not in figma.settled_files is not judged", settled_gate("K", "1:2", "Q: which?", "c-1"), False)
+        got = settled_gate("SF", "1-2", "Q: which?", "c-1")
+        case("an ask on a listed file the record settles is refused, with the command's reason",
+             got if got and got.startswith("REFUSED (THE EIGHTEENTH RULE): planted") else None, True)
+        case("... and the command got the cite, the asks flag, the layer and its lineage",
+             None if last() == {"asks": True, "cites": "c-1", "node": "1:2",
+                                  "path": [{"id": "0:1", "type": "CANVAS"}, {"id": "1:2"}]} else last(), False)
+        n = len(seen)
+        case("a reply that asks nothing is not judged, and the command does not run",
+             settled_gate("SF", "1:2", "Done, thanks.", None, old="") or (len(seen) != n or None), False)
+        got = settled_gate("SF", "1:2", "FIX (done in Figma): the gap is 24.")
+        case("a new FIX note still goes to the command (a superseded frame refuses any comment), with asks false",
+             None if got and last()["asks"] is False else (got or "passed"), False)
+        SETTLED = lambda req: ([], None)
+        case("an ask the record leaves a question posts", settled_gate("SF", "1:2", "Q: which?", "c-1"), False)
+        SETTLED = lambda req: ([], "figma.settled_cmd is not set")
+        got = settled_gate("SF", "1:2", "Q: which?", "c-1")
+        case("a command that did not run refuses: the rule never passes unread",
+             got if got and "did not run" in got else None, True)
+        case("ask_refusal: a text that does not ask is None", ask_refusal("Done, thanks.", None, ""), False)
+        got = ask_refusal("Q: which?", "c-1")
+        case("ask_refusal: a command that did not run says so", got if got and "did not run" in got else None, True)
+        SETTLED = lambda req: seen.append(req) or (["planted reason"], None)
+        got = ask_refusal("Q: which?", "c-1")
+        case("ask_refusal: an ask the record settles gives the reason, with no layer",
+             got if got == "planted reason" and last()["node"] is None else None, True)
+        got = check_new("SF", "1:2", "Q: which gap?", asks_cid="c-9", repost_ok=True)[0] or ""
+        case("check_new runs the rule first, with its --asks cite",
+             got if got.startswith("REFUSED (THE EIGHTEENTH RULE)") and last()["cites"] == "c-9" else None, True)
+        case("--asks comes off the command line with its id",
+             None if pop_flag(["new", "K", "1:2", "t", "--asks", "c-9"], "--asks") == ("c-9", ["new", "K", "1:2", "t"])
+             else "no", False)
+        import figma_attach as _attach
+        kept_read = _attach._read
+        _attach._read = lambda key, md=False: ([{"id": "e1", "message": "Old note.",
+                                                  "client_meta": {"node_id": "1:2"}}], {"id": "me"})
+        try:
+            got = _check_item({"kind": "edit", "key": "SF", "cid": "e1", "text": "Old note.\nQ: which frame?",
+                               "asks": "c-3"})
+        finally:
+            _attach._read = kept_read
+        case("a batch edit that adds an ask is judged against the comment's text, with the item's \"asks\"",
+             got[0] if (got[0] or "").startswith("REFUSED (THE EIGHTEENTH RULE)") and last()["cites"] == "c-3"
+             else None, True)
+        # The command itself: a planted script, as figma.settled_cmd runs it.
+        SETTLED = None
+        script = os.path.join(tmp, "settled_cmd.py")
+        with open(script, "w", encoding="utf-8") as f:
+            f.write("import json, sys\nreq = json.load(sys.stdin)\n"
+                    "if req.get('cites') == 'boom':\n    print('no record here'); sys.exit(2)\n"
+                    "if req.get('cites') == 'c-open':\n    sys.exit(0)\n"
+                    "print('the record settles ' + str(req.get('cites'))); sys.exit(1)\n")
+        import kit_config
+        kept_get = kit_config.get
+        cmd = f"{sys.executable} {script}"
+        kit_config.get = lambda *keys, **kw: cmd if keys == ("figma", "settled_cmd") else kept_get(*keys, **kw)
+        try:
+            r = [settled({"asks": True, "cites": c, "node": None, "path": None}) for c in ("c-done", "c-open", "boom")]
+            kit_config.get = lambda *keys, **kw: None if keys == ("figma", "settled_cmd") else kept_get(*keys, **kw)
+            unset = settled({"asks": True, "cites": "c-done", "node": None, "path": None})
+        finally:
+            kit_config.get = kept_get
+        case("settled_cmd: exit 1 gives its reasons", None if r[0] == (["the record settles c-done"], None) else r[0], False)
+        case("settled_cmd: exit 0 gives none", None if r[1] == ([], None) else r[1], False)
+        case("settled_cmd: exit 2 is did-not-run, with its last line",
+             None if r[2][0] == [] and "exited 2: no record here" in (r[2][1] or "") else r[2], False)
+        case("settled_cmd unset is did-not-run", None if unset[0] == [] and "not set" in (unset[1] or "") else unset, False)
+    finally:
+        globals()["settled_files"], SETTLED, figma_client.lineage = kept
 
 
 def own_open_selftest(case, tmp):
@@ -2716,6 +2918,7 @@ def _selftest(real_read_only):
             (_client.request, _client.get, _fc.token, _attach._get, _attach._read, globals()["_tok"],
              globals()["_me"]) = kept
         own_open_selftest(case, tmp)
+        settled_selftest(case, tmp)
     finally:
         _fc.whoami = saved_whoami
         for k in planted_meta:
@@ -2732,7 +2935,8 @@ if __name__ == "__main__":
         sys.exit(selftest())
     if sys.argv[1:2] == ["batch"] and len(sys.argv) >= 3:
         sys.exit(batch(sys.argv[2], check_only="--check" in sys.argv[3:]))
-    overrides, argv = pop_overrides(sys.argv[1:])
+    asks_cid, argv = pop_flag(sys.argv[1:], "--asks")     # THE EIGHTEENTH RULE: the record entry the text asks about
+    overrides, argv = pop_overrides(argv)
     for flag, why in overrides.items():   # each with its reason, in plain words (ask_rules.plain)
         refused = ask_rules.override(flag, why)
         if refused:
@@ -2750,10 +2954,10 @@ if __name__ == "__main__":
         sys.exit(__doc__)
     ok = lambda flag: flag in overrides
     {"reply": lambda: reply(args[1], args[2], args[3], own_last_ok, edited, evidence,
-                            ok("--multi-ok"), ok("--repost-ok"), picture, separate, cause_slug),
+                            ok("--multi-ok"), ok("--repost-ok"), picture, separate, cause_slug, asks_cid),
      "new": lambda: new(args[1], args[2], args[3], separate, edited, evidence,
                         ok("--pin-ok"), ok("--multi-ok"), ok("--repost-ok"), picture, cause_slug, ok("--new-cause"),
-                        new_thread),
+                        new_thread, asks_cid),
      "cause": lambda: cause(args[1], *(args[2:4] if len(args) >= 4 else ())),
      "fixnote": lambda: fixnote(args[1], args[2], args[3], edited, evidence, cause_slug, separate),
      "delete": lambda: delete(args[1], args[2])}.get(cmd, lambda: sys.exit(f"unknown: {cmd}"))()

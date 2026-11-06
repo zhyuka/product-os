@@ -456,7 +456,7 @@ def holds(text, name):
     return out
 
 
-def structure(text, name, drafts_file=None, files=None, own_check=None):
+def structure(text, name, drafts_file=None, files=None, own_check=None, settled=None, ask_check=None):
     """[(file, line, rule, words)] for the shapes that let junk pile up:
     prose     a '## ' section holding drafts or naming a Figma file has text before its first block other
               than one paragraph opening "Held" (the section's hold note)
@@ -466,13 +466,18 @@ def structure(text, name, drafts_file=None, files=None, own_check=None):
     override  a draft under a section naming a file in figma.new_thread_files has a post command that carries
               an override flag (--new-thread, --new-cause and the rest): written ahead, it hides the refusal
               that names the open thread the note folds into
+    ask       a draft under a section naming a file in figma.settled_files asks design something the record
+              settles, by figma_post's eighteenth rule (ask_refusal, citing the post command's --asks): fix
+              it where the record says, and draft an ask only for what it leaves a question. A check that
+              could not run is listed too, never passed
     cutfile   a Cut row in the drafts file names a node id and no figma.com URL, so it refuses that id in
               every file: add the node's URL
     own-open  a NEW draft in the drafts file links an open root comment of the token owner's, which
               figma_post's own-open rule would refuse: make the fix and edit that comment instead. Figma is
               read only for a NEW draft that links a comment id; a read that fails is listed as did not run
     drafts_file: whether this is the drafts file (None: is_drafts_file(name)). files: the
-    figma.new_thread_files stand-in for the selftest; own_check: figma_post.own_open_check's."""
+    figma.new_thread_files stand-in for the selftest; own_check: figma_post.own_open_check's; settled:
+    figma.settled_files'; ask_check: figma_post.ask_refusal's."""
     lines = text.split("\n")
     if drafts_file is None:
         drafts_file = is_drafts_file(name)
@@ -502,6 +507,7 @@ def structure(text, name, drafts_file=None, files=None, own_check=None):
                  f"so it refuses that id in every file; add the node's URL: {clip(r['cell'], 70)}")
                 for r in cut_table(text) if r["nodes"] and not r["file"]]
         out += override_drafts(text, name, files)
+        out += ask_drafts(text, name, settled, ask_check)
         out += own_open_drafts(text, name, own_check)
     return out
 
@@ -542,6 +548,42 @@ def own_open_drafts(text, name, own_check=None):
 
 
 POST_CMD = re.compile(r"`[^`]*\bfigma_(?:post|attach)\.py\b[^`]*`")
+ASKS_CID = re.compile(r"--asks\s+([^\s`]+)")
+
+
+def ask_drafts(text, name, settled=None, ask_check=None):
+    """The ask rule of structure(), for the drafts under a section naming a file in figma.settled_files, where
+    figma_post refuses a comment that asks design something the record settles (its eighteenth rule). It runs at
+    draft time what the post runs, so a draft the record settles is caught before it reaches a card, not after."""
+    if settled is None:   # the key figma_post.settled_files reads; figma_post loads only when a file is listed
+        v = _cfg("figma", "settled_files") or []
+        settled = {v} if isinstance(v, str) else {str(k) for k in v}
+    if not settled:
+        return []
+    if ask_check is None:
+        if TOOLS not in sys.path: sys.path.append(TOOLS)
+        import figma_post
+        ask_check = figma_post.ask_refusal
+    lines, out = text.split("\n"), []
+    listed = [s for s in sections(text) if any(f"`{k}`" in s["head"] for k in settled)]
+    for b in blocks(text):
+        if not any(s["first"] <= b["first"] < s["end"] for s in listed):
+            continue
+        body = text_of(b["quote"])
+        if not body:
+            continue
+        cmd = next((m.group(0) for ln in lines[b["first"] + 1:b["end"]] if not ln.startswith(">")
+                    for m in [POST_CMD.search(ln)] if m), "")
+        cid = ASKS_CID.search(cmd)
+        try:
+            why = ask_check(body, cid.group(1) if cid else None, None if b["node"] or not b["comment"] else "")
+        except Exception as e:  # noqa: BLE001 -- a check that could not run is named, never passed
+            why = f"the ask check did not run ({type(e).__name__}: {e})"
+        if why:
+            out.append((name, b["first"] + 1, "ask",
+                        f"it asks design, and {why}. Fix it where the record says so; draft an ask only for what the "
+                        f"record leaves a question: {b['head'][:70]}"))
+    return out
 
 
 def override_drafts(text, name, files=None):
@@ -904,6 +946,38 @@ The draft below this heading was cut: it described the old entry.
 
 # The override rule: drafts under a file in figma.new_thread_files whose post command was written to step past
 # a refusal, beside ones that were not, and a board the setting does not list.
+ASK_DRAFTS = """# Figma comments owed
+
+## Design file `PlantedFileKey00000001`
+
+### Hero gap on phone — NEW on hero [`3001:2001`](https://x) · **Not sent.**
+
+`figma_post.py new PlantedFileKey00000001 3001:2001 <text> --asks c-open`
+
+> Q: Should the hero take the 24 gap on phone, as on desktop?
+
+### Band name — NEW on band [`3001:2002`](https://x) · **Not sent.**
+
+`figma_post.py new PlantedFileKey00000001 3001:2002 <text>`
+
+> Q: Could the band be renamed "Cases" to match the nav?
+
+### Footer padding — NEW on footer [`3001:2003`](https://x) · **Not sent.**
+
+`figma_post.py new PlantedFileKey00000001 3001:2003 <text> --asks c-done`
+
+> FIX (done in Figma): The footer padding is 32 now, as the record says.
+
+## Journey board `PlantedFileKey00000003`
+
+### Search events — `3002:2001` · **Not sent.**
+
+`figma_post.py new PlantedFileKey00000003 3002:2001 <text>`
+
+> Q: Should search get its own event?
+"""
+
+
 OVERRIDE_DRAFTS = """# Figma comments owed
 
 ## Design file `PlantedFileKey00000001`
@@ -1069,6 +1143,36 @@ def selftest_stale(case):
          not {x for x in od if x[1] in (at("Hero crop"), at("Search and download"))})
     case("... and with no file listed, the rule reads nothing",
          not [x for x in structure(OVERRIDE_DRAFTS, "drafts.md", True, set()) if x[2] == "override"])
+    calls = []
+
+    def asked(text, cid=None, old=None):   # figma_post.ask_refusal's stand-in: a FIX note asks nothing
+        calls.append((text, cid, old))
+        if text.startswith("FIX (done in Figma)"):
+            return None
+        return None if cid == "c-open" else (f"the record settles {cid}" if cid else "it cites no record entry")
+    ak = lambda: {(x[2], x[1]): x[3] for x in structure(ASK_DRAFTS, "drafts.md", True, set(), lambda k, b: [],
+                                                         {"PlantedFileKey00000001"}, asked)}
+    aat = lambda words: ASK_DRAFTS.split("\n").index(next(ln for ln in ASK_DRAFTS.split("\n") if words in ln)) + 1
+    got = ak()
+    case("known-bad: under a file in figma.settled_files, a draft that asks with no cite is an ask, with the check's why",
+         "it cites no record entry" in got.get(("ask", aat("Band name")), ""))
+    case("known-good: an ask citing an entry the record leaves a question, and a FIX note, pass",
+         ("ask", aat("Hero gap")) not in got and ("ask", aat("Footer padding")) not in got)
+    case("... the check gets the quote, the post command's --asks, and no old text for a NEW draft",
+         ("Q: Should the hero take the 24 gap on phone, as on desktop?", "c-open", None) in calls)
+    case("... and a draft under a file the setting does not list is not judged",
+         not any("search get its own event" in c[0] for c in calls))
+
+    def broken(text, cid=None, old=None):
+        raise RuntimeError("planted")
+    got = {(x[2], x[1]): x[3] for x in structure(ASK_DRAFTS, "drafts.md", True, set(), lambda k, b: [],
+                                                  {"PlantedFileKey00000001"}, broken)}
+    case("a check that could not run is listed as an ask that did not run, never passed",
+         "did not run (RuntimeError: planted)" in got.get(("ask", aat("Band name")), ""))
+    calls.clear()
+    case("with no file in figma.settled_files, the ask rule reads nothing",
+         not [x for x in structure(ASK_DRAFTS, "drafts.md", True, set(), lambda k, b: [], set(), asked)
+              if x[2] == "ask"] and not calls)
     case("a draft held with the section takes the section note's release",
          by(good, "Search and download").get("kind") == "ado" and by(good, "Search and download").get("value")
          == ("545", None) and by(good, "Search and download").get("verdict") == "held"
