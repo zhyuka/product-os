@@ -224,18 +224,19 @@ def selftest():
         "a git config change": ("git", lambda p, w, g: sh(w, "git", "config", "core.hooksPath", "/dev/null")),
         "a file in the hooks folder": ("git", lambda p, w, g: write(os.path.join(p, ".git", "hooks", "pre-push"), "exit 0\n")),
         "an edit in the project checkout": ("project", lambda p, w, g: write(os.path.join(p, "src", "page.html"), "x")),
-        "an accepted-checks file change": ("accepted", lambda p, w, g: write(os.path.join(os.environ["HOME"], ".claude",
+        "an accepted-checks file change": ("accepted", lambda p, w, g: write(os.path.join(os.path.expanduser("~"), ".claude",
                                                                              "product-os-checks-accepted.json"), " ")),
         "a relinked node_modules": ("worktree", lambda p, w, g: (os.remove(os.path.join(w, "node_modules")),
                                                     os.symlink("/", os.path.join(w, "node_modules")))),
     }
-    old_home, old_cfg = os.environ.get("HOME"), os.environ.pop("CLAUDE_CONFIG_DIR", None)
+    homes = ("HOME", "USERPROFILE")  # ~ is HOME on POSIX and USERPROFILE on Windows (kit_config.HOME_VARS)
+    old_home, old_cfg = {k: os.environ.get(k) for k in homes}, os.environ.pop("CLAUDE_CONFIG_DIR", None)
     try:
         cases = [("nothing changed", None, None)] + [(n, k, f) for n, (k, f) in plants.items()]
         for name, kind, plant in cases + [("a changed record", "record", "record")]:
             with tempfile.TemporaryDirectory() as root:
                 project, wt, sha, home, g = fixture(root)
-                os.environ["HOME"] = home
+                os.environ.update(dict.fromkeys(homes, home))
                 out = os.path.join(root, "snap.json")
                 said = io.StringIO()
                 with contextlib.redirect_stdout(said):
@@ -257,7 +258,7 @@ def selftest():
                       code == 0 and got == want and named)
         with tempfile.TemporaryDirectory() as root:
             project, wt, sha, home, g = fixture(root)
-            os.environ["HOME"] = home
+            os.environ.update(dict.fromkeys(homes, home))
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 code = record(wt, sha, os.path.join(root, "s.json"), project)
             sh(wt, *g, "commit", "-q", "--allow-empty", "-m", "moved")
@@ -265,8 +266,11 @@ def selftest():
                 moved = record(wt, sha, os.path.join(root, "s2.json"), project)
             check("record refuses a worktree that isn't at the commit under test", code == 0 and moved == 2)
     finally:
-        if old_home is not None:
-            os.environ["HOME"] = old_home
+        for k, v in old_home.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
         if old_cfg is not None:
             os.environ["CLAUDE_CONFIG_DIR"] = old_cfg
     print(f"qa_snapshot selftest: {sum(results)} of {len(results)} PASS")

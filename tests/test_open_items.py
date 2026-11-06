@@ -21,8 +21,11 @@ WINDOWS = os.name == "nt"  # read once, before any test plants os.name
 class OpenItemsTest(unittest.TestCase):
     def test_selftest(self):
         r = subprocess.run([sys.executable, str(SCRIPT), "--selftest"], capture_output=True, text=True, timeout=300)
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertNotIn("FAIL", r.stdout)
+        # Only the FAIL lines: CI's annotation keeps a failure's last 15 lines, and the PASS lines after them
+        # pushed them out. With none, a crash's last lines.
+        fails = [ln for ln in r.stdout.splitlines() if ln.startswith("FAIL ")]
+        if r.returncode or fails:
+            self.fail("\n".join(fails) or "\n".join((r.stdout + r.stderr).strip().splitlines()[-12:]))
 
     def test_fixture_list(self):
         with tempfile.TemporaryDirectory() as d:

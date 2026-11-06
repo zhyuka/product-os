@@ -450,7 +450,8 @@ def selftest():
         for name, rules in (("good.json", good), ("broad.json", broad)):
             with open(os.path.join(tmp, name), "w", encoding="utf-8") as f:
                 json.dump({"permissions": {"ask": rules}}, f)
-        env = dict(os.environ, HOME=os.path.join(tmp, "home"), PYTHONPATH=HERE)
+        import kit_config
+        env = dict(os.environ, **kit_config.home_env(os.path.join(tmp, "home")), PYTHONPATH=HERE)
         env.pop("PRODUCT_OS_CONFIG", None)
         runs = [("a planted file whose rules hold: exit 0", ["good.json"], 0, ""),
                 ("a planted file with broad rules: exit 1", ["broad.json"], 1, ""),

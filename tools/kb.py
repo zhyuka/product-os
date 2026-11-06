@@ -1146,7 +1146,7 @@ def selftest():
     import shutil
     global PROJECT
     kept, kept_project = dict(CONFIG), PROJECT
-    env_kept = {k: os.environ.get(k) for k in ("HOME", kit_config.ENV, "CLAUDE_PROJECT_DIR")}
+    env_kept = {k: os.environ.get(k) for k in (*kit_config.HOME_VARS, kit_config.ENV, "CLAUDE_PROJECT_DIR")}
     root_ = os.path.realpath(tempfile.mkdtemp())
     ok = []
 
@@ -1543,7 +1543,7 @@ def selftest():
                           "cache": "~/kbstate"}, "ledger": {"dir": os.path.join(root_, "led")},
                    "logs": {"backups": [os.path.join(root_, "log-backups")]},
                    "transcripts": {"dir": os.path.join(root_, "transcripts")}}, open(cfg, "w"))
-        os.environ.update(HOME=home, CLAUDE_PROJECT_DIR=os.path.join(root_, "docs"))
+        os.environ.update(kit_config.home_env(home), CLAUDE_PROJECT_DIR=os.path.join(root_, "docs"))
         os.environ[kit_config.ENV] = cfg
         kit_config.reset()
         CONFIG.update({k: None for k in CONFIG})

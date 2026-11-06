@@ -474,7 +474,7 @@ def selftest():
             {"name": "held", "cmd": "printf 'a\\nb\\n'; exit 1", "mark": "waits on the owner (an answer)"},
             {"name": "slow", "cmd": "sleep 5", "pass": "full"},
         ]
-        with open(os.path.join(os.environ["HOME"], ".claude", "product-os.json"), "w", encoding="utf-8") as f:
+        with open(kit_config.user_path(), "w", encoding="utf-8") as f:  # yours, in the isolated home
             json.dump({"rebase": {"surfaces": surfaces}}, f)
         kit_config.reset()
         entries, why = sources(work)
@@ -538,7 +538,7 @@ def selftest():
         fixture = os.path.join(work, "surfaces.json")
         with open(fixture, "w", encoding="utf-8") as f:
             json.dump(surfaces, f)
-        os.remove(os.path.join(os.environ["HOME"], ".claude", "product-os.json"))
+        os.remove(kit_config.user_path())
         kit_config.reset()
         r = subprocess.run([py, me, "--surfaces", fixture, "--source", "plans", "--source", "held"],
                            capture_output=True, text=True, cwd=work)

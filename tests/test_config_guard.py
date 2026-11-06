@@ -93,6 +93,11 @@ def decision(output):
     return (output or {}).get("hookSpecificOutput", {}).get("permissionDecision", "allow")
 
 
+def home(folder):
+    """The variables ~ is read from, all set to folder: HOME on POSIX, USERPROFILE on Windows."""
+    return {"HOME": str(folder), "USERPROFILE": str(folder)}
+
+
 class ConfigGuardTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -236,11 +241,10 @@ class ConfigGuardTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIsNone(self.answer("Bash", {"command": command}))
 
-    @unittest.skipIf(os.name == "nt", "the home folder there comes from USERPROFILE, not HOME")
     def test_the_tools_settings_and_accepted_commands_ask_and_accepting_one_asks(self):
         # A command in your own settings runs without being accepted, and the accepted file decides
         # which of a project's commands run. kit_config.py keeps both in ~/.claude.
-        with mock.patch.dict(os.environ, {"HOME": str(self.user.parent)}):
+        with mock.patch.dict(os.environ, home(self.user.parent)):
             for name, said in (("product-os.json", "your own product-os settings"),
                                ("product-os-commands-accepted.json", "the project commands you accepted")):
                 path = self.user / name
@@ -262,10 +266,8 @@ class ConfigGuardTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIsNone(self.answer("Bash", {"command": command}))
 
-    @unittest.skipIf(os.name == "nt", "the home folder there comes from USERPROFILE, not HOME")
     def test_without_claude_config_dir_the_users_config_is_in_home(self):
-        home = self.user.parent
-        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+        with mock.patch.dict(os.environ, home(self.user.parent)):
             del os.environ["CLAUDE_CONFIG_DIR"]
             output = self.answer("Bash", {"command": "echo '{}' > ~/.claude/product-os-checks.json"})
         self.assertEqual(decision(output), "ask")

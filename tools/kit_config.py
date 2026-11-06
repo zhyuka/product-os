@@ -336,14 +336,24 @@ def reset():
     _loaded.clear()
 
 
-ISOLATED = ("HOME", "CLAUDE_CONFIG_DIR", ENV, "CLAUDE_PROJECT_DIR")
+# Where ~ comes from: HOME on POSIX, USERPROFILE on Windows, where Python 3.8+ ignores HOME.
+HOME_VARS = ("HOME", "USERPROFILE")
+
+
+def home_env(home):
+    """{variable: home} for each variable ~ is read from, so a planted home folder is ~ on every platform."""
+    return {k: home for k in HOME_VARS}
+
+
+ISOLATED = HOME_VARS + ("CLAUDE_CONFIG_DIR", ENV, "CLAUDE_PROJECT_DIR")
 
 
 def run_isolated(fn, *args):
-    """fn(*args) with the person's settings out of reach, for a tool's self-test: HOME and
-    CLAUDE_CONFIG_DIR are an empty temp folder, $PRODUCT_OS_CONFIG and $CLAUDE_PROJECT_DIR are unset,
-    the working folder is another temp folder, and the loaded settings are forgotten. Everything is
-    put back after, and what fn starts inherits it. A self-test that needs settings plants them."""
+    """fn(*args) with the person's settings out of reach, for a tool's self-test: the home folder
+    (home_env) is an empty temp folder, CLAUDE_CONFIG_DIR, $PRODUCT_OS_CONFIG and $CLAUDE_PROJECT_DIR
+    are unset, the working folder is another temp folder, and the loaded settings are forgotten.
+    Everything is put back after, and what fn starts inherits it. A self-test that needs settings
+    plants them."""
     import tempfile
     if "no_isolate" in MUT:
         return fn(*args)
@@ -355,7 +365,7 @@ def run_isolated(fn, *args):
         os.makedirs(work)
         for k in ISOLATED:
             os.environ.pop(k, None)
-        os.environ["HOME"] = home
+        os.environ.update(home_env(home))
         os.chdir(work)
         reset()
         try:
@@ -544,7 +554,7 @@ def selftest():
             f.write(d if isinstance(d, str) else json.dumps(d))
 
     def tool(root, cwd, code, env_extra=None):
-        env = dict(os.environ, HOME=os.path.join(root, "home"), PYTHONPATH=here,
+        env = dict(os.environ, **home_env(os.path.join(root, "home")), PYTHONPATH=here,
                    PRODUCT_OS_NO_KEYCHAIN="1")
         env.pop(ENV, None)
         env.update(env_extra or {})
@@ -560,8 +570,8 @@ def selftest():
         deep, bare = os.path.join(proj, "a", "b"), os.path.join(root, "elsewhere")
         for d in (deep, bare):
             os.makedirs(d, exist_ok=True)
-        old = os.environ.get("HOME"), os.environ.pop(ENV, None)
-        os.environ["HOME"] = home
+        old = {k: os.environ.get(k) for k in HOME_VARS}, os.environ.pop(ENV, None)
+        os.environ.update(home_env(home))
         try:
             reset()
             try:
@@ -579,9 +589,9 @@ def selftest():
             check("outside any project the user file answers",
                   get("ado", "project", start=bare) == "UserProj" and get("ado", "org", start=bare)
                   == "https://dev.azure.com/UserOrg/")
-            seen = run_isolated(lambda: (get("ado", "org"), os.environ.get("HOME"), os.getcwd()))
+            seen = run_isolated(lambda: (get("ado", "org"), os.path.expanduser("~"), os.getcwd()))
             check("run_isolated hides the person's settings from a self-test and puts everything back",
-                  seen[0] is None and seen[1] != home and os.environ.get("HOME") == home
+                  seen[0] is None and seen[1] != home and os.path.expanduser("~") == home
                   and get("ado", "org", start=bare) == "https://dev.azure.com/UserOrg/", str(seen[:2]))
             check("the project file is found by walking up from a folder below it",
                   load(deep)["project"] == os.path.join(proj, FILE))
@@ -683,7 +693,11 @@ def selftest():
                       get("retro", "propose_cmd", start=os.path.join(root, "shop-fix")) == "echo shop"
                       and get("retro", "propose_cmd", start=os.path.join(root, "shop-clone")) is None)
         finally:
-            os.environ["HOME"] = old[0] if old[0] is not None else os.environ.pop("HOME", "")
+            for k, v in old[0].items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
             if old[1] is not None:
                 os.environ[ENV] = old[1]
             reset()
@@ -720,7 +734,7 @@ def selftest():
             r = tool(root, deep, "import figma_comments as fc\nprint(list(fc.KNOWN_FILES))")
             check("figma_comments.py takes the files from it", r.stdout.strip() == "['KEY1']",
                   (r.stdout + r.stderr).strip()[-300:])
-        os.remove(os.path.join(home, FILE))  # the planted one: HOME is the real one again here
+        os.remove(os.path.join(home, FILE))  # the planted one: ~ is the real one again here
         r = tool(root, bare, "import ado_rest\nprint(ado_rest.ORG, ado_rest.PROJECT)")
         check("with no file they still import, with nothing set", r.returncode == 0 and r.stdout.strip()
               == "None None", (r.stdout + r.stderr).strip()[-300:])
@@ -754,11 +768,11 @@ def selftest():
               and _plugin_root(os.path.join(root, "copy", "tools")) is None
               and _plugin_root(os.path.join(root, "other", "tools")) is None)
         saved = (PLUGIN, os.getcwd(), os.environ.pop("CLAUDE_PROJECT_DIR", None), os.environ.get("OLDPWD"),
-                 os.environ.get("HOME"))
+                 {k: os.environ.get(k) for k in HOME_VARS})
         PLUGIN = plug
         try:
             # An empty home, so the person's own settings can't answer need() for the planted project.
-            os.environ["HOME"] = os.path.join(root, "plugin-home")
+            os.environ.update(home_env(os.path.join(root, "plugin-home")))
             os.makedirs(os.path.join(root, "plugin-home", ".claude"), exist_ok=True)
             os.chdir(os.path.join(plug, "tools"))
             os.environ["OLDPWD"] = pproj
@@ -811,7 +825,7 @@ def selftest():
         finally:
             PLUGIN = saved[0]
             os.chdir(saved[1])
-            for k, v in (("CLAUDE_PROJECT_DIR", saved[2]), ("OLDPWD", saved[3]), ("HOME", saved[4])):
+            for k, v in (("CLAUDE_PROJECT_DIR", saved[2]), ("OLDPWD", saved[3]), *saved[4].items()):
                 if v is None:
                     os.environ.pop(k, None)
                 else:

@@ -720,7 +720,9 @@ def selftest():
 
         # No suites folder set anywhere: exit 2 naming the key, never a clean 0.
         import subprocess
-        env = dict(os.environ, HOME=os.path.join(tmp, 'home'), PYTHONPATH=HERE + os.pathsep + os.environ.get('PYTHONPATH', ''))
+        import kit_config
+        env = dict(os.environ, **kit_config.home_env(os.path.join(tmp, 'home')),
+                   PYTHONPATH=HERE + os.pathsep + os.environ.get('PYTHONPATH', ''))
         env.pop('PRODUCT_OS_CONFIG', None)
         bare = os.path.join(tmp, 'bare')
         os.makedirs(bare)
@@ -735,7 +737,7 @@ def selftest():
         vunit('v-e2e', {'claude': old}, root=e2e, model='claude-opus-9')
         json.dump({'agent_gate': {'suites': e2e, 'version_cmd': py(f'print("{new} (Claude Code)")')}},
                   open(os.path.join(home2, '.claude', 'product-os.json'), 'w'))
-        env2 = dict(env, HOME=home2)
+        env2 = dict(env, **kit_config.home_env(home2))
         env2.pop('CLAUDE_PROJECT_DIR', None)
         r2 = subprocess.run([sys.executable, os.path.abspath(__file__), '--project', vlogs], cwd=bare, env=env2,
                             capture_output=True, text=True)

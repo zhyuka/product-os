@@ -30,7 +30,7 @@ class Home:
     def run(self, tool, *args, environment=None, cwd=None):
         env = {k: v for k, v in os.environ.items() if k not in (KEY, "CLAUDE_PROJECT_DIR", "PRODUCT_OS_CONFIG")}
         env.update(CLAUDE_CONFIG_DIR=str(self.config), PATH=os.pathsep.join([str(self.bin), "/usr/bin", "/bin"]),
-                   HOME=str(self.config.parent))
+                   HOME=str(self.config.parent), USERPROFILE=str(self.config.parent))  # ~ on Windows
         if environment:
             env[KEY] = environment
         p = subprocess.run([sys.executable, str(TOOLS / f"{tool}.py"), *args], capture_output=True, text=True, env=env,

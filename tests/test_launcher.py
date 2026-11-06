@@ -395,10 +395,9 @@ class PluginOptionsTest(unittest.TestCase):
                          [["npm run check"], ["npm run check"], ["npm run check"], ["make"]])
         self.assertEqual(self.qa(Path(tempfile.gettempdir())), [])
 
-    @unittest.skipIf(os.name == "nt", "the home folder there comes from USERPROFILE, not HOME")
     def test_a_key_can_start_with_a_tilde(self):
         self.accept({"~/shop": {"qa_commands": ["npm test"]}})
-        with mock.patch.dict(os.environ, {"HOME": str(self.tmp)}):
+        with mock.patch.dict(os.environ, {"HOME": str(self.tmp), "USERPROFILE": str(self.tmp)}):  # ~ on Windows
             self.assertEqual(self.qa(), ["npm test"])
 
     def test_claude_config_dir_inside_the_project_is_ignored(self):
