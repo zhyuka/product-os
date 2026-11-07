@@ -132,6 +132,21 @@ class Summarize(unittest.TestCase):
         self.assertIn("- names-route failed, without, 1 run: no explanation", text)
         self.assertNotIn("FAIL FAIL FAIL", text)
 
+    def test_a_judge_skipped_at_the_cost_ceiling_is_not_graded(self):
+        """In the 11-07 run, judges skipped at the cost ceiling were recorded as failed and counted in
+        each run's score. Here the one grader that ran passed, so the run scores 1.00, not 0.33."""
+        skipped = run(0.33, True, False)
+        skipped["graders"][0]["weight"], skipped["graders"][1]["weight"] = 1, 2
+        skipped["graders"][1]["explanation"] = "skipped: cost ceiling"
+        skipped["skippedPaidGraders"] = True
+        judged = run(1.0, True, True)
+        text = self.summarize(result([skipped, judged], [run(0.0, False, False)]))
+        self.assertEqual(self.row(text), "| skill-go-extra-route | 1.00 | 0.00 | +1.00 | 0 of 2 | 0 of 1 |")
+        self.assertIn("| names-route | llm | 2 | 1 of 1 (1 not graded) | 0 of 1 |", text)
+        self.assertIn("- names-route not graded, with plugin, 1 run: skipped: cost ceiling", text)
+        self.assertNotIn("names-route failed, with plugin", text)
+        self.assertIn("**1 run with graders skipped**", text)
+
     def test_a_run_that_worked_then_timed_out_is_scored(self):
         timed_out = run(0.33, True, False, error="timed out after 420s")
         text = self.summarize(result([timed_out, run(1.0, True, True)], [run(0.0, False, False)]))

@@ -13,6 +13,11 @@ no grader run, measures nothing. A failed sign-in is one. The harness still grad
 some of those, and a grader that checks for an absence passes on an empty run. So
 the scores, the deltas and the grader counts here leave such runs out, and each
 is listed with its error under its case.
+
+A grader the harness skipped, such as a judge left out once the cost ceiling was
+reached, is recorded as failed, and the run's score counts it so. It measured
+nothing, so here it is not graded: it is left out of the grader counts, listed as
+not graded, and a run's score counts only the graders that ran.
 """
 import json
 import sys
@@ -33,21 +38,39 @@ def scored(run):
     return agent_cost > 0 and bool(run.get("graders"))
 
 
+def skipped(mark):
+    """True for a grader the harness never ran, such as a judge skipped at the cost ceiling. The
+    harness records it as failed, with an explanation that starts "skipped"."""
+    return str(mark.get("explanation") or "").lower().startswith("skipped")
+
+
+def run_score(run):
+    """The run's score over the graders that ran, weighted as the harness weights them, or None
+    when none ran. With nothing skipped it is the harness's own score."""
+    marks = [mark for mark in run.get("graders") or [] if mark.get("scored", True)]
+    if not any(skipped(mark) for mark in marks):
+        return run.get("score") or 0
+    ran = [mark for mark in marks if not skipped(mark)]
+    total = sum(mark.get("weight", 1) for mark in ran)
+    return sum(mark.get("weight", 1) for mark in ran if mark.get("passed")) / total if total else None
+
+
 def mean_score(runs):
-    scores = [run.get("score") or 0 for run in runs if scored(run)]
+    scores = [run_score(run) for run in runs if scored(run)]
+    scores = [score for score in scores if score is not None]
     return sum(scores) / len(scores) if scores else None
 
 
 def passes(runs, name):
-    """'N of M' scored runs that passed the grader, with runs left out or never graded named."""
+    """'N of M' graded runs that passed the grader, with runs left out or never graded named."""
     kept = [run for run in runs if scored(run)]
     passed = graded = 0
     for run in kept:
         for grader in run.get("graders") or []:
-            if grader.get("name") == name:
+            if grader.get("name") == name and not skipped(grader):
                 graded += 1
                 passed += bool(grader.get("passed"))
-    text = f"{passed} of {len(kept)}"
+    text = f"{passed} of {graded}"
     notes = [f"{len(runs) - len(kept)} not scored"] if len(kept) < len(runs) else []
     if graded < len(kept):
         notes.append(f"{len(kept) - graded} not graded")
@@ -55,9 +78,9 @@ def passes(runs, name):
 
 
 def failures(case, with_runs, without_runs, width=240):
-    """One line per grader, arm and reason a scored run failed it, with how many runs gave that
-    reason: the grader's own explanation, such as a missing file or the judge's votes. The step
-    summary is all a reader without a GitHub sign-in gets, so the reason has to be here."""
+    """One line per grader, arm and reason a scored run failed it, or skipped it, with how many runs
+    gave that reason: the grader's own explanation, such as a missing file or the judge's votes. The
+    step summary is all a reader without a GitHub sign-in gets, so the reason has to be here."""
     lines = []
     for grader in case.get("graders") or []:
         name = grader.get("name")
@@ -68,9 +91,10 @@ def failures(case, with_runs, without_runs, width=240):
                     if mark.get("name") == name and not mark.get("passed"):
                         why = " ".join(str(mark.get("explanation") or "no explanation").split())
                         why = why if len(why) <= width else why[:width - 3] + "..."
-                        reasons[why] = reasons.get(why, 0) + 1
-            for why, count in reasons.items():
-                lines.append(f"- {name} failed, {arm}, {count} {'run' if count == 1 else 'runs'}: {why}")
+                        key = ("not graded" if skipped(mark) else "failed", why)
+                        reasons[key] = reasons.get(key, 0) + 1
+            for (what, why), count in reasons.items():
+                lines.append(f"- {name} {what}, {arm}, {count} {'run' if count == 1 else 'runs'}: {why}")
     return lines
 
 
@@ -82,7 +106,7 @@ def summarize(doc):
     lines = []
     cases = doc.get("cases") or []
     threshold = (doc.get("suite") or {}).get("threshold")
-    rows, deltas, passed, unscored = [], [], 0, 0
+    rows, deltas, passed, unscored, partly = [], [], 0, 0, 0
     for case in cases:
         arms = case.get("arms") or {}
         with_runs, without_runs = arms.get("with") or [], arms.get("without") or []
@@ -93,6 +117,8 @@ def summarize(doc):
         if score is not None and isinstance(threshold, (int, float)) and score >= threshold:
             passed += 1
         unscored += sum(not scored(run) for run in with_runs + without_runs)
+        partly += sum(scored(run) and any(skipped(mark) for mark in run.get("graders") or [])
+                      for run in with_runs + without_runs)
         rows.append((case, with_runs, without_runs, score, without, delta))
     lines.append(f"## Live evals: Claude Code {doc.get('claudeVersion', '?')}, {len(cases)} cases, "
                  f"${doc.get('costUsd', 0):.2f}, {doc.get('durationSeconds', 0)}s")
@@ -105,6 +131,11 @@ def summarize(doc):
         lines.append(f"**{unscored} {'run' if unscored == 1 else 'runs'} not scored**: each errored "
                      "before the model answered, or no grader ran. The scores and counts below leave "
                      "them out, and each is listed with its error under its case.")
+    if partly:
+        lines.append("")
+        lines.append(f"**{partly} {'run' if partly == 1 else 'runs'} with graders skipped**, such as a "
+                     "judge left out at the cost ceiling. Those graders count as not graded, and those "
+                     "runs score on the graders that ran.")
     if doc.get("partial"):
         lines.append("")
         lines.append(f"**Partial result** ({doc.get('partialReason', 'reason not given')}): "
