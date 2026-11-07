@@ -852,7 +852,7 @@ def notes_backup(r, run=None, off=None):
         if run is None:
             here = os.path.dirname(os.path.realpath(__file__))
             if here not in sys.path:
-                sys.path.insert(0, here)
+                sys.path.append(here)
             import backup_cc_logs
             run, off = backup_cc_logs.backup_notes, off or _backup_off
         why_off = off() if off else None

@@ -270,7 +270,7 @@ def notes_or(p, resolve=None):
     try:
         if resolve is None:
             if TOOLS not in sys.path:
-                sys.path.insert(0, TOOLS)
+                sys.path.append(TOOLS)
             import backup_cc_logs
             resolve = backup_cc_logs
         return resolve.resolve_notes(p), resolve.notes_copy(p)
@@ -1284,7 +1284,7 @@ def selftest():
              and all("never a source" in res[k][1] for k in ("log", "copied log", "backup log", "ledger file", "private"))
              and "no ledger row" in res["ledger id"][1])
         if TOOLS not in sys.path:
-            sys.path.insert(0, TOOLS)
+            sys.path.append(TOOLS)
         import backup_cc_logs as bcl
         was = bcl.notes_root, bcl.dest_root
         nroot, droot = os.path.join(root_, "side-session-notes"), os.path.join(root_, "cc-logs")
