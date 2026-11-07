@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "product-os"
-version = "0.1.1"
+version = "0.1.2"
 description = "The Product OS: checks an agent can't pass for itself. Run a project's checks from a skill, a git hook or CI, each counting only once proven on a planted bad case and a good one, and exercise a build in every state its Figma design draws."
 readme = "README.md"
 requires-python = ">=3.9"

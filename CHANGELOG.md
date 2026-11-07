@@ -2,8 +2,10 @@
 
 Each version here matches `version` in `.claude-plugin/plugin.json`, the marketplace entry in `.claude-plugin/marketplace.json`, and `pyproject.toml`. Claude Code installs an update only when that number changes.
 
-## Unreleased
+## 0.1.2
 
+- The live evals' step summary now says what each failed run did. It lists each tool call with the start of its result or why it was denied, then the end of the last reply. A judge records only its votes, so before this the summary couldn't say why a run failed. `evals/live.py` keeps each run's trace for it. Token-shaped strings are masked, and the traces aren't uploaded.
+- On Windows, a live eval job where no run signed in now passes with a notice that says why. Claude Code turns off its shared federation token cache there. So each process presents the same single-use GitHub token, and only the first is accepted. On Ubuntu and macOS the same outcome still fails the job, since there it means the federation rule is wrong.
 - `review` makes the reviewer's temp folder with `mktemp -d "${TMPDIR:-/tmp}/review.XXXXXX"`. A bare `mktemp -d` on macOS ignores `TMPDIR` and writes under `/var/folders`, which Claude Code's sandbox refuses. In a sandboxed session there, the diff file was never written.
 
 ## 0.1.1

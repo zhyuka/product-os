@@ -9,7 +9,7 @@
     {
       "name": "product-os",
       "source": "./",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "Product work with Claude Code in six stages, from the ask to maintenance. Each stage commits a file the next one reads, a reviewer that can't edit files checks every change, a builder can't stop until its checks pass, and every miss becomes a check that has failed a planted bad case.",
       "category": "productivity",
       "tags": [
