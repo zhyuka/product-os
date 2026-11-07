@@ -175,7 +175,8 @@ jobs:
 
       # --scaffold runs each case's scaffold.sh, which writes fixture files.
       # The builder cases' scaffolds also accept their QA command in the
-      # runner's own ~/.claude/product-os-checks.json, as /product-os:setup-kit has the person do.
+      # product-os-checks.json of the config folder each eval session reads,
+      # as /product-os:setup-kit has the person do (evals/_fixtures/workspace.sh).
       # --trust-plugin answers the first-run trust prompt. The cost ceiling is
       # a list-price estimate checked before each run starts.
       # A GitHub token lasts about 5 minutes and is good for one exchange, so a loop
