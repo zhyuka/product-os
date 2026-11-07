@@ -115,7 +115,7 @@ Frames: ... / No phone frame: ...      (the lines figma_check.py --frames printe
 Design check: <its first line and its line for each frame>, or "design check did not run: <why>".
 Not done: <misses still open, what the check can't see that you couldn't compare, whether the check
 is registered and proven, questions for a person>.
-Done: <what you changed>.
+Changed: <what you changed>.
 ```
 
 A section with a missing frame or a check that didn't run isn't done, so don't call it done. Share
