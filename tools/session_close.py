@@ -84,6 +84,15 @@ SOFT, listed and never blocking:
              is not seen
   no repo    changed files in no git repo, and commits in a repo with no remote
 
+NOTES BACKUP. The desktop app deletes a family's side-session notes folder when its top is archived with no
+side session left live (backup_cc_logs.py, "ALSO the desktop app's side-session notes"), and the record cites
+files there. So every live single-session run, whatever its verdict (a card can archive a session that owes),
+copies every notes folder to the backup (backup_cc_logs.backup_notes, under a second); a copy that fails or did
+not run adds "notes backup: ..." to not checked, so the verdict is never "can archive" and a close sweep doesn't
+archive. With no backup folder configured (backup.folder) the copy is off: the report says so and nothing
+blocks. --as-of, --archived-since and --calibrate copy nothing. An archive that runs no verdict (a click, a card
+acted on directly) is covered only by a scheduled backup_cc_logs run.
+
 AS OF. --as-of reads the log up to that time, so background, peers and promises are as of then;
 commits are pushed or not as of then by the remote-tracking reflogs (as of now in a repo that has
 none). Edits, whether a worktree's folder exists, a drafts file's shape and a patch-id match are read as
@@ -823,6 +832,44 @@ def close_report(log, drafts=(), as_of=None, idle=None, now=None, side=side_chec
     return out
 
 
+def _backup_off():
+    """Why the notes backup is off (no backup folder configured), or None when it is on."""
+    import backup_cc_logs
+    try:
+        backup_cc_logs.backup_root()
+    except backup_cc_logs.kit_config.NotConfigured as e:
+        return str(e)
+    return None
+
+
+def notes_backup(r, run=None, off=None):
+    """NOTES BACKUP above: copy the side-session notes folders on a live run, and add "notes backup" to not checked
+    when the copy fails or did not run, so the verdict is never can archive. run returns
+    backup_cc_logs.backup_notes()'s shape; off returns why the backup is off, or None."""
+    if r.get("as_of"):
+        return r
+    try:
+        if run is None:
+            here = os.path.dirname(os.path.realpath(__file__))
+            if here not in sys.path:
+                sys.path.insert(0, here)
+            import backup_cc_logs
+            run, off = backup_cc_logs.backup_notes, off or _backup_off
+        why_off = off() if off else None
+        if why_off:
+            r["notes_backup"] = {"off": why_off}
+            return r
+        code, n, failed, shown = run()
+    except Exception as e:      # backup_cc_logs missing or broken: not checked, never "backed up"
+        code, n, failed, shown = 2, None, [f"{type(e).__name__}: {e}"[:120]], []
+    r["notes_backup"] = {"code": code, "counts": n, "failed": list(failed), "held": len(shown)}
+    if code != 0:
+        r["not_run"].append("notes backup: " + ("; ".join(failed) or f"exit {code}")[:160])
+        r["verdict"] = (("owes: " + "; ".join(r["hard"]) + "; " if r.get("hard") else "")
+                        + "not checked: " + "; ".join(r["not_run"]))
+    return r
+
+
 def render(r):
     home = os.path.expanduser("~")
     short = lambda p: p.replace(home, "~", 1)  # noqa: E731
@@ -878,6 +925,15 @@ def render(r):
     lines.append(f"  no repo: {len(e['not_in_git'])} changed files in no repo"
                  + "".join(f"; {x['made']} commits in {short(x['repo'])}, which has no remote" for x in c.get("no_remote", [])))
     lines += [f"      {short(x)}" for x in e["not_in_git"][:8]]
+    nb = r.get("notes_backup")
+    if nb and nb.get("off"):
+        lines.append(f"  notes backup: off ({nb['off'][:120]}), so an archive can delete notes the record cites")
+    elif nb:
+        n = nb["counts"] or {}
+        lines.append("  notes backup: " + (
+            f"{n.get('notes', 0)} side-session notes files in the backup ({n.get('new', 0)} new, "
+            f"{n.get('superseded', 0)} changed, {nb['held']} held as likely credentials)" if nb["code"] == 0
+            else "FAILED, so not checked: " + ("; ".join(nb["failed"]) or f"exit {nb['code']}")[:160]))
     lines.append(r["verdict"])
     return "\n".join(lines)
 
@@ -1317,6 +1373,48 @@ def _selftest(check, results, DR):
         check("planted: a session with only promise lines and a drafts edit reads can archive, the lines listed",
               r["verdict"] == "can archive" and len(r["promises"]) == 1 and r["drafts"] == [drafts]
               and render(r).splitlines()[-1] == "can archive")
+
+        # NOTES BACKUP: every live run copies, whatever its verdict; a copy that fails or raises is not checked.
+        calls = []
+
+        def ok_run():
+            calls.append(1)
+            return 0, {"notes": 4, "new": 1, "superseded": 0}, [], ["HELD x"]
+
+        def live(verdict="can archive", as_of=None):
+            return {"verdict": verdict, "as_of": as_of, "not_run": [], "hard": [], "owes": False}
+        nr = notes_backup(live(), ok_run)
+        check("notes backup: a live can-archive copies the notes once and stays can archive",
+              calls == [1] and nr["verdict"] == "can archive" and nr["notes_backup"]["held"] == 1)
+        nr = notes_backup(live(), lambda: (2, None, ["the backup folder ~/Backup is missing, so a copy would not sync"], []))
+        check("notes backup: a copy that did not run turns can archive to not checked (exit 2)",
+              nr["verdict"].startswith("not checked: notes backup: the backup folder ~/Backup is missing") and nr["not_run"])
+        nr = notes_backup(live(), lambda: (_ for _ in ()).throw(OSError("disk full")))
+        check("notes backup: a copy that raises is not checked, never can archive",
+              nr["verdict"] == "not checked: notes backup: OSError: disk full")
+        notes_backup(live(as_of="2026-10-20T10:00:00Z"), ok_run)
+        check("notes backup: --as-of copies nothing", calls == [1])
+        notes_backup(live("not checked: active: last log record 3 min ago"), ok_run)
+        owes = dict(live("owes: 1 unanswered peer question"), hard=["1 unanswered peer question"], owes=True)
+        notes_backup(dict(owes), ok_run)
+        nr = notes_backup(dict(owes, not_run=[]), lambda: (1, {}, ["side-session-notes/x.md: PermissionError"], []))
+        check("notes backup: an owes or not-checked run copies too (a card can archive it); a failed copy keeps "
+              "the owed items and adds not checked",
+              calls == [1, 1, 1] and nr["verdict"] == "owes: 1 unanswered peer question; not checked: notes backup: "
+              "side-session-notes/x.md: PermissionError")
+        nr = notes_backup(live(), ok_run, off=lambda: "backup.folder is not set")
+        check("notes backup: with no backup folder configured it is off, copies nothing and blocks nothing",
+              calls == [1, 1, 1] and nr["verdict"] == "can archive" and nr["notes_backup"] == {"off": "backup.folder is not set"})
+        rr = notes_backup(close_report(only, DR), ok_run)
+        check("notes backup: a real report renders its backup line above the verdict",
+              render(rr).splitlines()[-2].startswith("  notes backup: 4 side-session notes files in the backup")
+              and render(rr).splitlines()[-1] == "can archive")
+        rr = notes_backup(close_report(only, DR), ok_run, off=lambda: "backup.folder is not set")
+        check("notes backup: an off backup renders as off above the verdict",
+              render(rr).splitlines()[-2].startswith("  notes backup: off (backup.folder is not set)"))
+        rr = notes_backup(close_report(only, DR))
+        check("notes backup: the real backup_cc_logs with no backup folder configured reads off, not not checked",
+              rr["verdict"] == "can archive" and "off" in rr.get("notes_backup", {}))
         shaped = os.path.join(t, "shape", "outbound-drafts.md")
         os.makedirs(os.path.dirname(shaped))
         with open(shaped, "w", encoding="utf-8") as f:
@@ -1789,6 +1887,7 @@ def main():
     except OSError as e:
         print(f"could not read {log}: {e}")
         return 2
+    r = notes_backup(r)
     print(json.dumps(r, indent=1) if a.json else render(r))
     return 1 if r["owes"] else 2 if r["not_run"] else 0
 
