@@ -11,7 +11,8 @@ Tool paths below are relative to the product-os plugin's folder; in a skill or a
 ## Secrets
 
 Never print a token, key or credential, and never read a file likely to hold one, such as
-`~/.claude/settings.json`, `~/.claude/ide/*.lock` or a `.git/config` with a token in its remote.
+`~/.claude/settings.json`, `~/.claude/remote-settings*`, `~/.claude/policy-limits*`,
+`~/.claude/ide/*.lock` or a `.git/config` holding a token.
 Never copy a credential into a second store. Never type one into a field, even on the user's go:
 say so once, up front, and name where they paste it. Check a pasted one by length and match, never
 by printing it. Never bulk-delete `~/.claude/projects`; the session logs there are the recovery path.
