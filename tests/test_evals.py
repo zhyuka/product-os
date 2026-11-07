@@ -117,6 +117,19 @@ class Summarize(unittest.TestCase):
         text = self.summarize(result([api_error, run(1.0, True, True)], []))
         self.assertTrue(self.row(text).startswith("| skill-go-extra-route | 1.00 | n/a | n/a | 1 of 2, 1 not scored |"))
 
+    def test_each_failed_grader_names_its_reason(self):
+        missing = run(0.5, True, False)
+        missing["graders"][1]["explanation"] = "judge votes: FAIL FAIL PASS"
+        broken = run(0.5, False, True, error="timed out after 420s")
+        broken["graders"][0]["explanation"] = "pattern found (expected absent)"
+        signed_out = run(0.33, True, False, cost=0.002, error=SIGN_IN)
+        signed_out["graders"][1]["explanation"] = "judge votes: FAIL FAIL FAIL"
+        text = self.summarize(result([missing, broken, signed_out], [run(0.0, False, False)]))
+        self.assertIn("- names-route failed, with plugin, 1 run: judge votes: FAIL FAIL PASS", text)
+        self.assertIn("- built-nothing failed, with plugin, 1 run: pattern found (expected absent)", text)
+        self.assertIn("- names-route failed, without, 1 run: no explanation", text)
+        self.assertNotIn("FAIL FAIL FAIL", text)
+
     def test_a_run_that_worked_then_timed_out_is_scored(self):
         timed_out = run(0.33, True, False, error="timed out after 420s")
         text = self.summarize(result([timed_out, run(1.0, True, True)], [run(0.0, False, False)]))

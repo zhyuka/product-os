@@ -54,6 +54,26 @@ def passes(runs, name):
     return text + (f" ({', '.join(notes)})" if notes else "")
 
 
+def failures(case, with_runs, without_runs, width=240):
+    """One line per grader, arm and reason a scored run failed it, with how many runs gave that
+    reason: the grader's own explanation, such as a missing file or the judge's votes. The step
+    summary is all a reader without a GitHub sign-in gets, so the reason has to be here."""
+    lines = []
+    for grader in case.get("graders") or []:
+        name = grader.get("name")
+        for arm, runs in (("with plugin", with_runs), ("without", without_runs)):
+            reasons = {}
+            for run in filter(scored, runs):
+                for mark in run.get("graders") or []:
+                    if mark.get("name") == name and not mark.get("passed"):
+                        why = " ".join(str(mark.get("explanation") or "no explanation").split())
+                        why = why if len(why) <= width else why[:width - 3] + "..."
+                        reasons[why] = reasons.get(why, 0) + 1
+            for why, count in reasons.items():
+                lines.append(f"- {name} failed, {arm}, {count} {'run' if count == 1 else 'runs'}: {why}")
+    return lines
+
+
 def errors(runs):
     return [(n, run["error"], scored(run)) for n, run in enumerate(runs, 1) if run.get("error")]
 
@@ -113,6 +133,7 @@ def summarize(doc):
         for arm, runs in (("with plugin", with_runs), ("without", without_runs)):
             for number, error, ok in errors(runs):
                 lines.append(f"- {arm}, run {number}{'' if ok else ', not scored'}: {error}")
+        lines += failures(case, with_runs, without_runs)
         for advisory in case.get("advisories") or []:
             lines.append(f"- advisory: {advisory}")
     return "\n".join(lines) + "\n"
