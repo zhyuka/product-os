@@ -18,8 +18,16 @@ A grader the harness skipped, such as a judge left out once the cost ceiling was
 reached, is recorded as failed, and the run's score counts it so. It measured
 nothing, so here it is not graded: it is left out of the grader counts, listed as
 not graded, and a run's score counts only the graders that ran.
+
+A judge records its votes but not its reasons, and a grader's explanation can't
+say what the agent did. So for each scored run that failed a grader, when its
+trace is still on disk (evals/live.py keeps them), it also prints what the run
+did: each tool call with the start of its result or its denial, the calls of an
+agent the run started indented under it, and the end of the last reply. Anything
+shaped like a token or key is masked.
 """
 import json
+import re
 import sys
 
 
@@ -102,6 +110,98 @@ def errors(runs):
     return [(n, run["error"], scored(run)) for n, run in enumerate(runs, 1) if run.get("error")]
 
 
+# The most the blocks saying what failed runs did may add. GitHub drops a step summary over 1 MiB.
+DIGESTS = 600_000
+# A JWT such as GitHub's OIDC token, an Anthropic key, or a bearer token.
+SECRET = re.compile(r"eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]*|sk-ant-[\w-]+|(?i:bearer)\s+[\w.~+/=-]{16,}")
+
+
+def clip(text, width):
+    text = SECRET.sub("[masked]", " ".join(str(text).split())).replace("```", "'''")
+    return text if len(text) <= width else text[:width - 3] + "..."
+
+
+def call_text(name, given):
+    """The part of a tool call's input that says what it did."""
+    for key in ("command", "file_path", "pattern", "skill", "url"):
+        if isinstance(given.get(key), str):
+            return given[key]
+    if name in ("Agent", "Task"):
+        return f"{given.get('subagent_type', 'general-purpose')}: {given.get('description', '')}"
+    return json.dumps(given)
+
+
+def what_it_did(path, calls=24, width=140, tail=600):
+    """Lines saying what one run did, from its trace: each tool call with the start of its result,
+    or "DENIED" and why, the calls of an agent it started indented, and the end of its last reply.
+    [] when the trace isn't there to read. Past `calls` calls, the first and last halves."""
+    if not path:
+        return []
+    order, outcome, last = [], {}, ""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                inner = bool(event.get("parent_tool_use_id"))
+                message = event.get("message")
+                content = message.get("content") if isinstance(message, dict) else None
+                content = [block for block in content if isinstance(block, dict)] if isinstance(content, list) else None
+                if event.get("type") == "assistant" and content is not None:
+                    for block in content:
+                        if block.get("type") == "tool_use":
+                            order.append((block.get("id"), block.get("name", "?"), inner,
+                                          call_text(block.get("name"), block.get("input") or {})))
+                        elif block.get("type") == "text" and not inner and block.get("text", "").strip():
+                            last = block["text"]
+                elif event.get("type") == "user" and content is not None:
+                    for block in content:
+                        if block.get("type") == "tool_result" and block.get("tool_use_id") not in outcome:
+                            body = block.get("content")
+                            if isinstance(body, list):
+                                body = " ".join(part.get("text", "") for part in body if isinstance(part, dict))
+                            outcome[block.get("tool_use_id")] = ("error: " if block.get("is_error") else "") + str(body)
+                elif event.get("subtype") == "permission_denied":
+                    outcome[event.get("tool_use_id")] = f"DENIED ({event.get('decision_reason_type', '?')})"
+                elif event.get("type") == "result" and isinstance(event.get("result"), str) and event["result"].strip():
+                    last = event["result"]
+    except OSError:
+        return []
+    lines = [f"{'    ' if inner else ''}{name}: {clip(text, width)} -> {clip(outcome.get(ident, 'no result'), width)}"
+             for ident, name, inner, text in order]
+    if len(lines) > calls:
+        lines = lines[:calls // 2] + [f"... {len(lines) - calls} more calls ..."] + lines[-(calls - calls // 2):]
+    reply = clip(last, 10 ** 6)
+    lines.append("last reply: " + (("..." + reply[-tail:]) if len(reply) > tail else reply or "(none)"))
+    return lines
+
+
+def failed_runs(case, with_runs, without_runs, budget):
+    """A collapsed block per scored run that failed a grader that ran, saying what it did, while
+    budget[0] characters are left. GitHub drops a step summary over 1 MiB whole."""
+    lines = []
+    for arm, runs in (("with plugin", with_runs), ("without", without_runs)):
+        for number, run in enumerate(runs, 1):
+            missed = [mark.get("name") for mark in run.get("graders") or []
+                      if mark.get("scored", True) and not mark.get("passed") and not skipped(mark)]
+            if not scored(run) or not missed:
+                continue
+            did = what_it_did(run.get("tracePath"))
+            block = ["", f"<details><summary>{arm}, run {number}, failed {', '.join(missed)}: what it did"
+                         "</summary>", "", "```text", *did, "```", "", "</details>"]
+            size = sum(len(line) + 1 for line in block)
+            if did and size > budget[0]:
+                budget[1] += 1
+            elif did:
+                budget[0] -= size
+                lines += block
+    return lines
+
+
 def summarize(doc):
     lines = []
     cases = doc.get("cases") or []
@@ -151,6 +251,7 @@ def summarize(doc):
     for case, with_runs, without_runs, score, without, delta in rows:
         lines.append(f"| {case.get('name')} | {fmt(score)} | {fmt(without)} | {fmt(delta, True)} | "
                      f"{errored(with_runs)} | {errored(without_runs)} |")
+    budget = [DIGESTS, 0]
     for case, with_runs, without_runs, *_ in rows:
         lines += ["", f"### {case.get('name')}", "",
                   "| grader | type | weight | with plugin | without |",
@@ -167,6 +268,10 @@ def summarize(doc):
         lines += failures(case, with_runs, without_runs)
         for advisory in case.get("advisories") or []:
             lines.append(f"- advisory: {advisory}")
+        lines += failed_runs(case, with_runs, without_runs, budget)
+    if budget[1]:
+        lines += ["", f"What {budget[1]} more failed {'run' if budget[1] == 1 else 'runs'} did is left out, "
+                      "to keep this summary under GitHub's size limit."]
     return "\n".join(lines) + "\n"
 
 

@@ -217,6 +217,9 @@ jobs:
             --tools ${{ matrix.tools }} \
             --fetch python3 "$RUNNER_TEMP/oidc_token.py" "$ANTHROPIC_IDENTITY_TOKEN_FILE"
 
+      # Besides the scores, summarize.py prints what each failed run did, from the
+      # traces live.py keeps on the runner: its tool calls, denials and last reply,
+      # with token-shaped strings masked. The traces themselves are not uploaded.
       - name: Summarize
         if: always()
         run: |

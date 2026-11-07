@@ -19,7 +19,8 @@ same never-used token once, shares the result, and is done long before it expire
 --max-cost-usd, and a case is not started once less than a cent is left. --tag keeps the cases
 with any of those tags, as `claude plugin eval --tag` does. The cases' results go in a folder
 named after --json, and --json gets one document in the same format with every case in it, for
-evals/summarize.py. A case that didn't run is named in its partialReason.
+evals/summarize.py. A case that didn't run is named in its partialReason. Each run's temp folder
+is kept, so summarize.py can read from its trace what a failed run did.
 
 Exit 0 when every case ran and passed, else 1.
 """
@@ -63,7 +64,7 @@ def run_case(name, budget, args, results):
     cache = tempfile.mkdtemp(prefix="wif-cache-")
     env = dict(os.environ, CLAUDE_CODE_FEDERATION_CACHE_DIR=cache)
     command = [*args.claude, "plugin", "eval", ".", "--case", name, "--trust-plugin", "--scaffold",
-               "--no-publish", "--max-cost-usd", f"{budget:.2f}", "--threshold", str(args.threshold),
+               "--no-publish", "--keep-temp", "--max-cost-usd", f"{budget:.2f}", "--threshold", str(args.threshold),
                "--judge-model", args.judge_model, "--concurrency", "3", "--json", str(out),
                "--allow-tools", *args.tools]
     print(f"live.py: {name}, up to ${budget:.2f}", flush=True)

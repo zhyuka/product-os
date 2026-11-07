@@ -147,6 +147,45 @@ class Summarize(unittest.TestCase):
         self.assertNotIn("names-route failed, with plugin", text)
         self.assertIn("**1 run with graders skipped**", text)
 
+    def test_a_failed_run_says_what_it_did(self):
+        """The judge records votes, not reasons. In v0.1.1, check-page with the plugin failed
+        not-pass on Linux with nothing in the summary to say why."""
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, folder, True)
+        jwt = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJyZXBvOngifQ.c2lnbmF0dXJl"
+        events = [
+            {"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "Checking the baseline."},
+                {"type": "tool_use", "id": "t1", "name": "Bash",
+                 "input": {"command": "git diff main -- qa-baseline.json"}},
+                {"type": "tool_use", "id": "t2", "name": "Agent",
+                 "input": {"subagent_type": "product-os:page-qa", "description": "QA the page"}}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1",
+                                                      "content": "+ OVERFLOW .plans at 390"}]}},
+            {"type": "assistant", "parent_tool_use_id": "t2", "message": {"content": [
+                {"type": "tool_use", "id": "t3", "name": "Bash", "input": {"command": "curl -s localhost:8765"}}]}},
+            {"type": "system", "subtype": "permission_denied", "tool_use_id": "t3", "decision_reason_type": "mode",
+             "message": "denied"},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t2", "is_error": True,
+                                                      "content": [{"type": "text", "text": f"token {jwt}"}]}]}},
+            {"type": "result", "subtype": "success", "result": "VERDICT: PASS (0 BLOCKER)"}]
+        trace = folder / "trace.jsonl"
+        trace.write_text("".join(json.dumps(event) + "\n" for event in events) + "not json\n", encoding="utf-8")
+        failed = run(0.5, True, False)
+        failed["tracePath"] = str(trace)
+        passed = run(1.0, True, True)
+        passed["tracePath"] = str(trace)
+        gone = run(0.5, True, False)
+        gone["tracePath"] = str(folder / "removed.jsonl")
+        text = self.summarize(result([failed, passed, gone], []))
+        self.assertEqual(text.count("<details>"), 1)
+        self.assertIn("<details><summary>with plugin, run 1, failed names-route: what it did</summary>", text)
+        self.assertIn("Bash: git diff main -- qa-baseline.json -> + OVERFLOW .plans at 390\n", text)
+        self.assertIn("Agent: product-os:page-qa: QA the page -> error: token [masked]\n", text)
+        self.assertIn("\n    Bash: curl -s localhost:8765 -> DENIED (mode)\n", text)
+        self.assertIn("last reply: VERDICT: PASS (0 BLOCKER)\n", text)
+        self.assertNotIn(jwt.split(".")[1], text)
+
     def test_a_run_that_worked_then_timed_out_is_scored(self):
         timed_out = run(0.33, True, False, error="timed out after 420s")
         text = self.summarize(result([timed_out, run(1.0, True, True)], [run(0.0, False, False)]))
