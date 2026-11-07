@@ -402,7 +402,7 @@ def need(*keys, start=None):
     for k, why in c["withheld"]:
         if dotted == k or dotted.startswith(k + "."):
             raise NotConfigured(f"not accepted: {k} is set in {c['project']} but {why}, so nothing "
-                                f"ran. Read it there, then run: python kit_config.py accept {k}")
+                                f"ran. {accept_line(k)}")
     where = f"{c['project'] or 'no ' + FILE + ' at or above ' + _resolve(start)[0]}"
     msg = (f"not configured: {dotted} is not set. Looked in {where} and {c['user']}. "
            f"Set it in the project's {FILE} (see kit_config.py for the format).")
@@ -470,6 +470,14 @@ def token(*names):
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
 
 
+def accept_line(key):
+    """What follows a command setting left out until it's accepted. An agent reads this line as
+    often as a person does, and it once ran the accept itself, so the line says whose step it is."""
+    return (f"Accepting it is the person's step, after they read it there: product-os kit_config "
+            f"accept {key}. An agent runs neither that line nor the command, and reports the part "
+            f"that needs it as NOT RUN.")
+
+
 def run(main):
     """Run a tool's main(); a missing setting prints its message and exits 2 instead of a traceback."""
     try:
@@ -488,7 +496,7 @@ def show(start=None):
         print(f"PROBLEM: {p}")
     for k, why in c["withheld"]:
         print(f"NOT ACCEPTED: {k} is set in the project file but {why}, so it is left out below and "
-              f"nothing runs it. The person reads it there and runs: python kit_config.py accept {k}")
+              f"nothing runs it. {accept_line(k)}")
     print(json.dumps(c["settings"], indent=1))
     return 0
 
@@ -651,7 +659,8 @@ def selftest():
             check("a project's command setting is left out until accepted, and need() names the accept",
                   get("retro", "propose_cmd", start=repo) is None
                   and get("scheduled_audits", "extra", start=repo) is None
-                  and "kit_config.py accept retro.propose_cmd" in raised)
+                  and "product-os kit_config accept retro.propose_cmd" in raised
+                  and "An agent runs neither" in raised)
             check("the project's other settings, and your own commands, still count",
                   get("retro", "report", start=repo) == "r.md"
                   and get("retro", "plan_cmd", start=repo) == "echo mine")

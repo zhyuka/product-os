@@ -49,8 +49,10 @@ is measured against.
 
 A command the listing marks NOT ACCEPTED came from the project's file and isn't accepted on this
 machine. Its part is NOT RUN. Name it and the accept line the listing prints, for the person to run
-after reading the command; never run that line yourself. A key that's missing makes its part NOT RUN
-too, named by its key. Run every part that can run: one that can't doesn't stop the others.
+after reading the command. Accepting is the person's step, never yours: don't run that line, and
+don't run the command another way, such as from the project's file. A key that's missing makes its
+part NOT RUN too, named by its key. Run every part that can run: one that can't doesn't stop the
+others.
 
 ## 1. Start the QA agent
 
