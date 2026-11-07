@@ -34,12 +34,10 @@ OS keychain (`figma_auth.py --source` says which), and file keys from their argu
   can edit; upload an image only for a picture of real UI, never a rendered PNG of text. Make a
   section look like the board around it: before building, read a section a teammate made on the
   same board, one of the same kind (a table for a lookup, shapes and arrows for a flow), and use the
-  object types, fonts, sizes and colours it uses. Add nothing it doesn't have, such as a headline
-  strip, status chips, a legend or number tiles. Put every fact the team needs on the board in short
-  plain text with no paragraphs, and no pointers to repos or local paths, which a reader on the
-  board cannot follow. In a section that states how something works, state the answer the work
-  proposes for each point, with no owner, no open or confirmed mark and no list of what is still
-  open; who confirms what goes to the user, not onto the board.
+  object types, fonts, sizes and colours it uses. The team works from a section live in the room,
+  so it carries the answers the work proposes and the reasons behind them, in short plain text that
+  reads in seconds. Build history stays in the record and owners with the user, and it names no
+  repos or local paths, which a reader on the board cannot follow.
 
 ## Reruns and deletes
 
