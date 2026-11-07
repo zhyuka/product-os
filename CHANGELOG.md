@@ -2,6 +2,10 @@
 
 Each version here matches `version` in `.claude-plugin/plugin.json`, the marketplace entry in `.claude-plugin/marketplace.json`, and `pyproject.toml`. Claude Code installs an update only when that number changes.
 
+## Unreleased
+
+- `review` makes the reviewer's temp folder with `mktemp -d "${TMPDIR:-/tmp}/review.XXXXXX"`. A bare `mktemp -d` on macOS ignores `TMPDIR` and writes under `/var/folders`, which Claude Code's sandbox refuses. In a sandboxed session there, the diff file was never written.
+
 ## 0.1.1
 
 - `reconcile` has a runner for its open-items sweep, `skills/reconcile/scripts/open_items.py`. It runs each source in the project's `rebase.surfaces` list with a 5-minute cap, prints ran or DID NOT RUN for each, the count and the top items, then the total, listed, skipped and uncovered. `--surfaces FILE` reads the list from a file instead.
