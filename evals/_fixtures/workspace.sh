@@ -58,8 +58,13 @@ EOF
 # ~/.claude), as /product-os:setup-kit has the person do. This accepts the commands the project
 # file proposes for every run directory beside this one: the key is the parent
 # folder and the start of this folder's name up to its first dash, plus "*", so
-# /private/tmp/e-1a2b gives /private/tmp/e-*. Other entries and fields in the
-# file are kept, and a second run changes nothing.
+# /private/tmp/e-1a2b gives /private/tmp/e-*. A folder named cwd has no dash, so its key is the
+# folder itself. Other entries and fields in the file are kept, and a second run changes nothing.
+#
+# The file goes in the folder the session reads, which isn't always the scaffold's own.
+# `claude plugin eval` runs the scaffold in <run>/home/cwd with HOME set to <run>/home and no
+# CLAUDE_CONFIG_DIR, then starts the session there with CLAUDE_CONFIG_DIR set to <run>/config.
+# So when this folder sits in HOME beside a config folder, the accept goes in that config folder.
 accept_qa_commands() {
   python3 - "$1" <<'EOF'
 import json
@@ -71,7 +76,13 @@ proposed = json.loads(sys.argv[1]).get("qa_commands", [])
 here = Path.cwd().resolve()
 stem = here.name.split("-", 1)[0] + "-*" if "-" in here.name else here.name
 key = str(here.parent / stem)
-folder = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude").expanduser()
+home = Path.home().resolve()
+if os.environ.get("CLAUDE_CONFIG_DIR"):
+    folder = Path(os.environ["CLAUDE_CONFIG_DIR"]).expanduser()
+elif here.parent == home and (home.parent / "config").is_dir():
+    folder = home.parent / "config"
+else:
+    folder = home / ".claude"
 path = folder / "product-os-checks.json"
 data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {"projects": {}}
 entry = data.setdefault("projects", {}).setdefault(key, {})
