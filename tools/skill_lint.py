@@ -24,6 +24,16 @@ Checks (a FAIL exits 1; a WARN or a report line does not):
                    ratchet (config key skill_lint.startup_max, default 6200). Set it at your current
                    total and only ever lower it: a fixed budget is what stops rules from only ever
                    being added.
+                   Every description includes each skill and agent of the plugin folders
+                   CLAUDE_CODE_PLUGIN_DIRS names (the `env` block of the Claude Code settings where
+                   the process lacks the variable), agents in full, less a skill that sets
+                   disable-model-invocation; they are counted, not judged. Installed plugins are
+                   reported, not capped.
+                   With --only, the startup total is read as the commit leaves it: a file in the
+                   repo being committed from the index, one another repo tracks from that repo's
+                   HEAD, one outside git from disk. It fails only when the staged changes add
+                   startup words and leave that total over, so someone else's unstaged words and a
+                   trim pass. Only a staged SKILL.md, agent file or rules file owns that failure.
   7. REFERENCES  - with --only: FAIL when a line a staged .md adds cites a file or a `file.md` §N that
                    doesn't exist (workspace_audit.py's cites and xrefs), or a staged .py won't
                    compile or has no --help (its tools check). Files resolve against the config key
@@ -50,14 +60,20 @@ and listed under 6 but judged by none of 1-6, and its description sits outside t
 Usage:  python tools/skill_lint.py [skills_dir]      exit 1 on any FAIL (default ~/.claude/skills)
         python tools/skill_lint.py --selftest        planted skills and lines: the startup total
                                                      counts a project skill and skips one set
-                                                     name-only; topic ownership; the tags; an
-                                                     ignored skill and agent are not judged
+                                                     name-only; it counts a plugin folder's skill
+                                                     and agent, named in the variable or in the
+                                                     settings; topic ownership; the tags; an
+                                                     ignored skill and agent are not judged; only
+                                                     a file whose words load owns the startup
+                                                     failure
 
 What loads at startup is read from: ~/.claude/agents (SKILL_LINT_AGENTS), the skills folder and the
 current project's .claude/skills (SKILL_LINT_PROJECT_SKILLS), each less any skill the project's
 .claude/settings*.json skillOverrides set name-only or off (SKILL_LINT_SETTINGS_DIR), and ~/.claude/CLAUDE.md, <project>/CLAUDE.md and the
 project's memory index MEMORY.md (SKILL_LINT_ALWAYS, a path list). The project is $CLAUDE_PROJECT_DIR,
-else the folder you run in.
+else the folder you run in. The plugin folders are CLAUDE_CODE_PLUGIN_DIRS from the environment, else
+from the `env` block of settings.json in $CLAUDE_CONFIG_DIR or ~/.claude (only that key is read from the
+file, which can hold tokens); set to empty, it names none.
 """
 import os
 import sys
@@ -161,6 +177,38 @@ ALWAYS = os.environ.get("SKILL_LINT_ALWAYS", os.pathsep.join([
     os.path.join(PROJECT, "CLAUDE.md"),
     _memory_index()])).split(os.pathsep)
 
+
+_PLUGINS = []
+
+
+def plugin_dirs():
+    """(folders, source): the plugin folders CLAUDE_CODE_PLUGIN_DIRS names, split like PATH. Claude Code
+    loads each as a plugin, so its skill and agent descriptions load in every session that has the
+    variable. A process without it (a scheduled run) reads the value the `env` block of the Claude Code
+    settings sets, where Claude Code reads it too and `product-os enable` writes it, so the total doesn't
+    fall by a plugin's words where the variable is missing; set to empty, it names none. doctor.py reads
+    that one key from the file, which can hold tokens, and nothing else."""
+    if _PLUGINS:
+        return _PLUGINS[0]
+    val, source = os.environ.get("CLAUDE_CODE_PLUGIN_DIRS"), "the environment"
+    if val is None:
+        val, source = "", "the Claude Code settings"
+        try:
+            import doctor
+            source = doctor.settings_path()
+            v = doctor.from_settings(source)[0]
+            val = v if isinstance(v, str) else ""
+        except ImportError:                  # a copy without doctor beside it
+            pass
+    out = []
+    for d in val.split(os.pathsep):
+        d = os.path.expanduser(os.path.expandvars(d.strip()))
+        if d and os.path.isdir(d) and all(not _same_dir(d, o) for o in out):
+            out.append(d)
+    _PLUGINS.append((out, source))
+    return out, source
+
+
 # fact -> (owner file, signature regex). Owner is where the fact is ALLOWED to live in prose.
 TOPICS = {str(k): (v[0], v[1]) for k, v in (_config("skill_lint", "topics", default={}) or {}).items()
           if isinstance(v, (list, tuple)) and len(v) == 2}
@@ -185,11 +233,134 @@ def owners_of(paths):
             rxs.append(rf"(^|[\s'(,]){re.escape(n)}([:,)\s/]|$)")
         elif "agents" in parts and p.endswith(".md"):
             rxs.append(rf"^agent {re.escape(parts[-1][:-3])}:")
-        elif parts[-1] in ("CLAUDE.md", "MEMORY.md") or "memory" in parts:
-            rxs.append(r"^startup-loaded")
-        if ("skills" in parts or "agents" in parts) and p.endswith(".md"):
-            rxs.append(r"^startup-loaded")   # a description counts toward the startup total
+        if startup_kind(p):
+            rxs.append(r"^startup-loaded")   # a SKILL.md, agent file or rules file whose words load
     return rxs
+
+
+CLEAN_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+_TOPS = {}
+
+
+def repo_top(folder):
+    """The real path of the work tree holding `folder` (or its nearest folder that exists), None
+    outside git. Asked with no GIT_* variable, since a hook's would name its own repo."""
+    key = folder = os.path.realpath(folder)
+    if key not in _TOPS:
+        while folder != os.path.dirname(folder) and not os.path.isdir(folder):
+            folder = os.path.dirname(folder)
+        r = subprocess.run(["git", "-C", folder, "rev-parse", "--show-toplevel"], capture_output=True,
+                           text=True, env=CLEAN_ENV)
+        _TOPS[key] = os.path.realpath(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+    return _TOPS[key]
+
+
+def git_env(folder):
+    """The environment for a git call in `folder`. In the repo a hook runs for it is the hook's own,
+    whose GIT_INDEX_FILE names the index `git commit --only` builds; in any other repo it has no GIT_*
+    variable, so that index is not read as theirs."""
+    if "GIT_INDEX_FILE" not in os.environ or repo_top(folder) == repo_top(os.getcwd()):
+        return None
+    return CLEAN_ENV
+
+
+def _same_dir(a, b):
+    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+
+
+def startup_kind(path):
+    """How `path` counts toward STARTUP_MAX, by where it sits, so a deleted file is placed too: 'rules'
+    (every word) for the rules files and memory index (ALWAYS); 'desc' (its description) for a user or
+    project SKILL.md, a user agent, and a skill or agent of a plugin folder (plugin_dirs); None for
+    anything else. A user or project skill set name-only or off, and a user skill or agent its repo
+    ignores, count nothing. skillOverrides doesn't reach plugin skills, and a plugin agent counts in
+    full: no AGENT_DESC_MAX clips it."""
+    p = os.path.abspath(path)
+    if any(_same_dir(p, a) for a in ALWAYS):
+        return "rules"
+    folder, base = os.path.split(p)
+    plugins = plugin_dirs()[0]
+    if base == "SKILL.md":
+        root, name = os.path.split(folder)
+        if any(_same_dir(root, os.path.join(d, "skills")) for d in plugins):
+            return "desc"
+        if skill_overrides().get(name) in HIDDEN:
+            return None
+        if _same_dir(root, SKILLS):
+            return None if repo_ignores(p) else "desc"
+        return "desc" if _same_dir(root, PROJECT_SKILLS) else None
+    if base.endswith(".md") and any(_same_dir(folder, os.path.join(d, "agents")) for d in plugins):
+        return "desc"
+    if base.endswith(".md") and _same_dir(folder, AGENTS):
+        return None if repo_ignores(p) else "desc"
+    return None
+
+
+def startup_files():
+    """[(path, kind)] for every file on disk whose words load at startup (startup_kind)."""
+    cands = ALWAYS + sorted(glob.glob(os.path.join(SKILLS, "*", "SKILL.md"))) \
+        + sorted(glob.glob(os.path.join(PROJECT_SKILLS, "*", "SKILL.md"))) + sorted(glob.glob(os.path.join(AGENTS, "*.md")))
+    for d in plugin_dirs()[0]:
+        cands += sorted(glob.glob(os.path.join(d, "skills", "*", "SKILL.md"))) + sorted(glob.glob(os.path.join(d, "agents", "*.md")))
+    out, seen = [], set()
+    for p in cands:
+        k = startup_kind(p) if os.path.exists(p) else None
+        if k and os.path.realpath(p) not in seen:
+            seen.add(os.path.realpath(p))
+            out.append((p, k))
+    return out
+
+
+def startup_words(text, kind):
+    """A rules file's every word; a description's words, or none for a skill whose frontmatter sets
+    disable-model-invocation, which loads no description."""
+    if kind == "rules":
+        return len(text.split())
+    m = re.match(r"^---\r?\n(.*?)\r?\n---\r?\n", text, re.S)
+    if m and re.search(r"^disable-model-invocation:\s*true\s*$", m.group(1), re.M | re.I):
+        return 0
+    return desc_words(text)
+
+
+def blob(top, rel, rev):
+    """The text of `rel` at `rev` in the repo at `top` ('' is the index), or '' when it isn't there."""
+    r = subprocess.run(["git", "-C", top, "show", f"{rev}:{rel}"], capture_output=True, env=git_env(top))
+    return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else ""
+
+
+def staged_startup(staged):
+    """(total, delta, moved) for the commit --only checks. total is the startup words as the commit
+    leaves them: in the repo being committed each file's staged copy; in another repo the copy it has
+    committed (HEAD); outside git the copy on disk. A file a repo hasn't committed counts nothing
+    there until it is. delta is what the staged changes add (index minus HEAD), deletes and renames
+    included; moved names each file that changes it. A symlink counts where it points."""
+    tops = {repo_top(os.path.dirname(os.path.abspath(p))) for p in staged} - {None}
+    total, delta, moved, seen = 0, 0, [], set()
+    for top in sorted(tops):
+        r = subprocess.run(["git", "-C", top, "diff", "--cached", "--raw", "--no-renames", "-z"],
+                           capture_output=True, env=git_env(top))
+        f = r.stdout.decode("utf-8", "surrogateescape").split("\0")
+        for meta, rel in zip(f[0::2], f[1::2]):
+            modes = meta.split()[:2]
+            kind = startup_kind(os.path.join(top, rel))
+            if not kind or "120000" in [m.lstrip(":") for m in modes]:
+                continue
+            seen.add(os.path.realpath(os.path.join(top, rel)))
+            now = startup_words(blob(top, rel, ""), kind)
+            d = now - startup_words(blob(top, rel, "HEAD"), kind)
+            total += now
+            if d:
+                delta += d
+                moved.append(f"{os.path.basename(top)}/{rel} {d:+d}")
+    for p, kind in startup_files():
+        rp = os.path.realpath(p)
+        if rp in seen:
+            continue
+        top = repo_top(os.path.dirname(rp))
+        text = read(rp) if top is None else blob(top, os.path.relpath(rp, top).replace(os.sep, "/"),
+                                                 "" if top in tops else "HEAD")
+        total += startup_words(text, kind)
+    return total, delta, moved
 
 
 def installed_descriptions():
@@ -205,6 +376,8 @@ def installed_descriptions():
         installed = json.load(open(os.path.expanduser("~/.claude/plugins/installed_plugins.json")))
         for entries in (installed.get("plugins") or {}).values():
             for e in entries if isinstance(entries, list) else [entries]:
+                if any(_same_dir(e.get("installPath", ""), d) for d in plugin_dirs()[0]):
+                    continue   # counted under the cap as a plugin folder
                 for s in glob.glob(os.path.join(e.get("installPath", ""), "skills", "*", "SKILL.md")):
                     plugin += desc_words(read(s))
     except (OSError, ValueError):
@@ -494,7 +667,7 @@ def repo_ignores(path):
     its text is measured here, not judged. False when `path` is tracked or in no repo. The path goes to
     git relative to its folder, since a temp folder's absolute path can differ from git's by a symlink."""
     r = subprocess.run(["git", "-C", os.path.dirname(path), "check-ignore", "-q", os.path.basename(path)],
-                       capture_output=True)
+                       capture_output=True, env=git_env(os.path.dirname(path)))
     return r.returncode == 0
 
 
@@ -619,16 +792,14 @@ def main():
 
     print("\n6. INSTRUCTION BUDGETS")
     before = len(fails)
-    startup, overrides = 0, skill_overrides()   # a skill set name-only or off loads no description
+    overrides = skill_overrides()   # a skill set name-only or off loads no description
     for n, p in ((n, p) for n, p in paths.items() if overrides.get(n) not in HIDDEN):
         w = desc_words(read(p))
-        startup += w
         if w > SKILL_DESC_MAX:
             fails.append(f"{n}: description {w} words (max {SKILL_DESC_MAX})")
     project = project_skills()
     for n, p in project.items():
         w = desc_words(read(p))
-        startup += w
         if w > SKILL_DESC_MAX:
             fails.append(f"project skill {n}: description {w} words (max {SKILL_DESC_MAX})")
     agents = sorted(glob.glob(os.path.join(AGENTS, "*.md")))
@@ -636,22 +807,41 @@ def main():
     for p in (p for p in agents if p not in outside_agents):
         n, t = os.path.basename(p)[:-3], read(p)
         w, bw = desc_words(t), len(body_of(t).split())
-        startup += w
         if w > AGENT_DESC_MAX:
             fails.append(f"agent {n}: description {w} words (max {AGENT_DESC_MAX})")
         if bw > AGENT_BODY_MAX:
             fails.append(f"agent {n}: body {bw} words (max {AGENT_BODY_MAX})")
         if "<!--" in t:
             fails.append(f"agent {n}: HTML comment in the prompt; provenance goes in the record")
-    always = sum(len(read(p).split()) for p in ALWAYS if os.path.exists(p))
-    startup += always
-    if startup > STARTUP_MAX:
+    files = startup_files()
+    always = sum(startup_words(read(p), k) for p, k in files if k == "rules")
+    startup = sum(startup_words(read(p), k) for p, k in files)
+    judged = startup > STARTUP_MAX and ONLY is None   # with --only, the commit's own total is judged below
+    if judged:
         fails.append(f"startup-loaded {startup} words (max {STARTUP_MAX}): rules and memory index "
                      f"{always}, descriptions {startup - always}. Replace a line instead of adding one")
-    over = len(fails) - before - (startup > STARTUP_MAX)
-    print(f"   {'PASS' if startup <= STARTUP_MAX else 'FAIL'}  startup-loaded {startup} of {STARTUP_MAX} "
-          f"words (rules and memory index {always}, descriptions {startup - always}, of which "
-          f"{len(project)} project skill(s) in {PROJECT_SKILLS.replace(os.path.expanduser('~'), '~')})")
+    elif startup > STARTUP_MAX:
+        warns.append(f"(not judged) startup-loaded {startup} words on disk, over {STARTUP_MAX}; "
+                     f"the commit is judged on what it leaves")
+    over = len(fails) - before - judged
+    plugins, source = plugin_dirs()
+    in_plugin = [startup_words(read(p), k) for p, k in files
+                 if any(os.path.realpath(p).startswith(os.path.realpath(d) + os.sep) for d in plugins)]
+    home = os.path.expanduser('~')
+    print(f"   {'PASS' if startup <= STARTUP_MAX else 'FAIL' if ONLY is None else 'INFO'}  startup-loaded "
+          f"{startup} of {STARTUP_MAX} words (rules and memory index {always}, descriptions {startup - always}, "
+          f"of which {len(project)} project skill(s) in {PROJECT_SKILLS.replace(home, '~')}, and {sum(in_plugin)} "
+          f"in {sum(1 for w in in_plugin if w)} skills and agents of the plugin folders CLAUDE_CODE_PLUGIN_DIRS "
+          f"names, read from {source.replace(home, '~')}: {', '.join(d.replace(home, '~') for d in plugins) or 'none'})")
+    if ONLY is not None:
+        total, delta, moved = staged_startup(ONLY)
+        refused = delta > 0 and total > STARTUP_MAX
+        print(f"   {'FAIL' if refused else 'PASS'}  this commit leaves {total} of {STARTUP_MAX} startup words, "
+              f"its staged changes {delta:+d}{' (' + '; '.join(moved) + ')' if moved else ''}: refused only "
+              f"when they add words and leave it over")
+        if refused:
+            fails.append(f"startup-loaded {total} words as this commit leaves it (max {STARTUP_MAX}), its staged "
+                         f"changes {delta:+d} ({'; '.join(moved)}). Replace a line instead of adding one")
     print(f"   {'PASS' if not over else 'FAIL'}  descriptions and agent bodies: {over} over budget")
     plugin, synced, hidden = installed_descriptions()
     print(f"   INFO  installed skills also load {plugin + synced} description words, so the startup total "
@@ -690,9 +880,12 @@ def main():
 def selftest():
     """Run this file on planted folders and read its output. User skills of 5 words and 11 set name-only,
     project skills of 7 and 9 set name-only: the startup total must be 12. The user folder alone gives
-    5; ignoring the project override gives 21, and ignoring the user one 23. A registered topic restated in a second skill must FAIL,
+    5; ignoring the project override gives 21, and ignoring the user one 23. A plugin folder, named in
+    the variable or in the settings' `env` block, adds its skill and agent descriptions. A registered topic restated in a second skill must FAIL,
     and the same text in a section that cites the owner must not. Check 9 must catch each planted bad
-    line, pass each good one, and read only the added line of a staged edit."""
+    line, pass each good one, and read only the added line of a staged edit. Only a file whose words
+    load owns the startup failure. Each run's project is a planted folder, so it runs from any folder,
+    the plugin's own included."""
     import json, tempfile
     ok_all = True
     with tempfile.TemporaryDirectory() as tmp:
@@ -711,7 +904,8 @@ def selftest():
         open(os.path.join(tmp, "empty.md"), "w").close()
         env = dict(os.environ, SKILL_LINT_PROJECT_SKILLS=proj, SKILL_LINT_SETTINGS_DIR=os.path.join(tmp, "proj"),
                    SKILL_LINT_AGENTS=os.path.join(tmp, "agents"), SKILL_LINT_ALWAYS=os.path.join(tmp, "empty.md"),
-                   SKILL_LINT_SUITES=os.path.join(tmp, "suites"), PRODUCT_OS_CONFIG=os.path.join(tmp, "none.json"))
+                   SKILL_LINT_SUITES=os.path.join(tmp, "suites"), PRODUCT_OS_CONFIG=os.path.join(tmp, "none.json"),
+                   CLAUDE_PROJECT_DIR=os.path.join(tmp, "proj"), CLAUDE_CODE_PLUGIN_DIRS="")
         out = subprocess.run([sys.executable, os.path.abspath(__file__), user], env=env,
                              capture_output=True, text=True, encoding="utf-8").stdout
         m = re.search(r"startup-loaded (\d+) of", out)
@@ -720,6 +914,37 @@ def selftest():
         ok_all &= ok
         print(("PASS" if ok else "FAIL") + f" startup total counts the project skill and skips the name-only ones: "
               f"got {got}, want 12 (user folder alone 5; project override ignored 21; user override ignored 23)")
+
+        # A plugin folder adds its skill descriptions, less one that sets disable-model-invocation, and its
+        # agent's 60 in full, unjudged: 12 + 6 + 60. Named in the variable, or, with the variable unset, in
+        # the settings' env block; set to empty it names none.
+        plug, cfgdir = os.path.join(tmp, "plug"), os.path.join(tmp, "claude-config")
+        skill(os.path.join(plug, "skills"), "pa", 6), skill(os.path.join(plug, "skills"), "pb", 8)
+        pb = os.path.join(plug, "skills", "pb", "SKILL.md")
+        with open(pb, encoding="utf-8") as fh:
+            text = fh.read()
+        with open(pb, "w", encoding="utf-8") as fh:
+            fh.write(text.replace("\n---\n", "\ndisable-model-invocation: true\n---\n", 1))
+        os.makedirs(os.path.join(plug, "agents"))
+        with open(os.path.join(plug, "agents", "pc.md"), "w", encoding="utf-8") as fh:
+            fh.write(f"---\nname: pc\ndescription: {' '.join(['word'] * 60)}\n---\nbody\n")
+        os.makedirs(cfgdir)
+        with open(os.path.join(cfgdir, "settings.json"), "w", encoding="utf-8") as fh:
+            json.dump({"env": {"CLAUDE_CODE_PLUGIN_DIRS": plug}}, fh)
+        unset = {k: v for k, v in env.items() if k != "CLAUDE_CODE_PLUGIN_DIRS"}
+        runsp = []
+        for e in (dict(env, CLAUDE_CODE_PLUGIN_DIRS=plug), dict(unset, CLAUDE_CONFIG_DIR=cfgdir),
+                  dict(env, CLAUDE_CONFIG_DIR=cfgdir)):
+            o = subprocess.run([sys.executable, os.path.abspath(__file__), user], env=e, capture_output=True,
+                               text=True, encoding="utf-8").stdout
+            mp = re.search(r"startup-loaded (\d+) of", o)
+            runsp.append((int(mp.group(1)) if mp else None, "agent pc:" in o))
+        ok = runsp == [(78, False), (78, False), (12, False)]
+        ok_all &= ok
+        print(("PASS" if ok else "FAIL") + f" plugin folders: named in the variable {runsp[0][0]}, in the settings with "
+              f"it unset {runsp[1][0]}, with it empty {runsp[2][0]}, want 78, 78 and 12 (the folder ignored 12; "
+              f"disable-model-invocation ignored 86; the agent clipped at 50 words 68); the plugin agent judged "
+              f"{[r[1] for r in runsp]}, want all False")
 
         # Check 2 on two skills that share a clone line holding a token, built here so no file holds one.
         two, fake = os.path.join(tmp, "two"), "gldt-" + "Zq7x" * 6
@@ -877,6 +1102,19 @@ def selftest():
         print(("PASS" if ok else "FAIL") + f" ignored by git: startup {runs3[0][0]} with {runs3[0][1]} judged "
               f"failure(s), want 8 and 0; the same folder without its .gitignore gives {runs3[1][0]} and "
               f"{runs3[1][1]}, want 25 and 2")
+
+        # Only a file whose words load owns the startup failure: a skill's reference file and a memory card
+        # beside the index don't, its SKILL.md and a rules file do. No plugin folder is read here, so the
+        # person's settings aren't either.
+        _PLUGINS[:] = [([], "the self-test")]
+        own = [os.path.join(SKILLS, "zz-planted", "references", "r.md"),
+               os.path.join(os.path.dirname(_memory_index()), "zz-planted-card.md"),
+               os.path.join(SKILLS, "zz-planted", "SKILL.md"), ALWAYS[0]]
+        owns = [r"^startup-loaded" in owners_of([p]) for p in own]
+        ok = owns == [False, False, True, True]
+        ok_all &= ok
+        print(("PASS" if ok else "FAIL") + f" startup owners: a reference file, a memory card, a SKILL.md and a rules "
+              f"file own it {owns}, want [False, False, True, True]")
     return 0 if ok_all else 1
 
 
