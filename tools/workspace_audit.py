@@ -199,7 +199,8 @@ def check_cites(verbose):
     A doc citing `START-HERE.md` passes as long as SOME START-HERE.md exists anywhere, even after the
     one it meant was archived. Name-only matching is deliberate: most citations are bare filenames,
     so requiring a full path would flag almost all of them. Read a pass as "the name exists
-    somewhere", nothing stronger."""
+    somewhere", nothing stronger. The same holds for a span with a space: when the whole span names
+    nothing, its last word stands in, so a missing `old plan.md` passes while some plan.md exists."""
     names = name_index()
     generated = {g.lower() for g in cfg('generated', [])}
     total = misses = 0
@@ -210,6 +211,13 @@ def check_cites(verbose):
             # A leading `@` is CLAUDE.md's import directive, not part of a filename. Strip it after
             # the `~/` strip so `~/@x` is not mangled.
             cand = raw.strip().lstrip('~/').lstrip('@').replace('\\', '/')
+            # A command in backticks cites its last word: `python -I build.py`, `FOO=1 python x.py`,
+            # `git checkout -- x.md`. The whole span is looked up first, so a name with a space still
+            # resolves as itself; only when it misses does the last word stand in. Without this,
+            # `python build.py` is refused as a file called "python build.py".
+            words = cand.split()
+            tail = words[-1] if len(words) > 1 else None
+            tleaf = pathlib.Path(tail).name.lower() if tail else None
             # `public.html` is Apple's pasteboard-type namespace, not a file.
             if any(ch in cand for ch in '<>*?|') or cand.startswith(('http', '$', '{', 'public.')):
                 continue
@@ -218,7 +226,7 @@ def check_cites(verbose):
             if leaf in generated or cand.startswith(('src/', './')):
                 continue
             total += 1
-            if leaf in names:
+            if leaf in names or tleaf in names:
                 continue
             # A doc citing a filename to say it should NOT exist, or is absent by design, is correct.
             # Without this the check flags its own rules as rot. Every line the citation sits on is
@@ -227,7 +235,7 @@ def check_cites(verbose):
                 continue
             if 'xxx' in cand.lower() or cand.startswith('/'):
                 continue
-            if any((r / cand).exists() for r in (ROOT, HOME, f.parent)):
+            if any((r / c).exists() for r in (ROOT, HOME, f.parent) for c in (cand, tail) if c):
                 continue
             misses += 1
             bad.append(f'{f.parent.name}/{f.name}: `{raw}`')
@@ -886,6 +894,49 @@ def selftest_adostate():
     return 0 if all(r[1] for r in results) else 1
 
 
+def selftest_cites_command():
+    """A command in backticks resolves to its last word: `python build.py` passes when build.py exists
+    (refused before, as a file named "python build.py"), and so do the usual command shapes
+    (`python -I`, a variable prefix, a venv's python), through the name index or the doc's own folder.
+    A command naming a script that is nowhere still fails, and so does a missing file whose name has a
+    space and whose last word names no file."""
+    import tempfile as _t
+    global ONLY, _NAME_INDEX, ROOT, SKILLS, MEMORY
+    keep = (ONLY, _NAME_INDEX, ROOT, SKILLS, MEMORY)
+    passing = ['python build.py', 'python3 build.py', 'python -I build.py', 'FOO=1 python build.py',
+               '~/.venvs/tools/bin/python build.py']
+    try:
+        with _t.TemporaryDirectory() as d:
+            ROOT = pathlib.Path(d, 'work')
+            SKILLS, MEMORY = pathlib.Path(d, 'no-skills'), pathlib.Path(d, 'no-memory')
+            doc = ROOT / 'evals' / 'files' / 'explorer' / 'README.md'
+            doc.parent.mkdir(parents=True)
+            (doc.parent / 'build.py').write_text('x', encoding='utf-8')
+            doc.write_text(''.join(f'Run `{c}` to build the page.\n' for c in passing)
+                           + 'Run `python nosuch_tool_qq.py` first.\n'
+                           'The notes live in `notes/plan nosuch zzcopy.md`.\n', encoding='utf-8')
+            ONLY, _NAME_INDEX = {str(doc)}, None
+            misses = check_cites(False).misses
+            _NAME_INDEX = set()                    # nothing indexed: only the doc's own folder can resolve it
+            folder_misses = check_cites(False).misses
+    finally:
+        ONLY, _NAME_INDEX, ROOT, SKILLS, MEMORY = keep
+    results = [(f'cites: `{c}` passes' + (' (the refused case)' if c == 'python build.py' else ''),
+                not any(f'`{c}`' in m for m in misses)) for c in passing]
+    results += [
+        ('cites: with nothing indexed, `python build.py` passes through the doc\'s own folder',
+         not any('`python build.py`' in m for m in folder_misses)),
+        ('cites: a command naming a script that is nowhere still fails',
+         any('`python nosuch_tool_qq.py`' in m for m in misses)),
+        ('cites: a missing file with a space in its name, whose last word names no file, still fails',
+         any('`notes/plan nosuch zzcopy.md`' in m for m in misses))]
+    for name, ok in results:
+        print(('PASS ' if ok else 'FAIL ') + name)
+    ok = all(r[1] for r in results)
+    print('cites command selftest', 'PASSED' if ok else 'FAILED')
+    return 0 if ok else 1
+
+
 CHECKS = {'cites': check_cites, 'secrets': check_secrets, 'archive': check_archive,
           'naming': check_naming, 'tools': check_tools, 'root': check_root,
           'xrefs': check_xrefs, 'map': check_map, 'adostate': check_adostate, 'config': check_config}
@@ -904,7 +955,8 @@ def main():
     if a.selftest:
         global SKIP_DIRS
         SKIP_DIRS = set(BASE_SKIP)
-        return kit_config.run_isolated(lambda: max(selftest_map(), selftest_config(), selftest_archive(), selftest_secrets(), selftest_adostate()))
+        return kit_config.run_isolated(lambda: max(selftest_map(), selftest_config(), selftest_archive(), selftest_secrets(), selftest_adostate(),
+                                                       selftest_cites_command()))
     try:
         configure(a.root)
     except kit_config.NotConfigured as e:
