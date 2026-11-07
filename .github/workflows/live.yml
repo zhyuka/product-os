@@ -89,10 +89,15 @@ jobs:
           # Native Windows has no Bash sandbox, and `claude plugin eval` refuses
           # every run that grants a shell there. Windows runs only the cases
           # tagged no-shell, with Edit and Write granted: 2 cases, 8 runs.
+          # Claude Code doesn't share one exchanged token between its processes
+          # on Windows yet, so every run there fails at the token exchange.
+          # --sign-in-notice makes that one outcome a notice instead of a
+          # failure, and the runs count again once Claude Code shares the token.
           - os: windows-latest
             tools: Edit Write
             filter: --tag no-shell
             cap: "0.50"
+            notice: --sign-in-notice
     defaults:
       run:
         shell: bash
@@ -210,7 +215,7 @@ jobs:
       # a list-price estimate checked before each run starts.
       - name: Run the live evals
         run: |
-          python3 evals/live.py ${{ matrix.filter }} \
+          python3 evals/live.py ${{ matrix.filter }} ${{ matrix.notice }} \
             --json "evals/results/live-${{ runner.os }}.json" \
             --cap ${{ matrix.cap }} \
             --judge-model "$JUDGE_MODEL" \

@@ -204,8 +204,10 @@ record = {"case": args[args.index("--case") + 1], "cap": args[args.index("--max-
 with open(os.environ["FAKE_LOG"], "a") as log:
     log.write(json.dumps(record) + "\n")
 cost = float(os.environ["FAKE_COST"])
-doc = {"claudeVersion": "9.9.9", "costUsd": cost, "cases": [{"name": record["case"], "arms": {}}]}
+arms = json.loads(os.environ.get("FAKE_ARMS", "{}"))
+doc = {"claudeVersion": "9.9.9", "costUsd": cost, "cases": [{"name": record["case"], "arms": arms}]}
 open(args[args.index("--json") + 1], "w").write(json.dumps(doc))
+sys.exit(int(os.environ.get("FAKE_EXIT", "0")))
 '''
 
 FAKE_FETCH = r'''
@@ -228,18 +230,48 @@ class LiveRunner(unittest.TestCase):
         (self.folder / "fetch.py").write_text(FAKE_FETCH, encoding="utf-8")
         self.log = self.folder / "calls.jsonl"
 
-    def live(self, cap, cost, *tags):
+    def live(self, cap, cost, *tags, extra=(), arms=None, exit_code=0):
         token = self.folder / "gha-jwt"
-        env = dict(os.environ, FAKE_LOG=str(self.log), FAKE_COST=str(cost), ANTHROPIC_IDENTITY_TOKEN_FILE=str(token))
+        env = dict(os.environ, FAKE_LOG=str(self.log), FAKE_COST=str(cost), ANTHROPIC_IDENTITY_TOKEN_FILE=str(token),
+                   FAKE_ARMS=json.dumps(arms or {}), FAKE_EXIT=str(exit_code))
         out = self.folder / "live.json"
         done = subprocess.run(
             [sys.executable, str(ROOT / "evals" / "live.py"), "--json", str(out), "--cap", str(cap),
-             "--tools", "Edit", "Write", *(["--tag", *tags] if tags else []),
+             "--tools", "Edit", "Write", *(["--tag", *tags] if tags else []), *extra,
              "--fetch", sys.executable, str(self.folder / "fetch.py"), str(token), str(self.folder / "count"),
              "--claude", sys.executable, str(self.folder / "claude.py")],
             capture_output=True, text=True, env=env, timeout=120)
+        self.stdout = done.stdout
         calls = [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
         return done.returncode, json.loads(out.read_text(encoding="utf-8")), calls
+
+    def test_on_windows_no_run_signing_in_is_a_notice(self):
+        """v0.1.1 on Windows: all 8 runs failed at the first token exchange, because Claude Code
+        turns its federation token cache off there. The Windows job passes --sign-in-notice."""
+        out = {"error": SIGN_IN, "costUsd": 0, "graders": []}
+        signed_out = {"with": [out, out], "without": [out, out]}
+        code, doc, calls = self.live(1.0, 0.0, "no-shell", extra=["--sign-in-notice"], arms=signed_out, exit_code=1)
+        self.assertEqual(code, 0)
+        self.assertIn("::notice title=No run signed in::Every run failed at the token exchange", self.stdout)
+        self.assertIn("On Windows, Claude Code turns off the cache", doc["notice"])
+        self.assertIn("**Notice:** Every run failed at the token exchange", load_summarize().summarize(doc))
+
+    def test_elsewhere_no_run_signing_in_still_fails(self):
+        """On Linux and macOS the same failure means the federation rule is wrong."""
+        out = {"error": SIGN_IN, "costUsd": 0, "graders": []}
+        code, doc, calls = self.live(1.0, 0.0, "no-shell", arms={"with": [out], "without": [out]}, exit_code=1)
+        self.assertEqual(code, 1)
+        self.assertNotIn("::notice", self.stdout)
+        self.assertNotIn("notice", doc)
+
+    def test_one_run_that_signed_in_keeps_the_failure(self):
+        out = {"error": SIGN_IN, "costUsd": 0, "graders": []}
+        ran = {"error": None, "costUsd": 0.03, "score": 0.5, "graders": [{"name": "edited", "passed": False}]}
+        code, doc, calls = self.live(1.0, 0.0, "no-shell", extra=["--sign-in-notice"],
+                                     arms={"with": [out, ran], "without": [out]}, exit_code=1)
+        self.assertEqual(code, 1)
+        self.assertNotIn("::notice", self.stdout)
+        self.assertNotIn("notice", doc)
 
     def test_each_case_signs_in_afresh(self):
         code, doc, calls = self.live(1.0, 0.05, "no-shell")

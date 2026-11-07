@@ -226,6 +226,8 @@ def summarize(doc):
     lines.append(f"{passed} of {len(cases)} cases at or above the threshold of "
                  f"{'?' if threshold is None else threshold}. "
                  f"Mean delta: {fmt(sum(deltas) / len(deltas) if deltas else None, True)}.")
+    if doc.get("notice"):
+        lines += ["", f"**Notice:** {doc['notice']}"]
     if unscored:
         lines.append("")
         lines.append(f"**{unscored} {'run' if unscored == 1 else 'runs'} not scored**: each errored "
