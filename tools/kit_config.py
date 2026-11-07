@@ -137,11 +137,17 @@ def _plugin_not_project(folder):
 
 
 def _refusal(folder, how):
-    """The one line: which folder, and the exact --project to run it again with."""
+    """The one line: which folder, the exact --project to run it again with when the folder before a
+    cd is known, and what not to do instead. Through the product-os command it isn't: macOS's /bin/sh
+    drops OLDPWD as it starts. An agent refused here has gone on to read the project's file itself
+    and run a command from it that wasn't accepted, so the line says not to."""
     cwd, prev = os.getcwd(), os.environ.get("OLDPWD")
     use = next((p for p in (cwd, prev) if p and os.path.isdir(p) and not _inside(p, PLUGIN)), None)
-    again = f"--project {use}" if use else "--project <your project folder>"
-    return f"REFUSED: {folder} {how} the Product OS plugin, not a project. Run it again with {again}."
+    again = (f"Run it again with --project {use}." if use else
+             "Run it again in the folder the session works in, with no cd first, or with --project "
+             "<that folder>.")
+    return (f"REFUSED: {folder} {how} the Product OS plugin, not a project. {again} Don't read the "
+            f"project's {FILE} in its place: only this tool says which of its commands may run.")
 
 
 def project_dir(explicit=None):
@@ -812,6 +818,19 @@ def selftest():
             check("--project naming the plugin's own folder is refused too, and the line names the "
                   "--project to use", named.startswith("REFUSED: --project ") and f"--project {pproj}." in named,
                   named)
+            # Through the product-os command, macOS's /bin/sh has dropped OLDPWD.
+            os.environ.pop("OLDPWD", None)
+            reset()
+            try:
+                project_dir()
+                blind = ""
+            except InPluginFolder as e:
+                blind = str(e)
+            check("with no folder before it, the refusal says to run it where the session works, with no "
+                  "cd, and not to read the project's file in its place",
+                  "in the folder the session works in, with no cd first" in blind
+                  and f"Don't read the project's {FILE} in its place" in blind and "\n" not in blind, blind)
+            os.environ["OLDPWD"] = pproj
             example = os.path.join(plug, "examples", "proj")
             write(os.path.join(example, FILE), {"ado": {"project": "Example"}})
             os.chdir(os.path.join(example))

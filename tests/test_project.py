@@ -547,6 +547,17 @@ class PluginFolderTest(unittest.TestCase):
         self.assertTrue(str(caught.exception).startswith("REFUSED:"))
         self.assertIn(f"Run it again with --project {self.proj}", str(caught.exception))
 
+    def test_with_no_folder_before_it_the_refusal_says_where_to_run_it(self):
+        """Through the product-os command, macOS's /bin/sh has dropped OLDPWD, so the folder an
+        agent cd'd from is unknown. The line still says to run it where the session works."""
+        os.chdir(self.plugin / "tools")
+        os.environ.pop("OLDPWD", None)
+        with self.assertRaises(project.ConfigError) as caught:
+            project.start_folder(None, self.plugin)
+        self.assertIn("Run it again in the folder the session works in, with no cd first",
+                      str(caught.exception))
+        self.assertNotIn("\n", str(caught.exception))
+
     def test_project_naming_the_plugin_itself_is_refused(self):
         os.chdir(self.proj)
         with self.assertRaises(project.ConfigError) as caught:

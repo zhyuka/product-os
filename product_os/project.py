@@ -184,12 +184,16 @@ def _plugin_not_project(folder, plugin):
 
 
 def _refusal(folder, how, plugin):
-    """The one line: which folder, and the exact --project to run it again with."""
+    """The one line: which folder, and the exact --project to run it again with when the folder
+    before a cd is known. Through the product-os command it isn't: macOS's /bin/sh drops OLDPWD as it
+    starts, so the line says where to run it instead."""
     cwd, prev, root = Path.cwd().resolve(), os.environ.get("OLDPWD"), plugin.resolve()
     use = next((p for p in (cwd, Path(prev).resolve() if prev else None)
                 if p and p.is_dir() and root not in (p, *p.parents)), None)
-    again = f"--project {use}" if use else "--project <your project folder>"
-    return f"REFUSED: {folder} {how} the Product OS plugin, not a project. Run it again with {again}"
+    again = (f"Run it again with --project {use}" if use else
+             "Run it again in the folder the session works in, with no cd first, or with --project "
+             "<that folder>")
+    return f"REFUSED: {folder} {how} the Product OS plugin, not a project. {again}"
 
 
 def start_folder(explicit=None, plugin=None):
