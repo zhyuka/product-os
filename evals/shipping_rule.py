@@ -83,8 +83,10 @@ def main(argv=None):
         print(f"  {arm}: ${doc.get('costUsd', 0):.2f}, {doc.get('durationSeconds', 0)} s"
               + (" (partial)" if doc.get("partial") else ""))
     print("  Per grader: python3 evals/summarize.py <result.json>")
-    # A run that ended on an error (a usage limit, an expired login, a timeout) scores 0 without
-    # being graded, so it would make the other copy look better. Such a result is no comparison.
+    # A run that ended on an error (a usage limit, a failed sign-in, a timeout) skews its copy's
+    # score. One the harness didn't grade scores 0. One it graded can still pass a grader that
+    # checks for an absence, since a run that never started built nothing. Such a result is no
+    # comparison.
     bad = sum(sum(counts.values()) for counts in errored.values())
     if bad or any(doc.get("partial") for doc in docs.values()):
         print(f"  NOT A COMPARISON: {bad} runs ended on an error or the run was partial. Run it again.")

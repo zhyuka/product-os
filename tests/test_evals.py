@@ -4,6 +4,7 @@
 CLAUDE_CONFIG_DIR, then starts the session there with CLAUDE_CONFIG_DIR set to <run>/config. These
 tests plant that layout and read the result the way the session's hooks do.
 """
+import importlib.util
 import json
 import os
 import subprocess
@@ -65,6 +66,63 @@ class AcceptQaCommands(unittest.TestCase):
         scaffold(cwd, home)
         data = json.loads((home / ".claude" / "product-os-checks.json").read_text(encoding="utf-8"))
         self.assertEqual(data, {"projects": {str(self.root / "work" / "e-*"): {"qa_commands": ["python3 qa.py"]}}})
+
+
+def load_summarize():
+    spec = importlib.util.spec_from_file_location("summarize", ROOT / "evals" / "summarize.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+SIGN_IN = "exit 1: API Error: Token exchange failed with status 401 (request-id req_0): Authentication failed"
+GRADERS = [{"name": "built-nothing", "type": "regex", "weight": 1}, {"name": "names-route", "type": "llm", "weight": 2}]
+
+
+def run(score, built, named, cost=0.03, judge=0.002, error=None, graders=True):
+    marks = [{"name": "built-nothing", "passed": built}, {"name": "names-route", "passed": named}]
+    return {"score": score, "turns": 1, "costUsd": cost, "judgeCostUsd": judge, "error": error,
+            "graders": marks if graders else []}
+
+
+def result(with_runs, without_runs):
+    return {"claudeVersion": "2.1.319", "costUsd": 1.0, "durationSeconds": 600, "suite": {"threshold": 0.8},
+            "aggregates": {"casesPassed": 0, "casesTotal": 1, "meanDelta": 0.6},
+            "cases": [{"name": "skill-go-extra-route", "graders": GRADERS,
+                       "aggregates": {"score": 0.6, "scoreWithout": 0.0, "delta": 0.6},
+                       "arms": {"with": with_runs, "without": without_runs}}]}
+
+
+class Summarize(unittest.TestCase):
+    """macOS, v0.1.0: three with-plugin runs failed to sign in. The harness still graded them,
+    the absence grader passed, and the case scored 0.60."""
+
+    def setUp(self):
+        self.summarize = load_summarize().summarize
+
+    def row(self, text):
+        return next(line for line in text.splitlines() if line.startswith("| skill-go-extra-route"))
+
+    def test_a_run_that_never_reached_the_model_is_not_scored(self):
+        signed_out = [run(0.33, True, False, cost=0.002, error=SIGN_IN) for _ in range(3)]
+        text = self.summarize(result(signed_out, [run(0.0, False, False)]))
+        self.assertEqual(self.row(text), "| skill-go-extra-route | n/a | 0.00 | n/a | 3 of 3, 3 not scored | 0 of 1 |")
+        self.assertIn("| built-nothing | regex | 1 | 0 of 0 (3 not scored) | 0 of 1 |", text)
+        self.assertIn("**3 runs not scored**", text)
+        self.assertIn("- with plugin, run 1, not scored: " + SIGN_IN, text)
+        self.assertIn("0 of 1 cases at or above the threshold of 0.8. Mean delta: n/a.", text)
+
+    def test_an_api_error_with_no_grader_run_is_not_scored(self):
+        api_error = run(0, False, False, cost=0, judge=0, error="exit 1: API Error: 401", graders=False)
+        text = self.summarize(result([api_error, run(1.0, True, True)], []))
+        self.assertTrue(self.row(text).startswith("| skill-go-extra-route | 1.00 | n/a | n/a | 1 of 2, 1 not scored |"))
+
+    def test_a_run_that_worked_then_timed_out_is_scored(self):
+        timed_out = run(0.33, True, False, error="timed out after 420s")
+        text = self.summarize(result([timed_out, run(1.0, True, True)], [run(0.0, False, False)]))
+        self.assertEqual(self.row(text), "| skill-go-extra-route | 0.67 | 0.00 | +0.67 | 1 of 2 | 0 of 1 |")
+        self.assertIn("| names-route | llm | 2 | 1 of 2 | 0 of 1 |", text)
+        self.assertIn("- with plugin, run 1: timed out after 420s", text)
 
 
 if __name__ == "__main__":
