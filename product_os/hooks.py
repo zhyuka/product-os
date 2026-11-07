@@ -376,8 +376,9 @@ def _deny_reviewer_write(event, config):
         "permissionDecision": "deny",
         "permissionDecisionReason": (
             f"product-os blocked this {tool} call: it {reason}. The project config lists "
-            f"{label(agent)} as a reviewer, and reviewers are read-only. Put the change you would "
-            "make in your review instead.")}}
+            f"{label(agent)} as a reviewer, and reviewers are read-only, so don't try it another "
+            "way. Finish the review: in your answer, name each problem you found and the change "
+            "you would make, for the person to apply.")}}
 
 
 STOP_SECONDS = 15  # well inside the 60 second timeout hooks.json gives the Stop hooks

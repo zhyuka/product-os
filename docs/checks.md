@@ -369,7 +369,7 @@ Both hooks leave every other agent alone. In this example, run from the repo roo
 
 ```
 $ python3 hooks/reviewer_readonly.py < tests/fixtures/hooks/deny-reviewer-bash-write.json
-{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "product-os blocked this Bash call: it runs sed -i. The project config lists code-reviewer as a reviewer, and reviewers are read-only. Put the change you would make in your review instead."}}
+{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "product-os blocked this Bash call: it runs sed -i. The project config lists code-reviewer as a reviewer, and reviewers are read-only, so don't try it another way. Finish the review: in your answer, name each problem you found and the change you would make, for the person to apply."}}
 ```
 
 Claude Code cancels the call and gives the reason to the agent. In the next one, the main session is a builder. It edited a page, ran `npm run check 2>&1 | tail -5`, and is about to report that QA passed:
