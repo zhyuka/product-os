@@ -67,6 +67,7 @@ A path under `app`, such as `app.decisions`, `app.rules`, `app.baseline` or `app
 | `transcripts.*` (`dir`, `aliases`, `aliases_file`, `ambiguous`) | transcript_check | the transcripts folder and the spellings of your product names |
 | `workspace.*` (`root`, `not_ours`, `docs`, `map`, `skip`, `ado_docs`, ...) | workspace_audit, archive, upkeep, desktop_mirror | your working folder and what in it the audits judge |
 | `backup.folder` | backup_cc_logs, desktop_mirror, upkeep | a folder a cloud drive syncs, or an external disk |
+| `backup.notes_folder` | backup_cc_logs | the desktop app's side-session notes folder to back up (default `~/Library/Application Support/Claude/side-session-notes`, where the macOS app keeps it); a missing folder is skipped |
 | `mirror.*` (`source`, `name`, `exclude`, `worktrees`, `sentinels`, `extra_repos`, `log`) | desktop_mirror, scheduled_audits | the one-way copy of your working folder |
 | `upkeep.*` (`repos`, `integration`, `worktrees`, `dist_parents`, `pyc_dirs`, `setup_repos`) | upkeep | what the daily cleanup may prune |
 | `scheduled_audits.*` (`extra`, `agent_prefix`, `exit_matters`, `log`, `watchdog`, `unused_callers`, `keep_unused`) | scheduled_audits | extra audits to run, each `[name, script, args..., login shell true or false, timeout in seconds]` with the last two optional, and which scheduled jobs to watch; globs of other files that run your tools, and `{"name.py": "why"}` for a tool kept with no run or caller |

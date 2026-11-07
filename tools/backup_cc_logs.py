@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """backup_cc_logs.py - copy ~/.claude/projects to a backup folder so session logs outlive Claude Code's
-log cleanup, ~/.claude/skills so your personal skills outlive this machine, and ~/.claude/file-history,
-the only store of the versions an agent's edits overwrote.
+log cleanup, ~/.claude/skills so your personal skills outlive this machine, ~/.claude/file-history,
+the only store of the versions an agent's edits overwrote, and the desktop app's side-session notes,
+which it deletes when a session is archived.
 
     python tools/backup_cc_logs.py [--dest DIR]   copy what is new or changed, print one summary line
+    python tools/backup_cc_logs.py --notes        copy only the side-session notes folders (seconds), e.g.
+                                                  before an archive
     python tools/backup_cc_logs.py --selftest     planted tree: new, unchanged, appended, rewritten, deleted,
-                                                  skills, file-history, a planted fake token held
+                                                  skills, file-history, notes, a planted fake token held
 
 WHY THIS EXISTS. Claude Code deletes a session log `cleanupPeriodDays` after it was last written
 (30 by default; an organisation can set it). The logs are the record of what was asked, decided and
@@ -35,7 +38,18 @@ ALSO ~/.claude/file-history. Before an agent edits a file, Claude Code keeps the
 `file-history/<session>/<first 16 hex of sha256(absolute path)>@v<n>`; nothing else keeps those versions.
 Each goes to `cc-logs/file-history/<same path>` by the rules above. A missing folder is skipped.
 
-HELD, never copied: a file-history or skills file likely to hold a credential, since a copy would put
+ALSO the desktop app's side-session notes. The Claude desktop app keeps one notes folder per family of
+side sessions, `local_<top session id>/`, and deletes the whole folder when that top session is archived
+with no side session left live. Notes and records cite these files by absolute path, so each goes to
+`cc-logs/side-session-notes/<same path>` by the rules above: a deleted folder stays in the backup and an
+edited file keeps its old copy under `superseded/<stamp>/side-session-notes/`. Guarded by HELD below,
+with the file's own path as its source. `notes_copy()` maps a live notes path to its copy and
+`resolve_notes()` returns the copy when the live file is gone, so a check that follows a citation can
+read it there. `--notes` copies this folder alone, for a run just before an archive. The folder is
+`backup.notes_folder` in the product-os config (default ~/Library/Application Support/Claude/
+side-session-notes, where the macOS app keeps it). A missing folder is skipped.
+
+HELD, never copied: a file-history, skills or notes file likely to hold a credential, since a copy would put
 it in a second store. The test runs on the file's own source path and on its bytes, before any write:
   - by path: SECRET_NAMES, SECRET_DIRS and SECRET_TAILS (settings.json, .claude.json, *.lock, .env, ssh
     keys and folders, credentials, .git/config, .netrc and the like, key files);
@@ -48,13 +62,18 @@ it in a second store. The test runs on the file's own source path and on its byt
 A held file prints as HELD with its label, source path and rule, never its bytes. Its label, size,
 mtime, source path and rule go to `cc-logs/file-history-held.json`, so a later run counts it without
 reading it again; a file
-whose path was unknown is tried again each run. If the detector won't import, every file-history and
-skills file still to copy is held and the run exits 1.
+whose path was unknown is tried again each run. If the detector won't import, every file-history,
+skills and notes file still to copy is held and the run exits 1.
 
 NOT COPIED. ~/.claude/history.jsonl (a dot-folder in a cloud drive is not reliably synced), `.DS_Store`.
 
 Exit 0 when every file is copied or current; 1 when any file failed (each is named); 2 when it could
-not run: no backup folder configured or it is missing, or ~/.claude/projects is missing.
+not run: no backup folder configured or it is missing, or ~/.claude/projects is missing (not needed
+for --notes). A file deleted or renamed between the walk and its read (an atomic write's .tmp file, a
+folder archived mid-run) counts as gone, not failed: there is nothing left to copy. So a non-zero exit
+means a real fault, and a scheduler can run `--notes` every 15 minutes (and at login), giving a folder
+an archive deletes a copy at most 15 minutes old, with a watchdog alerting when its last run exits
+non-zero (scheduled_audits.py does, for a job listed in `scheduled_audits.exit_matters`).
 """
 import os
 import sys
@@ -82,6 +101,8 @@ SRC = os.path.join(HOME, ".claude", "projects")
 SKILLS = os.path.join(HOME, ".claude", "skills")
 SKILLS_SKIP = {"synced", ".trash"}  # top-level folders under SKILLS that are not backed up
 FILE_HISTORY = os.path.join(HOME, ".claude", "file-history")
+NOTES_DEFAULT = os.path.join("~", "Library", "Application Support", "Claude", "side-session-notes")
+NOTES_OUT = "side-session-notes"       # under dest: the notes folders' copies, at the same relative paths
 HELD_FILE = "file-history-held.json"   # under dest: what HELD above kept back, so a later run need not reread it
 CHUNK = 1 << 20
 
@@ -102,6 +123,27 @@ def backup_root():
 
 def dest_root():
     return os.path.join(backup_root(), "cc-logs")
+
+
+def notes_root():
+    """The desktop app's side-session notes folder (backup.notes_folder, default NOTES_DEFAULT), expanded."""
+    return os.path.expanduser(kit_config.get("backup", "notes_folder", default=None) or NOTES_DEFAULT)
+
+
+def _dest(dest=None):
+    """(the cc-logs folder to copy into, None), or (None, why it can't run): with no dest, <backup.folder>/cc-logs
+    once that folder exists; a given dest once the folder above it exists."""
+    if dest is None:
+        try:
+            root = backup_root()
+        except kit_config.NotConfigured as e:
+            return None, str(e)
+        if not os.path.isdir(root):
+            return None, f"the backup folder {root.replace(HOME, '~')} is missing, so a copy would not sync"
+        return os.path.join(root, "cc-logs"), None
+    if not os.path.isdir(os.path.dirname(os.path.abspath(dest))):
+        return None, f"the folder above {dest} is missing"
+    return dest, None
 
 
 def _payload(path):
@@ -157,16 +199,47 @@ def _files(base, skip=()):
                 yield path, name, os.path.relpath(path, base)
 
 
-def _jobs(src, skills=None, history=None):
-    """(path, name, label, output path under dest): src's files, then skills' and history's (ALSO above)."""
-    for path, name, rel in _files(src):
-        yield path, name, rel, os.path.join("projects", rel)
+def _jobs(src, skills=None, history=None, notes=None):
+    """(path, name, label, output path under dest): src's files, then skills', history's and notes' (ALSO
+    above). src None leaves the logs out (--notes)."""
+    if src:
+        for path, name, rel in _files(src):
+            yield path, name, rel, os.path.join("projects", rel)
     if skills and os.path.isdir(skills):
         for path, name, rel in _files(skills, SKILLS_SKIP):
             yield path, name, "skills/" + rel, os.path.join("skills", rel)
     if history and os.path.isdir(history):
         for path, name, rel in _files(history):
             yield path, name, "file-history/" + rel, os.path.join("file-history", rel)
+    if notes and os.path.isdir(notes):
+        for path, name, rel in _files(notes):
+            yield path, name, NOTES_OUT + "/" + rel, os.path.join(NOTES_OUT, rel)
+
+
+def notes_copy(path, notes=None, dest=None):
+    """The backup path of a file under the notes folder (ALSO above), whether or not either exists; None for a
+    path outside it, or when dest is not given and no backup folder is configured. A path may come from the
+    record as written: ~ is expanded, and `..` can't climb out. notes and dest default to notes_root() and
+    dest_root() at the call, so a planted test can pass its own."""
+    p = os.path.normpath(os.path.expanduser(path))
+    root = os.path.normpath(notes or notes_root())
+    if p == root or not p.startswith(root + os.sep):
+        return None
+    if not dest:
+        try:
+            dest = dest_root()
+        except kit_config.NotConfigured:
+            return None
+    return os.path.join(dest, NOTES_OUT, os.path.relpath(p, root))
+
+
+def resolve_notes(path, notes=None, dest=None):
+    """The path to read for a cited file: itself while it exists; for a notes file the app's archive deleted,
+    its backup copy when that exists; else the path unchanged, so the caller reports the cited path missing."""
+    if os.path.exists(path):
+        return path
+    copy = notes_copy(path, notes, dest)
+    return copy if copy and os.path.exists(copy) else path
 
 
 def _detector():
@@ -192,7 +265,7 @@ def secret_path(path):
 
 
 class Guard:
-    """HELD above: says why a skills or file-history file must not be copied, or None. Reads no file
+    """HELD above: says why a skills, file-history or notes file must not be copied, or None. Reads no file
     itself except a session's logs, to find a file-history file's source path."""
 
     def __init__(self, log_roots, secret):
@@ -202,7 +275,7 @@ class Guard:
         self.shown = []    # one line per file held this run: label, source path, rule; never its bytes
 
     def guards(self, label):
-        return label.startswith(("skills/", "file-history/"))
+        return label.startswith(("skills/", "file-history/", NOTES_OUT + "/"))
 
     def _logs(self, session):
         for root in self.log_roots:
@@ -264,7 +337,7 @@ class Guard:
         return found
 
     def source(self, label, path):
-        if label.startswith("skills/"):
+        if label.startswith(("skills/", NOTES_OUT + "/")):
             return path
         session, name = label.split("/")[1], label.split("/")[-1]
         return self.paths(session).get(name.split("@")[0])
@@ -303,21 +376,22 @@ def guard_for(src, dest, secret=False):
     return Guard([src, os.path.join(dest, "projects")], _detector() if secret is False else secret)
 
 
-def backup(src, dest, stamp, skills=None, history=None, guard=None):
-    """Copy src into dest/projects, and `skills` and `history` as ALSO above says, holding back what HELD above
-    says (its lines in guard.shown). Returns (counts, failures)."""
+def backup(src, dest, stamp, skills=None, history=None, guard=None, notes=None):
+    """Copy src into dest/projects, and `skills`, `history` and `notes` as ALSO above says, holding back what
+    HELD above says (its lines in guard.shown). src None copies only the others. Returns (counts, failures)."""
     n = {"files": 0, "new": 0, "appended": 0, "superseded": 0, "current": 0, "skills": 0, "history": 0,
-         "held": 0}
+         "notes": 0, "held": 0, "gone": 0}
     failed = []
     guard = guard or guard_for(src, dest)
     held = _load_held(dest)
     held_before = dict(held)
     blind = 0                     # guarded files held because the detector did not import
-    for path, name, label, out in _jobs(src, skills, history):
+    for path, name, label, out in _jobs(src, skills, history, notes):
         target = os.path.join(dest, out)
         n["files"] += 1
         n["skills"] += label.startswith("skills/")
         n["history"] += label.startswith("file-history/")
+        n["notes"] += label.startswith(NOTES_OUT + "/")
         try:
             st = os.stat(path)
             if os.path.exists(target):
@@ -359,9 +433,13 @@ def backup(src, dest, stamp, skills=None, history=None, guard=None):
                 n["superseded"] += 1
             _write(target, data, st.st_mtime)
         except OSError as e:
+            if isinstance(e, FileNotFoundError) and not os.path.lexists(path):
+                n["gone"] += 1        # deleted or renamed since the walk listed it: nothing left to copy
+                continue
             failed.append(f"{label}: {type(e).__name__}: {e.strerror or e}")
     if blind:
-        failed.append(f"{blind} skills and file-history files held, none checked: workspace_audit.SECRET did not import")
+        failed.append(f"{blind} skills, file-history and notes files held, none checked: "
+                      "workspace_audit.SECRET did not import")
     if held != held_before:
         try:
             _save_held(dest, held)
@@ -370,32 +448,52 @@ def backup(src, dest, stamp, skills=None, history=None, guard=None):
     return n, failed
 
 
-def run(dest=None):
-    if dest is None:
-        try:
-            root = backup_root()
-        except kit_config.NotConfigured as e:
-            print(f"DID NOT RUN: {e}")
+def backup_notes(notes=None, dest=None, secret=False):
+    """--notes: (code, counts, failures, held lines) for the notes folder alone (default notes_root()). Code 0
+    done, 1 a file failed, 2 did not run (counts None, the reason the one failure): no backup folder
+    configured or it is missing, or the folder above a given dest is missing. A tool that archives sessions
+    can call this first."""
+    dest, why = _dest(dest)
+    if why:
+        return 2, None, [why], []
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    guard = Guard([], _detector() if secret is False else secret)
+    n, failed = backup(None, dest, stamp, guard=guard, notes=notes or notes_root())
+    return (1 if failed else 0), n, failed, list(guard.shown)
+
+
+def run(dest=None, notes_only=False):
+    if notes_only:
+        notes = notes_root()
+        code, n, failed, shown = backup_notes(notes, dest)
+        if code == 2:
+            print(f"DID NOT RUN: {failed[0]}")
             return 2
-        if not os.path.isdir(root):
-            print(f"DID NOT RUN: the backup folder {root.replace(HOME, '~')} is missing, so a copy would not sync")
-            return 2
-        dest = os.path.join(root, "cc-logs")
-    elif not os.path.isdir(os.path.dirname(os.path.abspath(dest))):
-        print(f"DID NOT RUN: the folder above {dest} is missing")
+        print(f"{n['files']} notes files under {notes.replace(HOME, '~')}: {n['new']} new, "
+              f"{n['superseded']} changed (old copy kept), {n['current']} already current, "
+              f"{n['held']} held as likely credentials, {n['gone']} gone before they could be read, "
+              f"{len(failed)} failed. Dest {os.path.join(_dest(dest)[0], NOTES_OUT).replace(HOME, '~')}")
+        for line in shown:
+            print("HELD", line)
+        for line in failed:
+            print("FAILED", line)
+        return code
+    dest, why = _dest(dest)
+    if why:
+        print(f"DID NOT RUN: {why}")
         return 2
     if not os.path.isdir(SRC):
         print(f"DID NOT RUN: {SRC.replace(HOME, '~')} is missing")
         return 2
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     guard = guard_for(SRC, dest)
-    n, failed = backup(SRC, dest, stamp, SKILLS, FILE_HISTORY, guard)
-    print(f"{stamp} {n['files']} files under ~/.claude/projects, skills and file-history "
-          f"({n['skills']} skill files, {n['history']} file-history): {n['new']} new, "
+    n, failed = backup(SRC, dest, stamp, SKILLS, FILE_HISTORY, guard, notes_root())
+    print(f"{stamp} {n['files']} files under ~/.claude/projects, skills, file-history and side-session notes "
+          f"({n['skills']} skill files, {n['history']} file-history, {n['notes']} notes): {n['new']} new, "
           f"{n['appended']} appended, "
           f"{n['superseded']} changed (old copy kept), {n['current']} already current, "
-          f"{n['held']} held as likely credentials, {len(failed)} failed. "
-          f"Dest {dest.replace(HOME, '~')}")
+          f"{n['held']} held as likely credentials, {n['gone']} gone before they could be read, "
+          f"{len(failed)} failed. Dest {dest.replace(HOME, '~')}")
     for line in guard.shown:
         print("HELD", line)
     for line in failed:
@@ -576,6 +674,81 @@ def selftest():
                                                    "/x/notes/credential-handling.md",
                                                    "/x/package-lock.json", "/x/tools/ledger.py")))
 
+        # side-session notes (ALSO above): the app's archive removes a family's whole folder; the copy must outlive it.
+        src5, nt, dest5 = (os.path.join(t, d) for d in ("p5", "notes", "d5n"))
+        fam = "local_0a0a0a0a-1111-2222-3333-444444444444"
+        put(os.path.join(src5, "S", u + ".jsonl"), b'{"a":1}\n', 1_000_000)
+        rep = os.path.join(nt, fam, "report.md")
+        put(rep, b"# report v1\n", 1_000_000)
+        put(os.path.join(nt, fam, "data", "rows.json"), b"[]", 1_000_000)
+        put(os.path.join(nt, fam, "leak.md"), b"token " + fake + b"\n", 1_000_000)
+        out = io.StringIO()
+        g = guard_for(src5, dest5)
+        with contextlib.redirect_stdout(out):
+            n, f = backup(src5, dest5, "N1", None, None, g, nt)
+            for line in g.shown:
+                print("HELD", line)
+        bn = os.path.join(dest5, NOTES_OUT, fam)
+        check("notes copy to side-session-notes/ at the same paths; one holding the planted fake token is held",
+              n["notes"] == 3 and n["new"] == 3 and n["held"] == 1 and not f
+              and read(os.path.join(bn, "report.md")) == b"# report v1\n"
+              and os.path.exists(os.path.join(bn, "data", "rows.json"))
+              and not os.path.exists(os.path.join(bn, "leak.md")) and fake.decode() not in out.getvalue())
+        put(rep, b"# report v2\n", 1_000_100)
+        n, f = backup(src5, dest5, "N2", None, None, guard_for(src5, dest5), nt)
+        check("an edited notes file keeps its old copy under superseded/",
+              n["superseded"] == 1 and not f and read(os.path.join(bn, "report.md")) == b"# report v2\n"
+              and read(os.path.join(dest5, "superseded", "N2", NOTES_OUT, fam, "report.md")) == b"# report v1\n")
+        shutil.rmtree(os.path.join(nt, fam))          # what the app's archive does to the folder
+        n, f = backup(src5, dest5, "N3", None, None, guard_for(src5, dest5), nt)
+        check("a planted notes file whose source folder is removed survives in the backup, and the run fails nothing",
+              not f and n["notes"] == 0 and read(os.path.join(bn, "report.md")) == b"# report v2\n"
+              and os.path.exists(os.path.join(bn, "data", "rows.json")))
+        check("resolve_notes: a gone notes file reads its backup copy; a never-copied one stays as cited",
+              resolve_notes(rep, nt, dest5) == os.path.join(bn, "report.md")
+              and resolve_notes(os.path.join(nt, fam, "never.md"), nt, dest5) == os.path.join(nt, fam, "never.md"))
+        check("notes_copy: a path outside the notes folder, the folder itself, a `..` climb or no backup folder "
+              "configured maps to None",
+              notes_copy(os.path.join(t, "elsewhere.md"), nt, dest5) is None and notes_copy(nt, nt, dest5) is None
+              and notes_copy(os.path.join(nt, fam, "..", "..", "p5", "x.md"), nt, dest5) is None
+              and notes_copy(os.path.join(nt, fam, "a.md"), nt) is None
+              and notes_copy(os.path.join(nt, fam, "a.md"), nt, dest5) == os.path.join(bn, "a.md"))
+        nt6, dest6 = os.path.join(t, "notes6"), os.path.join(t, "od", "cc-logs")
+        put(os.path.join(nt6, fam, "x.md"), b"x", 1_000_000)
+        os.makedirs(os.path.join(t, "od"))
+        code, n, f, shown = backup_notes(nt6, dest6)
+        check("--notes copies the notes folders alone, nothing else",
+              code == 0 and n["files"] == n["notes"] == n["new"] == 1 and not f
+              and sorted(os.listdir(dest6)) == [NOTES_OUT])
+        code, n, f, shown = backup_notes(nt6, os.path.join(t, "gone", "cc-logs"))
+        code2, n2, f2, _ = backup_notes(nt6)
+        check("--notes with the backup folder missing or not configured does not run (2) and writes nothing",
+              code == 2 and n is None and not os.path.exists(os.path.join(t, "gone"))
+              and code2 == 2 and n2 is None and "backup.folder" in f2[0])
+        # A scheduled --notes job reads folders sessions rewrite all day: a file listed and then deleted or renamed
+        # before its read (an atomic write's .tmp file, a folder archived mid-run) is gone, not a fault, so the
+        # job's exit stays 0; a fault on the backup side still exits 1.
+        walk = _files
+
+        def walk_with_phantom(base, skip=()):
+            yield from walk(base, skip)
+            ghost = os.path.join(base, fam, ".tmp-ghost")
+            yield ghost, ".tmp-ghost", os.path.relpath(ghost, base)
+        globals()["_files"] = walk_with_phantom
+        try:
+            put(os.path.join(nt6, fam, "y.md"), b"y", 1_000_000)
+            code, n, f, shown = backup_notes(nt6, dest6)
+            check("--notes: a file gone between listing and reading counts as gone, not failed, and exits 0",
+                  code == 0 and not f and n["gone"] == 1 and n["new"] == 1)
+        finally:
+            globals()["_files"] = walk
+        put(os.path.join(nt6, fam, "z.md"), b"z", 1_000_000)
+        os.makedirs(os.path.join(dest6, NOTES_OUT, fam, "z.md"))      # the backup side can't take the file
+        code, n, f, shown = backup_notes(nt6, dest6)
+        check("--notes: a source still there that can't be written fails, exits 1 and is named",
+              code == 1 and n["gone"] == 0 and len(f) == 1
+              and f[0].startswith(NOTES_OUT + "/" + os.path.join(fam, "z.md")))
+
     print("selftest", "PASSED" if ok else "FAILED")
     return 0 if ok else 1
 
@@ -587,6 +760,9 @@ if __name__ == "__main__":
     ap.add_argument("--dest", help="the cc-logs folder to copy into (default <backup.folder>/cc-logs)")
     ap.add_argument("--selftest", action="store_true",
                     help="planted tree: new, unchanged, appended, rewritten, deleted, skills, file-history, "
-                         "a planted fake token held")
+                         "notes, a planted fake token held")
+    ap.add_argument("--notes", action="store_true",
+                    help="copy only the side-session notes folders (backup.notes_folder), e.g. just before an "
+                         "archive")
     a = ap.parse_args()
-    sys.exit(kit_config.run_isolated(selftest) if a.selftest else run(a.dest))
+    sys.exit(kit_config.run_isolated(selftest) if a.selftest else run(a.dest, a.notes))
