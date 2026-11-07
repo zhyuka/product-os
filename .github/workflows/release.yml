@@ -84,20 +84,29 @@ jobs:
           python-version: "3.13"
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
-      # GitHub's OIDC token, with Anthropic's audience, in the file Claude Code reads it from. It
-      # prints the claims the federation rule matches, sub, ref and event_name, never the token,
-      # so a rule that doesn't match the subject format shows here (docs/checks.md).
+      # GitHub's OIDC token, with Anthropic's audience, in the file Claude Code reads it from.
+      # oidc_token.py, written here and run again by the refresh loop below, replaces the file
+      # only with a token it checked, and prints when the token was issued and expires and
+      # whether it changed. --claims also prints sub, ref and event_name, the claims the
+      # federation rule matches, so a rule that doesn't match the subject format shows here
+      # (docs/checks.md). It never prints the token. live.yml holds the same script.
       - name: Fetch GitHub OIDC token
         run: |
           echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/gha-jwt" >> "$GITHUB_ENV"
-          curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
-            | jq -r .value > "$RUNNER_TEMP/gha-jwt"
-          python3 - "$RUNNER_TEMP/gha-jwt" <<'EOF'
-          import base64, json, sys
-          token = open(sys.argv[1], encoding="utf-8").read().strip()
-          if token in ("", "null"):
+          cat > "$RUNNER_TEMP/oidc_token.py" <<'EOF'
+          import base64, json, os, sys, time, urllib.request
+          path = sys.argv[1]
+          try:
+              url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=https://api.anthropic.com"
+              headers = {"Authorization": "Bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]}
+              with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as answer:
+                  token = json.load(answer).get("value")
+          except Exception as err:
+              why = f"HTTP {err.code}" if isinstance(getattr(err, "code", None), int) else type(err).__name__
+              sys.exit(f"No OIDC token: the request failed ({why}).")
+          if not isinstance(token, str) or token.strip() in ("", "null"):
               sys.exit("No OIDC token: GitHub's response held no value.")
+          token = token.strip()
           try:
               body = token.split(".")[1]
               claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
@@ -105,22 +114,29 @@ jobs:
                   raise ValueError
           except (IndexError, ValueError):
               sys.exit("No OIDC token: GitHub's response is not a JWT.")
-          for key in ("sub", "ref", "event_name"):
-              print(f"{key}: {claims.get(key)}")
+          try:
+              with open(path, encoding="utf-8") as old:
+                  change = ", the same token as before" if old.read().strip() == token else ", a new token"
+          except OSError:
+              change = ""
+          with open(os.open(path + ".next", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as new:
+              new.write(token + "\n")
+          os.replace(path + ".next", path)
+          def utc(stamp):
+              return time.strftime("%H:%M:%S", time.gmtime(stamp)) if isinstance(stamp, (int, float)) else stamp
+          print(f"OIDC token issued {utc(claims.get('iat'))}, expires {utc(claims.get('exp'))} UTC{change}")
+          if "--claims" in sys.argv:
+              for key in ("sub", "ref", "event_name"):
+                  print(f"{key}: {claims.get(key)}")
           EOF
+          python3 "$RUNNER_TEMP/oidc_token.py" "$RUNNER_TEMP/gha-jwt" --claims
       # A GitHub token lasts about 5 minutes and is good for one exchange, so a loop writes a
-      # fresh one every 2 minutes while the agent runs. claude's exit status is kept, so what
-      # run.json says is printed even when claude fails, as on a refused sign-in; then the step
-      # exits with that status.
+      # fresh one every 2 minutes while the agent runs; a failed refresh keeps the last one and
+      # warns. claude's exit status is kept, so what run.json says is printed even when claude
+      # fails, as on a refused sign-in; then the step exits with that status.
       - name: Follow INSTALL.md from the tag, in an empty home
         run: |
-          fetch() {
-            curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
-              | jq -r .value > "$ANTHROPIC_IDENTITY_TOKEN_FILE.next" \
-              && mv -f "$ANTHROPIC_IDENTITY_TOKEN_FILE.next" "$ANTHROPIC_IDENTITY_TOKEN_FILE"
-          }
-          ( while sleep 120; do fetch || echo "::warning::The OIDC token refresh failed; trying again in 2 minutes."; done ) &
+          ( while sleep 120; do python3 "$RUNNER_TEMP/oidc_token.py" "$ANTHROPIC_IDENTITY_TOKEN_FILE" || echo "::warning::The OIDC token refresh failed; trying again in 2 minutes."; done ) &
           refresher=$!
           trap 'kill "$refresher" 2>/dev/null' EXIT
           export HOME="$RUNNER_TEMP/home" PATH="$RUNNER_TEMP/home/.local/bin:$PATH"

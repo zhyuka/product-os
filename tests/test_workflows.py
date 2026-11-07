@@ -9,7 +9,16 @@ PyYAML isn't a dependency, so the workflows are read by indentation, which is en
 the keys these rules need. Each rule is first shown to fail a planted bad workflow and
 pass a good one.
 """
+import base64
+import http.server
+import json
+import os
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -279,6 +288,102 @@ class TheCeiling(unittest.TestCase):
         unbudgeted = self.release.replace("--max-budget-usd 1.00", "")
         self.assertNotEqual(unbudgeted, self.release)
         self.assertTrue(tag_cost(self.live, unbudgeted)[1])
+
+
+def token_script(text):
+    """The oidc_token.py a paid workflow's fetch step writes, as Python reads it."""
+    lines = text.splitlines()
+    start = next(i for i, line in enumerate(lines) if "oidc_token.py\" <<'EOF'" in line)
+    end = next(i for i in range(start + 1, len(lines)) if lines[i].strip() == "EOF")
+    body = lines[start + 1:end]
+    cut = min(len(line) - len(line.lstrip()) for line in body if line.strip())
+    return "\n".join(line[cut:] for line in body) + "\n"
+
+
+def jwt(claims, signature="UExBTlRFRC1TSUdOQVRVUkU"):
+    def part(data):
+        return base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+    return part({"alg": "RS256", "typ": "JWT"}) + "." + part(claims) + "." + signature
+
+
+class GitHub(http.server.BaseHTTPRequestHandler):
+    """A planted GitHub token endpoint: the server's answer is (status, body)."""
+    answer = (200, b"{}")
+
+    def do_GET(self):
+        status, body = self.server.answer
+        self.send_response(status)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+class TheTokenScript(unittest.TestCase):
+    """The paid jobs' token script replaces the token file only with a JWT it checked, and says
+    why when it can't. Before, a refresh wrote GitHub's missing value as the word null, or any
+    other answer, over a good token, and warned about neither."""
+
+    CLAIMS = {"sub": "repo:owner@1/product-os@2:ref:refs/tags/v0.1.1", "ref": "refs/tags/v0.1.1",
+              "event_name": "push", "iat": 1_700_000_000, "exp": 1_700_000_300}
+
+    def setUp(self):
+        flows = ROOT / ".github" / "workflows"
+        self.script = token_script((flows / "live.yml").read_text(encoding="utf-8"))
+        self.other = token_script((flows / "release.yml").read_text(encoding="utf-8"))
+        self.folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        (self.folder / "oidc_token.py").write_text(self.script, encoding="utf-8")
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), GitHub)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.shutdown)
+        self.file = self.folder / "gha-jwt"
+
+    def fetch(self, status, body, *flags):
+        self.server.answer = (status, body if isinstance(body, bytes) else json.dumps(body).encode())
+        env = dict(os.environ, ACTIONS_ID_TOKEN_REQUEST_TOKEN="planted",
+                   ACTIONS_ID_TOKEN_REQUEST_URL=f"http://127.0.0.1:{self.server.server_port}/token?api-version=2.0")
+        done = subprocess.run([sys.executable, str(self.folder / "oidc_token.py"), str(self.file), *flags],
+                              capture_output=True, text=True, env=env, timeout=60)
+        return done.returncode, done.stdout + done.stderr
+
+    def test_both_workflows_hold_the_same_script(self):
+        self.assertEqual(self.script, self.other)
+
+    def test_a_token_is_written_and_described_never_printed(self):
+        token = jwt(self.CLAIMS)
+        code, out = self.fetch(200, {"count": 1, "value": token}, "--claims")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.file.read_text(encoding="utf-8"), token + "\n")
+        self.assertIn("OIDC token issued 22:13:20, expires 22:18:20 UTC", out)
+        self.assertIn("sub: repo:owner@1/product-os@2:ref:refs/tags/v0.1.1", out)
+        for piece in token.split("."):
+            self.assertNotIn(piece, out)
+        if os.name != "nt":
+            self.assertEqual(self.file.stat().st_mode & 0o777, 0o600)
+        code, out = self.fetch(200, {"value": token})
+        self.assertIn("the same token as before", out)
+        self.assertNotIn("sub:", out)
+        code, out = self.fetch(200, {"value": jwt({**self.CLAIMS, "iat": 1_700_000_120})})
+        self.assertIn("a new token", out)
+
+    def test_a_bad_answer_keeps_the_last_token(self):
+        good = jwt(self.CLAIMS)
+        self.file.write_text(good + "\n", encoding="utf-8")
+        cases = {"no value": (200, {"count": 0}, "GitHub's response held no value"),
+                 "null": (200, {"value": None}, "GitHub's response held no value"),
+                 "the word null": (200, {"value": "null"}, "GitHub's response held no value"),
+                 "not a JWT": (200, {"value": "not-a-token"}, "GitHub's response is not a JWT"),
+                 "refused": (403, {"message": "planted"}, "the request failed (HTTP 403)"),
+                 "not JSON": (200, b"<html>", "the request failed (JSONDecodeError)")}
+        for name, (status, body, why) in cases.items():
+            with self.subTest(name):
+                code, out = self.fetch(status, body)
+                self.assertEqual(code, 1)
+                self.assertIn(f"No OIDC token: {why}", out)
+                self.assertEqual(self.file.read_text(encoding="utf-8"), good + "\n")
 
 
 class TheWorkflows(unittest.TestCase):
