@@ -263,6 +263,21 @@ def path_of(p):
     return os.path.normpath(p if os.path.isabs(p) else os.path.join(root(), p))
 
 
+def notes_or(p, resolve=None):
+    """(path to read, its backup copy or None): p while it exists; for a side-session notes file the desktop app
+    deleted with its folder at an archive, the backup copy when that exists (backup_cc_logs.resolve_notes), since
+    the record cites notes by their live path. None when p is no notes file or backup_cc_logs won't import."""
+    try:
+        if resolve is None:
+            if TOOLS not in sys.path:
+                sys.path.insert(0, TOOLS)
+            import backup_cc_logs
+            resolve = backup_cc_logs
+        return resolve.resolve_notes(p), resolve.notes_copy(p)
+    except Exception:  # noqa: BLE001 - no resolver: read the cited path itself, so a gone file still misses
+        return p, None
+
+
 def flat(s):
     return re.sub(r"\s+", " ", s or "").strip()
 
@@ -410,16 +425,18 @@ def cite_check(c, rec):
         never = never_source(p)
         if never:
             return "miss", f"never a source: {g['path']} is {never}"
+        read, copy = notes_or(p)
         try:
-            data = open(p, "rb").read()
+            data = open(read, "rb").read()
         except OSError:
-            return "miss", f"missing file: {g['path']}"
+            return "miss", f"missing file: {g['path']}" + (f" (and no backup copy at {copy})" if copy else "")
+        via = f"via backup: {read}" if read != p else ""      # counted apart by check(), so a pass from it shows
         if kind == "sha256":
             h = hashlib.sha256(data).hexdigest()
-            return ("ok", "") if h == g["hex"] else ("miss", f"changed hash: {g['path']} is {h[:12]}..., cited {g['hex'][:12]}...")
+            return ("ok", via) if h == g["hex"] else ("miss", f"changed hash: {g['path']} is {h[:12]}..., cited {g['hex'][:12]}...")
         if flat(g["anchor"]) not in flat(data.decode("utf-8", "replace")):
-            return "miss", f"moved anchor: \"{g['anchor'][:60]}\" is no longer in {g['path']}"
-        return "ok", ""
+            return "miss", f"moved anchor: \"{g['anchor'][:60]}\" is no longer in {g['path']}" + (f" ({via})" if via else "")
+        return "ok", via
     if kind == "commit":
         repo = path_of(g["repo"])
         if private_of(repo):
@@ -756,7 +773,7 @@ def check(kb=None, body=None, record=False, now=None, rules=None):
         return {"why": why}
     rec, last = Record(), checked()
     out = {"live": 0, "pass": 0, "misses": [], "faults": faults + rule_faults(bodies, rules, kb=kb), "did_not_run": [],
-           "writer": 0, "bodies": len(bodies), "pages": len(pages), "per_body": {}, "why": None}
+           "via_backup": [], "writer": 0, "bodies": len(bodies), "pages": len(pages), "per_body": {}, "why": None}
     live, keys = {}, {}
     for slug, es in pages.items():
         for e in es:
@@ -792,6 +809,8 @@ def check(kb=None, body=None, record=False, now=None, rules=None):
             bad = [w for s, w in res if s == "miss"]
             dnr = [w for s, w in res if s == "did not run"]
             where = f"{e['id']} {e['subject']}"
+            out["via_backup"] += [(where, w[len("via backup: "):]) for s, w in res
+                                  if s == "ok" and w.startswith("via backup: ")]
             if bad:
                 out["misses"] += [(where, w) for w in bad]
                 pb["miss"] += 1
@@ -850,6 +869,8 @@ def show_check(r, since=None):
     lines += [f"MISS  {w}: {why}{mark(f'{w} | ' + why.split(':')[0])}" for w, why in r["misses"]]
     lines += [f"FAULT  {f}{mark('fault | ' + f)}" for f in r["faults"]]
     lines += [f"DID NOT RUN  {w}: {why}" for w, why in r["did_not_run"]]
+    lines += [f"VIA BACKUP  {w}: a cited notes file the app deleted at an archive, read from {short}"
+              for w, short in ((w, c.replace(os.path.expanduser("~"), "~")) for w, c in r.get("via_backup") or [])]
     if r["misses"]:
         lines.append("A miss: re-read the source. If the answer holds, re-cite it with kb.py add --replaces <id> and "
                      "the same subject; if not, write the new answer the same way.")
@@ -1262,6 +1283,26 @@ def selftest():
                  "moved anchor", "moved anchor"]
              and all("never a source" in res[k][1] for k in ("log", "copied log", "backup log", "ledger file", "private"))
              and "no ledger row" in res["ledger id"][1])
+        if TOOLS not in sys.path:
+            sys.path.insert(0, TOOLS)
+        import backup_cc_logs as bcl
+        was = bcl.notes_root, bcl.dest_root
+        nroot, droot = os.path.join(root_, "side-session-notes"), os.path.join(root_, "cc-logs")
+        bcl.notes_root, bcl.dest_root = (lambda: nroot), (lambda: droot)
+        try:
+            fam = os.path.join(nroot, "local_0a0a0a0a-1111-2222-3333-444444444444")
+            copy = os.path.join(droot, bcl.NOTES_OUT, os.path.basename(fam), "report.md")
+            os.makedirs(os.path.dirname(copy))
+            open(copy, "w", encoding="utf-8").write("the board\nships first\n")
+            nres = [cite_check(f'file `{fam}/{name}` "{anchor}"', rec)
+                    for name, anchor in (("report.md", "the board ships first"), ("never.md", "x"),
+                                         ("report.md", "the hub ships first"))]
+        finally:
+            bcl.notes_root, bcl.dest_root = was
+        case("a cited notes file the app's archive deleted reads its backup copy, marked as read there; one never "
+             "copied misses, naming where its copy would be; the copy's anchor is still checked",
+             nres[0] == ("ok", "via backup: " + copy) and nres[1][0] == "miss" and "no backup copy at" in nres[1][1]
+             and nres[2][1].startswith("moved anchor") and "via backup" in nres[2][1])
         json.dump({"pulled": time.time(), "items": {"4242": {"rev": 8}}}, open(ADO_CACHE, "w"))
         case("an ADO cache behind the citation doesn't run; it isn't a miss", cite_check(good["ado"], Record())[0] == "did not run")
         ado_plant()
