@@ -149,7 +149,7 @@ jobs:
           claude plugin validate .
 
       # GitHub's OIDC token, with Anthropic's audience, in the file Claude Code reads it from.
-      # oidc_token.py, written here and run again by the refresh loop below, replaces the file
+      # oidc_token.py, written here and run again before each case, replaces the file
       # only with a token it checked, and prints when the token was issued and expires and
       # whether it changed. --claims also prints sub, ref and event_name, the claims the
       # federation rule matches, so a rule that doesn't match the subject format shows here
@@ -195,31 +195,27 @@ jobs:
           EOF
           python3 "$RUNNER_TEMP/oidc_token.py" "$RUNNER_TEMP/gha-jwt" --claims
 
+      # evals/live.py runs each case as its own `claude plugin eval`, after oidc_token.py
+      # writes a new GitHub token, with its own empty federation cache folder. Every
+      # Claude Code process in a run shares one exchanged token, and a GitHub token can
+      # be exchanged once. A run that outlived that first exchange, about 10 minutes,
+      # exchanged again with a token another process also presented, which failed as
+      # jti_reused: v0.1.0's macOS evals lost every run from 10 minutes in that way.
+      # --cap is the most the runner may spend; each case gets what is left.
       # --scaffold runs each case's scaffold.sh, which writes fixture files.
       # The builder cases' scaffolds also accept their QA command in the
       # product-os-checks.json of the config folder each eval session reads,
       # as /product-os:setup-kit has the person do (evals/_fixtures/workspace.sh).
       # --trust-plugin answers the first-run trust prompt. The cost ceiling is
       # a list-price estimate checked before each run starts.
-      # A GitHub token lasts about 5 minutes and is good for one exchange, so a loop
-      # writes a fresh one every 2 minutes for as long as the evals run. A failed
-      # refresh keeps the last token and warns.
       - name: Run the live evals
         run: |
-          ( while sleep 120; do python3 "$RUNNER_TEMP/oidc_token.py" "$ANTHROPIC_IDENTITY_TOKEN_FILE" || echo "::warning::The OIDC token refresh failed; trying again in 2 minutes."; done ) &
-          refresher=$!
-          trap 'kill "$refresher" 2>/dev/null' EXIT
-          mkdir -p evals/results
-          claude plugin eval . ${{ matrix.filter }} \
-            --trust-plugin \
-            --scaffold \
-            --no-publish \
-            --max-cost-usd ${{ matrix.cap }} \
-            --threshold 0.8 \
-            --judge-model "$JUDGE_MODEL" \
-            --concurrency 3 \
+          python3 evals/live.py ${{ matrix.filter }} \
             --json "evals/results/live-${{ runner.os }}.json" \
-            --allow-tools ${{ matrix.tools }}
+            --cap ${{ matrix.cap }} \
+            --judge-model "$JUDGE_MODEL" \
+            --tools ${{ matrix.tools }} \
+            --fetch python3 "$RUNNER_TEMP/oidc_token.py" "$ANTHROPIC_IDENTITY_TOKEN_FILE"
 
       - name: Summarize
         if: always()
@@ -231,11 +227,13 @@ jobs:
             echo "No result file: the eval step did not write $result." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Upload the JSON result
+      - name: Upload the JSON results
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: live-evals-${{ runner.os }}
-          path: evals/results/live-${{ runner.os }}.json
+          path: |
+            evals/results/live-${{ runner.os }}.json
+            evals/results/live-${{ runner.os }}/
           if-no-files-found: warn
           retention-days: 30

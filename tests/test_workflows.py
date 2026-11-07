@@ -254,6 +254,13 @@ def tag_cost(live, release):
     capped = re.findall(r"--max-cost-usd\s+\$\{\{\s*matrix\.cap\s*\}\}", live)
     if len(capped) != len(evals) or len(re.findall(r"--max-cost-usd", live)) != len(evals):
         found.append("live.yml: each `claude plugin eval` must take --max-cost-usd ${{ matrix.cap }}")
+    # evals/live.py runs the cases one by one and holds them all to its --cap.
+    runners = re.findall(r"evals/live\.py\b", live)
+    if len(re.findall(r"--cap\s+\$\{\{\s*matrix\.cap\s*\}\}", live)) != len(runners) \
+            or len(re.findall(r"--cap\b", live)) != len(runners):
+        found.append("live.yml: each `evals/live.py` must take --cap ${{ matrix.cap }}")
+    if not evals and not runners:
+        found.append("live.yml: no eval run found")
     budgets = [float(b) for b in re.findall(r"--max-budget-usd\s+(\d+(?:\.\d+)?)", release)]
     if len(budgets) != len(re.findall(r"\bclaude -p\b", release)):
         found.append("release.yml: each `claude -p` must take --max-budget-usd")
@@ -279,9 +286,12 @@ class TheCeiling(unittest.TestCase):
         raised = re.sub(r'cap: "6\.75"', 'cap: "7.75"', self.live)
         self.assertNotEqual(raised, self.live)
         self.assertGreater(tag_cost(raised, self.release)[0], self.ceiling)
-        literal = self.live.replace("--max-cost-usd ${{ matrix.cap }}", "--max-cost-usd 3")
+        literal = self.live.replace("--cap ${{ matrix.cap }}", "--cap 3")
         self.assertNotEqual(literal, self.live)
         self.assertTrue(tag_cost(literal, self.release)[1])
+        bare = self.live.replace("python3 evals/live.py", "claude plugin eval .")
+        self.assertNotEqual(bare, self.live)
+        self.assertTrue(tag_cost(bare, self.release)[1])
         uncapped = re.sub(r'\n\s*cap: "0\.50"', "", self.live)
         self.assertNotEqual(uncapped, self.live)
         self.assertTrue(tag_cost(uncapped, self.release)[1])

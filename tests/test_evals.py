@@ -7,7 +7,9 @@ tests plant that layout and read the result the way the session's hooks do.
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -136,6 +138,81 @@ class Summarize(unittest.TestCase):
         self.assertEqual(self.row(text), "| skill-go-extra-route | 0.67 | 0.00 | +0.67 | 1 of 2 | 0 of 1 |")
         self.assertIn("| names-route | llm | 2 | 1 of 2 | 0 of 1 |", text)
         self.assertIn("- with plugin, run 1: timed out after 420s", text)
+
+
+FAKE_CLAUDE = r'''
+import json, os, stat, sys
+args = sys.argv[1:]
+cache = os.environ["CLAUDE_CODE_FEDERATION_CACHE_DIR"]
+record = {"case": args[args.index("--case") + 1], "cap": args[args.index("--max-cost-usd") + 1],
+          "token": open(os.environ["ANTHROPIC_IDENTITY_TOKEN_FILE"]).read(), "cache": cache,
+          "cache_empty": os.listdir(cache) == [], "cache_mode": stat.S_IMODE(os.stat(cache).st_mode)}
+with open(os.environ["FAKE_LOG"], "a") as log:
+    log.write(json.dumps(record) + "\n")
+cost = float(os.environ["FAKE_COST"])
+doc = {"claudeVersion": "9.9.9", "costUsd": cost, "cases": [{"name": record["case"], "arms": {}}]}
+open(args[args.index("--json") + 1], "w").write(json.dumps(doc))
+'''
+
+FAKE_FETCH = r'''
+import os, sys
+path, count = sys.argv[1], sys.argv[2]
+n = int(open(count).read()) + 1 if os.path.exists(count) else 1
+open(count, "w").write(str(n))
+open(path, "w").write(f"token-{n}")
+'''
+
+
+class LiveRunner(unittest.TestCase):
+    """evals/live.py runs each case as its own `claude plugin eval`, after a new GitHub token and
+    with an empty federation cache, and holds them all to one cap."""
+
+    def setUp(self):
+        self.folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        (self.folder / "claude.py").write_text(FAKE_CLAUDE, encoding="utf-8")
+        (self.folder / "fetch.py").write_text(FAKE_FETCH, encoding="utf-8")
+        self.log = self.folder / "calls.jsonl"
+
+    def live(self, cap, cost, *tags):
+        token = self.folder / "gha-jwt"
+        env = dict(os.environ, FAKE_LOG=str(self.log), FAKE_COST=str(cost), ANTHROPIC_IDENTITY_TOKEN_FILE=str(token))
+        out = self.folder / "live.json"
+        done = subprocess.run(
+            [sys.executable, str(ROOT / "evals" / "live.py"), "--json", str(out), "--cap", str(cap),
+             "--tools", "Edit", "Write", *(["--tag", *tags] if tags else []),
+             "--fetch", sys.executable, str(self.folder / "fetch.py"), str(token), str(self.folder / "count"),
+             "--claude", sys.executable, str(self.folder / "claude.py")],
+            capture_output=True, text=True, env=env, timeout=120)
+        calls = [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
+        return done.returncode, json.loads(out.read_text(encoding="utf-8")), calls
+
+    def test_each_case_signs_in_afresh(self):
+        code, doc, calls = self.live(1.0, 0.05, "no-shell")
+        self.assertEqual([c["case"] for c in calls], ["reviewer-edit", "reviewer-subagent-edit"])
+        self.assertEqual([c["token"] for c in calls], ["token-1", "token-2"])
+        self.assertEqual(len({c["cache"] for c in calls}), 2)
+        self.assertTrue(all(c["cache_empty"] for c in calls))
+        if os.name != "nt":
+            self.assertEqual({c["cache_mode"] for c in calls}, {0o700})
+        self.assertFalse(any(Path(c["cache"]).exists() for c in calls))
+        self.assertEqual(code, 0)
+        self.assertEqual([c["name"] for c in doc["cases"]], ["reviewer-edit", "reviewer-subagent-edit"])
+        self.assertAlmostEqual(doc["costUsd"], 0.10)
+        self.assertFalse(doc["partial"])
+
+    def test_the_cap_holds_across_cases(self):
+        code, doc, calls = self.live(0.10, 0.06, "builder")
+        self.assertEqual([(c["case"], c["cap"]) for c in calls], [("builder-piped-qa", "0.10"), ("builder-qa-fails", "0.04")])
+        self.assertEqual(code, 1)
+        self.assertTrue(doc["partial"])
+        self.assertEqual(doc["partialReason"], "cost_ceiling: builder-skips-qa, builder-subagent-skips-qa")
+
+    def test_no_tag_runs_every_case(self):
+        names = sorted(p.name for p in (ROOT / "evals").iterdir() if (p / "case.yaml").is_file())
+        code, doc, calls = self.live(100, 0.01)
+        self.assertEqual([c["case"] for c in calls], names)
+        self.assertEqual(len(names), 27)
 
 
 if __name__ == "__main__":
