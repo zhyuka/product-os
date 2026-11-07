@@ -3,7 +3,10 @@ name: live evals
 # Runs the eval suite in evals/ through `claude plugin eval`: real Claude Code
 # sessions with the plugin loaded, and the same cases again without it as the
 # baseline. Every run is a paid model call, so the workflow runs only when a
-# release tag vX.Y.Z is pushed, on three runners, each capped at $3.
+# release tag vX.Y.Z is pushed. Ubuntu runs every case, capped at $6.75. macOS
+# runs the hook cases, tagged builder or reviewer, capped at $1.75. Windows runs
+# the no-shell cases, capped at $0.50. With release.yml's $1, a tag costs at
+# most $10.
 #
 # It signs in through Anthropic workload identity federation: the job asks GitHub
 # for an OIDC token and Claude Code exchanges it, so no API key is stored. The
@@ -67,20 +70,29 @@ jobs:
       ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
     strategy:
       fail-fast: false
+      # cap is each runner's --max-cost-usd, a list-price estimate checked before
+      # each run starts. v0.1.0 spent $3.17 on Ubuntu for 82 of the suite's 146
+      # runs, about $0.04 a run, so the whole suite comes to about $5.70. The 64
+      # runs it never reached are all skill runs, which may cost more, hence $6.75.
       matrix:
         include:
           - os: ubuntu-latest
             tools: Bash Edit Write
             filter: ""
+            cap: "6.75"
+          # The hooks and the Bash sandbox differ by OS, so macOS runs the 9 hook
+          # cases, 42 runs, about $1.60.
           - os: macos-latest
             tools: Bash Edit Write
-            filter: ""
+            filter: --tag builder reviewer
+            cap: "1.75"
           # Native Windows has no Bash sandbox, and `claude plugin eval` refuses
           # every run that grants a shell there. Windows runs only the cases
-          # tagged no-shell, with Edit and Write granted.
+          # tagged no-shell, with Edit and Write granted: 2 cases, 8 runs.
           - os: windows-latest
             tools: Edit Write
             filter: --tag no-shell
+            cap: "0.50"
     defaults:
       run:
         shell: bash
@@ -184,7 +196,7 @@ jobs:
             --trust-plugin \
             --scaffold \
             --no-publish \
-            --max-cost-usd 3 \
+            --max-cost-usd ${{ matrix.cap }} \
             --threshold 0.8 \
             --judge-model "$JUDGE_MODEL" \
             --concurrency 3 \

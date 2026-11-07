@@ -228,6 +228,59 @@ class TheRules(unittest.TestCase):
                 self.assertTrue(problems(name, text), f"{name} passed")
 
 
+CEILING = re.compile(r"So a release tag costs at most \$(\d+(?:\.\d+)?)\.")
+
+
+def tag_cost(live, release):
+    """(the most a release tag can spend, problems): the sum of live.yml's matrix caps and
+    release.yml's budgets. Each eval run in live.yml must take its runner's cap, and each runner
+    must have one, so the sum is the whole of live.yml's spend."""
+    found = []
+    live, release = ("\n".join(_strip_comment(line) for line in text.splitlines()) for text in (live, release))
+    caps = [float(c) for c in re.findall(r'^\s*cap:\s*"?(\d+(?:\.\d+)?)"?\s*$', live, re.M)]
+    runners = re.findall(r"^\s*- os:", live, re.M)
+    if len(caps) != len(runners):
+        found.append(f"live.yml: {len(runners)} runners and {len(caps)} caps")
+    evals = re.findall(r"claude plugin eval\b", live)
+    capped = re.findall(r"--max-cost-usd\s+\$\{\{\s*matrix\.cap\s*\}\}", live)
+    if len(capped) != len(evals) or len(re.findall(r"--max-cost-usd", live)) != len(evals):
+        found.append("live.yml: each `claude plugin eval` must take --max-cost-usd ${{ matrix.cap }}")
+    budgets = [float(b) for b in re.findall(r"--max-budget-usd\s+(\d+(?:\.\d+)?)", release)]
+    if len(budgets) != len(re.findall(r"\bclaude -p\b", release)):
+        found.append("release.yml: each `claude -p` must take --max-budget-usd")
+    return sum(caps) + sum(budgets), found
+
+
+class TheCeiling(unittest.TestCase):
+    """docs/checks.md says what a release tag can cost at most. The caps in the paid workflows
+    have to add up to no more than that."""
+
+    def setUp(self):
+        flows = ROOT / ".github" / "workflows"
+        self.live = (flows / "live.yml").read_text(encoding="utf-8")
+        self.release = (flows / "release.yml").read_text(encoding="utf-8")
+        self.ceiling = float(CEILING.search((ROOT / "docs" / "checks.md").read_text(encoding="utf-8")).group(1))
+
+    def test_the_caps_fit_under_the_ceiling(self):
+        total, found = tag_cost(self.live, self.release)
+        self.assertEqual(found, [])
+        self.assertLessEqual(total, self.ceiling)
+
+    def test_planted_overruns_are_caught(self):
+        raised = re.sub(r'cap: "6\.75"', 'cap: "7.75"', self.live)
+        self.assertNotEqual(raised, self.live)
+        self.assertGreater(tag_cost(raised, self.release)[0], self.ceiling)
+        literal = self.live.replace("--max-cost-usd ${{ matrix.cap }}", "--max-cost-usd 3")
+        self.assertNotEqual(literal, self.live)
+        self.assertTrue(tag_cost(literal, self.release)[1])
+        uncapped = re.sub(r'\n\s*cap: "0\.50"', "", self.live)
+        self.assertNotEqual(uncapped, self.live)
+        self.assertTrue(tag_cost(uncapped, self.release)[1])
+        unbudgeted = self.release.replace("--max-budget-usd 1.00", "")
+        self.assertNotEqual(unbudgeted, self.release)
+        self.assertTrue(tag_cost(self.live, unbudgeted)[1])
+
+
 class TheWorkflows(unittest.TestCase):
     def test_the_workflows_are_there(self):
         names = {p.name for p in WORKFLOWS}
