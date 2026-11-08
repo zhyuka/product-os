@@ -87,8 +87,11 @@ OS keychain (`figma_auth.py --source` says which), and file keys from their argu
 - Once the user approves the new text, edit their comment yourself with `figma_attach.py edit`;
   never hand them the text to paste.
 - Write every draft, replacement text for the user's own comment included, into the drafts file
-  `figma.drafts` names (`product-os kit_config` prints it); with none
-  set, ask the user where drafts go. A draft shown only in your reply is lost when the session ends.
+  `figma.drafts` names, which `"${CLAUDE_PLUGIN_ROOT}/bin/product-os" kit_config` prints when run in
+  the session's working folder with no `cd` first. If the path before `/bin/product-os` still starts
+  with `$`, it wasn't filled in: put the folder above `skills/` in this skill's path in its place,
+  and run plain `product-os` only if no launcher is there. With no drafts file set, ask the user
+  where drafts go. A draft shown only in your reply is lost when the session ends.
   Post them only when the user says so, in one batch, passing the file to
   `figma_post.py --drafts <path>` so a posted draft leaves it and a node in its "Cut: do not re-raise"
   table is refused. A question only the user can decide goes to the user, not into the file.

@@ -51,9 +51,11 @@ with two concepts: the page's name, and `redesign|new design`. Adding the page's
 search narrows it and drops the items that answer the question without naming the page. Read the
 page's open design items in the tracker: while one is active this sprint, the current build gets no
 call, so put the issue on that item or its design frame. For a design file, run
-`product-os figma_comments nodes <file key> <node id>` on every node the
+`"${CLAUDE_PLUGIN_ROOT}/bin/product-os" figma_comments nodes <file key> <node id>` on every node the
 question names: an open thread in which the person asks design to change the frame means the call is
-made.
+made. Run it in the session's working folder as it is, with no `cd` first. If the path before
+`/bin/product-os` still starts with `$`, it wasn't filled in: put the folder above `skills/` in this
+skill's path in its place, and run plain `product-os` only if no launcher is there.
 
 **2 — Search where it would go.**
 - Tracker: `ado.py --rest search <terms> --state all`, and the `recall` hits. If an open item already
@@ -92,7 +94,7 @@ scroll captures blank. A question that isn't visual gets no picture.
 - Never close a question here; that is `triage`.
 - Quote both sides of a conflict with file:line. "Two docs disagree" is not a question.
 - If the answer is knowable by running a command, run the command instead. Don't park a measurable
-  fact as a question; check what the tools `product-os --list` names measure first (each answers
+  fact as a question; check what the tools `"${CLAUDE_PLUGIN_ROOT}/bin/product-os" --list` names measure first (each answers
   `--help`).
 - One question per item or entry. Several questions are several, each with its own id and its own
   yes.

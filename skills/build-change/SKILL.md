@@ -25,7 +25,11 @@ add a step, settle a finding or approve the build.
 
 ## Settings
 
-`product-os kit_config` prints the project's settings merged with the person's. This skill reads
+`"${CLAUDE_PLUGIN_ROOT}/bin/product-os" kit_config` prints the project's settings merged with the
+person's. Run it in the session's working folder as it is, with no `cd` first. If the path before
+`/bin/product-os` still starts with `$`, it wasn't filled in: put the folder above `skills/` in this
+skill's path in its place, and run plain `product-os` only if no launcher is there.
+This skill reads
 the `app.*` keys in [references/settings.md](references/settings.md): the widths, the app folder, the commands and the
 decisions file. Run every command from the app folder. When a command setting shows NOT ACCEPTED,
 skip that part, say it didn't run, and name the accept line for the person to run
@@ -59,7 +63,7 @@ server's tools, searching first.
 In every case:
 
 - Read the change's `plan.md` when there is one. When the project keeps a design baseline, run
-  `product-os design drift` first; if the design moved since the plan was written, re-plan before
+  `"${CLAUDE_PLUGIN_ROOT}/bin/product-os" design drift` first; if the design moved since the plan was written, re-plan before
   building.
 - When `app.plan_stale_cmd` is set, run it for the route before you read the route's plan. Exit 1
   means the plan cites a file that's gone or the design changed since it was read: re-plan with

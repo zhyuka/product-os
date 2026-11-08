@@ -129,7 +129,10 @@ meetings either. No call quotes, no "the meeting decided", no meeting-date stamp
 decision as the team's shared understanding. Never mention a personal meeting-capture tool, its
 transcripts or notes drawn from them; ask the user about them in chat. Before a write to a tracker
 or a design tool, save the text as a `.md` draft and run
-`product-os doclint <draft.md>` on it: no hook covers those writes.
+`"${CLAUDE_PLUGIN_ROOT}/bin/product-os" doclint <draft.md>` on it, in the session's working folder
+with no `cd` first: no hook covers those writes. If the path before `/bin/product-os` still starts
+with `$`, it wasn't filled in: put the folder above `skills/` in this skill's path in its place, and
+run plain `product-os` only if no launcher is there.
 Run it on a doc a teammate reads, too.
 
 **Lead with the point.** Each paragraph opens with its claim, and each header states that claim on

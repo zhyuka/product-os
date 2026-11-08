@@ -33,7 +33,8 @@ import argparse, json, os, re, shutil, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 KEY = "CLAUDE_CODE_PLUGIN_DIRS"
 COMMANDS = {"check", "prove", "accept", "gates", "design", "demo"}
-CALL = re.compile(r"(?<![\w-])product-os ([a-z_][a-z0-9_]*)(?:\.py)?(?![\w-])")
+# Bare `product-os x`, or the launcher by its path, as in `"${CLAUDE_PLUGIN_ROOT}/bin/product-os" x`.
+CALL = re.compile(r"(?<![\w-])product-os\"? ([a-z_][a-z0-9_]*)(?:\.py)?(?![\w-])")
 SKILL_PATH = re.compile(r"\$\{CLAUDE_SKILL_DIR\}/([A-Za-z0-9_./-]*[A-Za-z0-9_])")
 LINK = re.compile(r"\]\((?!https?:|#|mailto:)([^)\s]*[./][^)\s]*)\)")  # a path, not a placeholder like (url)
 SKIP = {"__pycache__", ".DS_Store"}

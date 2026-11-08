@@ -18,8 +18,11 @@ growth. Zero upgrades is a good result when nothing clears the bar, and dropping
 something counts as an upgrade.
 
 Every machine-specific value (paths, commands, who approves) comes from the `retro` object in the
-settings, which `product-os kit_config` prints merged from the user's and
-the project's `.claude/product-os.json`; a caller may name another file. `references/config.md` lists
+settings, which `"${CLAUDE_PLUGIN_ROOT}/bin/product-os" kit_config` prints merged from the user's and
+the project's `.claude/product-os.json`; a caller may name another file. Run it in the session's
+working folder as it is, with no `cd` first. If the path before `/bin/product-os` still starts with
+`$`, it wasn't filled in: put the folder above `skills/` in this skill's path in its place, and run
+plain `product-os` only if no launcher is there. `references/config.md` lists
 the keys. When a step needs a key the settings lack, say so in the report and skip that part rather
 than guess a path. A command the listing marks NOT ACCEPTED came from the project's file and hasn't
 been accepted on this machine. Skip its part, and name it and its accept line in the report: the

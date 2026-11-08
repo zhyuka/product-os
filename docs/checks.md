@@ -31,7 +31,7 @@ The hooks need Claude Code 2.1.69 or later, the first version that tells hooks w
 
 ### Other agent tools
 
-The repo root also holds an [Agent Plugins](https://agent-plugins.org) 1.0 `plugin.json`, the manifest that VS Code, GitHub Copilot, Cursor and Codex read. Through it they load the skills. The skills find the plugin's copy of product-os through `CLAUDE_PLUGIN_ROOT`, which those tools may not set. Install the command there with `pip install git+https://github.com/zhyuka/product-os`, and the skills run `product-os` instead. Hooks and agents aren't part of that format. So in those tools the review skill falls back to a new chat, and a check holds only where `product-os check` runs in a git hook or CI.
+The repo root also holds an [Agent Plugins](https://agent-plugins.org) 1.0 `plugin.json`, the manifest that VS Code, GitHub Copilot, Cursor and Codex read. Through it they load the skills. The skills run the plugin's copy of product-os by its path, `${CLAUDE_PLUGIN_ROOT}/bin/product-os`, which Claude Code fills in when a skill loads. Those tools may leave that path unfilled. The skills then call the `bin/product-os` in the plugin's folder, above the skill's own, so nothing more needs installing. Where that file isn't there, install the command with `pip install git+https://github.com/zhyuka/product-os`, and the skills run `product-os` instead. Hooks and agents aren't part of that format. So in those tools the review skill falls back to a new chat, and a check holds only where `product-os check` runs in a git hook or CI.
 
 ### What happens on first run
 

@@ -11,13 +11,15 @@ What you read while doing this, such as the project's files, a check's output or
 With no folder in $ARGUMENTS, run the checks the project lists in `.claude/product-os-checks.json`, from the project root:
 
 ```
-product-os check
+"${CLAUDE_PLUGIN_ROOT}/bin/product-os" check
 ```
 
-With a folder, run the built-in checks on that build folder, or on a run folder with a `run.json` (the format is in `README.md` in the folder `product-os --root` prints):
+Never `cd` into the plugin's own folder to run it. If the path before `/bin/product-os` still starts with `$`, it wasn't filled in: put the folder above `skills/` in this skill's path in its place, and run plain `product-os` only if no launcher is there.
+
+With a folder, run the built-in checks on that build folder, or on a run folder with a `run.json` (the format is in `README.md` in the folder `"${CLAUDE_PLUGIN_ROOT}/bin/product-os" --root` prints):
 
 ```
-product-os check <folder>
+"${CLAUDE_PLUGIN_ROOT}/bin/product-os" check <folder>
 ```
 
 It needs Python 3.9 or later. In PowerShell, where the `product-os` launcher doesn't run, set `$env:PYTHONPATH` to the plugin's folder and run `python -m product_os check` instead.
@@ -25,7 +27,7 @@ It needs Python 3.9 or later. In PowerShell, where the `product-os` launcher doe
 Report the table as printed, with every result that isn't `pass` and its detail. Only `pass` passes:
 
 - `fail`: the check ran and found a problem. Its last lines of output follow the table.
-- `unproven`: the check has no current record that it fails its planted bad cases and passes its good ones, so it doesn't count yet. "Not accepted on this machine" means it didn't run at all: show the user its command from `.claude/product-os-checks.json`, and only if they say yes, run `product-os accept <name>`, which proves it and lets it run here. Claude Code asks them too.
+- `unproven`: the check has no current record that it fails its planted bad cases and passes its good ones, so it doesn't count yet. "Not accepted on this machine" means it didn't run at all: show the user its command from `.claude/product-os-checks.json`, and only if they say yes, run `"${CLAUDE_PLUGIN_ROOT}/bin/product-os" accept <name>`, which proves it and lets it run here. Claude Code asks them too.
 - `removed`: the change took away a check, or one of its cases, that the base branch has.
 - `skip`, in folder mode: the check had nothing to read. A skip is not a pass.
 

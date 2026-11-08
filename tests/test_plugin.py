@@ -170,7 +170,8 @@ class PluginFilesTest(unittest.TestCase):
         self.assertIn("\n  - check-page\n", page_qa)
         check_page = (ROOT / "skills" / "check-page" / "SKILL.md").read_text(encoding="utf-8")
         record, start, compare = (check_page.index(s) for s in (
-            "product-os qa_snapshot record", "Start the `product-os:page-qa` agent", "product-os qa_snapshot compare"))
+            '/bin/product-os" qa_snapshot record', "Start the `product-os:page-qa` agent",
+            '/bin/product-os" qa_snapshot compare'))
         self.assertLess(record, start)
         self.assertLess(start, compare)
 

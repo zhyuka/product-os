@@ -167,7 +167,9 @@ class DoctorTest(unittest.TestCase):
                 "Run `product-os no_such_tool`, then `product-os kit_config` and `product-os check`.\n"
                 "Run `python3 \"${CLAUDE_SKILL_DIR}/scripts/gone.py\"` and `${CLAUDE_SKILL_DIR}/scripts/here.py`.\n"
                 "See [the steps](references/missing.md) and [a source](url).\n"
-                "When `product-os` isn't on PATH, `product-os check` refuses. Prose: product-os checks.\n")
+                "When `product-os` isn't on PATH, `product-os check` refuses. Prose: product-os checks.\n"
+                "Run `\"${CLAUDE_PLUGIN_ROOT}/bin/product-os\" gone_tool`, then "
+                "`\"${CLAUDE_PLUGIN_ROOT}/bin/product-os\" kit_config` and `\"${CLAUDE_PLUGIN_ROOT}/bin/product-os\" --root`.\n")
             Path(tmp, "tools").mkdir()
             Path(tmp, "tools", "kit_config.py").write_text("")
             old = doctor.ROOT
@@ -176,10 +178,11 @@ class DoctorTest(unittest.TestCase):
                 misses = doctor.skill_misses()
             finally:
                 doctor.ROOT = old
-        self.assertEqual(len(misses), 3, misses)
+        self.assertEqual(len(misses), 4, misses)
         self.assertIn("SKILL.md:1: calls product-os no_such_tool", misses[0])
         self.assertIn("names scripts/gone.py", misses[1])
         self.assertIn("links references/missing.md", misses[2])
+        self.assertIn("SKILL.md:5: calls product-os gone_tool", misses[3])
 
 
 if __name__ == "__main__":

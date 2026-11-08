@@ -10,8 +10,12 @@ grep of one folder is a partial answer. `--help` is the spec for every flag and 
 this copy has.
 
 ```
-product-os recall "<concept>" ["<concept>" ...]
+"${CLAUDE_PLUGIN_ROOT}/bin/product-os" recall "<concept>" ["<concept>" ...]
 ```
+
+Run it in the session's working folder as it is, with no `cd` first. If the path before
+`/bin/product-os` still starts with `$`, it wasn't filled in: put the folder above `skills/` in this
+skill's path in its place, and run plain `product-os` only if no launcher is there.
 
 Sources that read a remote service (design comments, a tracker) run only when configured in
 `product-os.json`, and need their token in the environment (`FIGMA_TOKEN`, `ADO_PAT`); without it

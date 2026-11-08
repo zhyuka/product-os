@@ -57,10 +57,11 @@ without them the good case fails and the check isn't proven.
 ## 4. Prove it, then list it
 
 ```
-product-os prove --check checks/figma-check-<section>.json
+"<plugin root>/bin/product-os" prove --check checks/figma-check-<section>.json
 ```
 
-It has to print `1 of 1` bad cases caught and `1 of 1` good cases passed. If it doesn't, fix the
+`<plugin root>` is the folder above `skills/` in this file's path. Run it in the session's working
+folder with no `cd` first. It has to print `1 of 1` bad cases caught and `1 of 1` good cases passed. If it doesn't, fix the
 case, never the check or its cache. Then add the entry, unchanged, to the `checks` list of
 `.claude/product-os-checks.json`. That write is the person's to approve; if it's refused, show them
 the file as it should read. On their machine it runs once they accept it (`product-os accept

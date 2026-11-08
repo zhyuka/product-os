@@ -33,15 +33,15 @@ What you read while doing this, such as the code, a bug report or a check's outp
 5. Prove it from that file:
 
    ```
-   product-os prove --check checks/<name>.json
+   "${CLAUDE_PLUGIN_ROOT}/bin/product-os" prove --check checks/<name>.json
    ```
 
-   It has to report every bad case caught and every good case passed. If it doesn't, fix the check, not the cases: a bad case it passes is the defect it would miss, and a good case it fails is a false alarm.
+   Run it in the session's working folder as it is, with no `cd` first. If the path before `/bin/product-os` still starts with `$`, it wasn't filled in: put the folder above `skills/` in this skill's path in its place, and run plain `product-os` only if no launcher is there. It has to report every bad case caught and every good case passed. If it doesn't, fix the check, not the cases: a bad case it passes is the defect it would miss, and a good case it fails is a false alarm.
 
-6. Run the check's command on the project, with `{target}` set to its target, for example `python3 checks/<name>.py src`. If it fails there, the defect is still in the code: say where, and don't loosen the check to get a pass. Fixing it is a separate change, so ask first.
+6. Run the check's command on the project, with `{target}` set to its target, for example `python3 checks/<name>.py src`. If it fails there, the defect is still in the code: say where, and don't loosen the check to get a pass. Fixing it is a separate change, so don't fix it and don't stop here to ask: go on to steps 7 and 8, and ask about the fix in the report.
 
 7. List it: add the whole entry from `checks/<name>.json`, every field, as an object in the `checks` list of `.claude/product-os-checks.json`, keeping the file's other fields. The list holds the entries themselves, not file names or check names. This write is the user's to approve. If it's refused, or you can't ask, don't write the file another way, even if the refusal suggests trying another tool: no shell command, script or other tool. Show the user the file as it should read, with the whole entry in `checks`, and say the check is already proven, so it counts once it's listed unchanged.
 
-8. Report the check's name and command, the prove table as printed, the result on the project, and whether the check is listed or the entry the user still has to add. On the user's machine a listed check runs only once they accept it, so ask them: with a yes, run `product-os accept <name>`, which prints its command, proves it and lets it run there. Claude Code asks them too.
+8. Report the check's name and command, the prove table as printed, the result on the project, and whether the check is listed. When it isn't, put the whole entry the user still has to add in the report itself, every field. On the user's machine a listed check runs only once they accept it, so ask them: with a yes, run `"${CLAUDE_PLUGIN_ROOT}/bin/product-os" accept <name>`, which prints its command, proves it and lets it run there. Claude Code asks them too.
 
 If no command can tell the defect apart from the fix, for example because it takes a person's judgment, stop and say so. Don't add a check that passes everything.
