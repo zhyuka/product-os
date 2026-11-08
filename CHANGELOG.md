@@ -2,12 +2,13 @@
 
 Each version here matches `version` in `.claude-plugin/plugin.json`, the marketplace entry in `.claude-plugin/marketplace.json`, and `pyproject.toml`. Claude Code installs an update only when that number changes.
 
-## Unreleased
+## 0.1.4
 
 - The Linux live evals use the default temp folder again. With `TMPDIR` at `/ev`, Bash in the v0.1.3 Linux evals ran no command at all, in either arm. Each call ended with `.bashrc: Permission denied` and a seccomp error about nested user namespaces. With the default, Bash runs and only its writes fail, as in v0.1.2.
 - macOS runs every live eval case now, capped at $8.25, and Ubuntu runs only a new probe case, `sandbox-write`, capped at $0.25. The total per tag stays at $10. On Linux, `claude plugin eval` denies sandboxed writes under the temp folder that holds its runs ([anthropics/claude-code#104631](https://github.com/anthropics/claude-code/issues/104631)). So the v0.1.2 and v0.1.3 Linux scores measured the sandbox, and the plugin lost to the bare arm on skill cases. On macOS the runs' folder is exempt, and shell writes worked in every run of both releases. The probe writes a file in the run's folder and one through a `mktemp` folder. Ubuntu tries it with `TMPDIR` at `~/.cache/claude-eval-tmp`, which fixed writes on two Linux hosts in that issue, and with Ubuntu's user-namespace limit lifted.
 - The SessionStart hook tells Claude which folder is the project and which is the plugin's, every time. Claude Code names the plugin's folder above each skill it loads. In the live evals, runs with the plugin looked for the project's files there or ran `cd` into it before the launcher. The hook names neither folder when one holds the other, as when you work on the plugin itself.
 - The live evals' step summary counts the runs with the plugin that took the plugin's folder for the project, by a `cd` into it or a path there outside the plugin's own files. Each such run is named under its case with its first such call.
+- `figma-writes` puts the answer first in each part of a board section, with its evidence beside it, and a long set in its own table or picture. Each open decision is one block: the question, its options as nested bullets, then the recommendation and its reason. Its reference adds the board-text rules: cells as short fragments, numbers the room compares on one shared scale, and status as a word as well as a colour.
 
 ## 0.1.3
 
