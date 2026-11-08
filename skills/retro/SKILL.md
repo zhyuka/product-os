@@ -1,15 +1,15 @@
 ---
 name: retro
-description: "Every two weeks, improve how you work with Claude Code: read your own records (/insights, corrections, open requests, audits) and what changed outside (Claude Code releases, current practice for agent-built software), pick at most five upgrades with evidence, cost and a measure, file them for approval, and measure the last run's. Run it as /product-os:retro, by hand or from a scheduled task."
+description: "Every two weeks, improve how you work with Claude Code: read your own records (/insights, corrections, open requests, audits) and what changed outside (Claude Code releases, current practice for agent-built software), pick at most five upgrades with evidence, cost and a measure, file them for approval, and measure the last run's. Run it by hand as /product-os:retro, or have a scheduled task read and follow this file."
 argument-hint: "[settings file]"
 disable-model-invocation: true
 ---
 
 # Retro: improve how you work with Claude Code, on a cycle
 
-This run started from `/product-os:retro`, typed by hand or by a scheduled task, and this text is
-the whole skill: carry it out here. Don't call the Skill tool for retro. That tool refuses a skill
-only a person may start, and its refusal doesn't end a run that has already started.
+If you're reading this, the retro has started, from `/product-os:retro` or from a task that read
+this file: carry it out here. Don't call the Skill tool for retro. That tool refuses a skill only a
+person may start, and its refusal doesn't end a run that has already started.
 
 A run ends with one report that does three things. It says whether the last run's upgrades are
 working, each by its own measure. It names at most five new upgrades, each tied to a number in the
