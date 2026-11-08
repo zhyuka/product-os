@@ -19,7 +19,8 @@ Detail for one job each. Read the section when the job comes up; it is not loade
 
 ## Board text
 
-- Lead each part with its answer in one sentence; its evidence sits beside it as a table or picture.
+- Fold a section into the fewest parts that show how its items relate, often one table: a row per
+  item, its relations as columns. Evidence sits in its own zone beside them.
 - Cells are fragments: the point in the first two words, one idea per line. Write each open
   decision as one block, not columns: the question, its options as nested bullets, then the
   recommendation and its reason, set apart by colour and a word.

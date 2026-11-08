@@ -40,7 +40,8 @@ OS keychain (`figma_auth.py --source` says which), and file keys from their argu
   evidence, every option, value and item it rests on, named, with data measured on the real
   population or taken from published research, never a sample picked to show the types or a
   mock-up's placeholder. A count can measure a named thing; it never stands in for the set the room
-  has to judge, so a long set sits beside the answer in its own table or picture. Build history stays
+  has to judge, so a long set goes in that table or the evidence. A spec for Design gives the data
+  and what's agreed; layout and behaviour are Design's call. Build history stays
   in the record and owners with the user, and it names no repos or local paths, which a reader on
   the board cannot follow.
 
