@@ -35,9 +35,13 @@ OS keychain (`figma_auth.py --source` says which), and file keys from their argu
   part the form its use in the room needs: a table for a lookup, stickies for a set the room will
   sort or add to, shapes and arrows for a flow, and a small picture beside any part the room should
   get at a glance. The team works from a section live in the room,
-  so it carries the answers the work proposes and the reasons behind them, in short plain text that
-  reads in seconds. Build history stays in the record and owners with the user, and it names no
-  repos or local paths, which a reader on the board cannot follow.
+  so it carries the answers the work proposes and the evidence for each, in plain words: every
+  option, value and item a point rests on, named, with its data beside it, so the room can check an
+  answer or overturn it. The data is measured on the real population or taken from published
+  research; a sample picked to show the types, or a mock-up's placeholder, is neither. A count can
+  measure a named thing; it never stands in for the set the room has to judge. Build history stays
+  in the record and owners with the user, and it names no repos or local paths, which a reader on
+  the board cannot follow.
 
 ## Reruns and deletes
 
