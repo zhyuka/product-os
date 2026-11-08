@@ -298,7 +298,7 @@ class LiveRunner(unittest.TestCase):
         names = sorted(p.name for p in (ROOT / "evals").iterdir() if (p / "case.yaml").is_file())
         code, doc, calls = self.live(100, 0.01)
         self.assertEqual([c["case"] for c in calls], names)
-        self.assertEqual(len(names), 27)
+        self.assertEqual(len(names), 28)
 
 
 if __name__ == "__main__":

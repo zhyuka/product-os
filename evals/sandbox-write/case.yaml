@@ -1,0 +1,17 @@
+schema_version: "1.1"
+name: sandbox-write
+description: >-
+  Checks the runner, not the plugin: Bash in the eval sandbox can write a file
+  in the run's folder and in a folder mktemp makes. Most skill cases write
+  files, and the review skill writes its diff to a mktemp folder. Where this
+  fails, those cases measure the sandbox instead of the plugin. On Linux,
+  plugin eval denies writes under the temp folder its runs live in
+  (anthropics/claude-code#104631), so live.yml runs only this case there.
+expected_outcome: probe.txt and probe-tmp.txt in the run's folder, each holding the line ok.
+tags: [probe, shell]
+runs: 1
+execution:
+  model: claude-haiku-4-5
+  max_turns: 6
+  timeout_seconds: 180
+  allowed_tools: [Bash]

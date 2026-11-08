@@ -283,7 +283,7 @@ class TheCeiling(unittest.TestCase):
         self.assertLessEqual(total, self.ceiling)
 
     def test_planted_overruns_are_caught(self):
-        raised = re.sub(r'cap: "6\.75"', 'cap: "7.75"', self.live)
+        raised = re.sub(r'cap: "8\.25"', 'cap: "9.25"', self.live)
         self.assertNotEqual(raised, self.live)
         self.assertGreater(tag_cost(raised, self.release)[0], self.ceiling)
         literal = self.live.replace("--cap ${{ matrix.cap }}", "--cap 3")

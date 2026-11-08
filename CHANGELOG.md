@@ -5,6 +5,7 @@ Each version here matches `version` in `.claude-plugin/plugin.json`, the marketp
 ## Unreleased
 
 - The Linux live evals use the default temp folder again. With `TMPDIR` at `/ev`, Bash in the v0.1.3 Linux evals ran no command at all, in either arm. Each call ended with `.bashrc: Permission denied` and a seccomp error about nested user namespaces. With the default, Bash runs and only its writes fail, as in v0.1.2.
+- macOS runs every live eval case now, capped at $8.25, and Ubuntu runs only a new probe case, `sandbox-write`, capped at $0.25. The total per tag stays at $10. On Linux, `claude plugin eval` denies sandboxed writes under the temp folder that holds its runs ([anthropics/claude-code#104631](https://github.com/anthropics/claude-code/issues/104631)). So the v0.1.2 and v0.1.3 Linux scores measured the sandbox, and the plugin lost to the bare arm on skill cases. On macOS the runs' folder is exempt, and shell writes worked in every run of both releases. The probe writes a file in the run's folder and one through a `mktemp` folder. Ubuntu tries it with `TMPDIR` at `~/.cache/claude-eval-tmp`, which fixed writes on two Linux hosts in that issue, and with Ubuntu's user-namespace limit lifted.
 
 ## 0.1.3
 

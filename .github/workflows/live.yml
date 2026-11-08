@@ -3,10 +3,10 @@ name: live evals
 # Runs the eval suite in evals/ through `claude plugin eval`: real Claude Code
 # sessions with the plugin loaded, and the same cases again without it as the
 # baseline. Every run is a paid model call, so the workflow runs only when a
-# release tag vX.Y.Z is pushed. Ubuntu runs every case, capped at $6.75. macOS
-# runs the hook cases, tagged builder or reviewer, capped at $1.75. Windows runs
-# the no-shell cases, capped at $0.50. With release.yml's $1, a tag costs at
-# most $10.
+# release tag vX.Y.Z is pushed. macOS runs every case, capped at $8.25. Ubuntu
+# runs only the sandbox-write probe, capped at $0.25, until Bash can write in
+# plugin eval's sandbox there. Windows runs the no-shell cases, capped at $0.50.
+# With release.yml's $1, a tag costs at most $10.
 #
 # It signs in through Anthropic workload identity federation: the job asks GitHub
 # for an OIDC token and Claude Code exchanges it, so no API key is stored. The
@@ -71,21 +71,26 @@ jobs:
     strategy:
       fail-fast: false
       # cap is each runner's --max-cost-usd, a list-price estimate checked before
-      # each run starts. v0.1.0 spent $3.17 on Ubuntu for 82 of the suite's 146
-      # runs, about $0.04 a run, so the whole suite comes to about $5.70. The 64
-      # runs it never reached are all skill runs, which may cost more, hence $6.75.
+      # each run starts. A case is not started once the cap is reached.
       matrix:
         include:
-          - os: ubuntu-latest
-            tools: Bash Edit Write
-            filter: ""
-            cap: "6.75"
-          # The hooks and the Bash sandbox differ by OS, so macOS runs the 9 hook
-          # cases, 42 runs, about $1.60.
+          # On Linux, plugin eval makes each run's folder under $TMPDIR and denies
+          # sandboxed writes under /tmp, so Bash there can write nothing, not even
+          # in the run's own folder (anthropics/claude-code#104631). On macOS it
+          # leaves the run folders out of that deny, and shell writes worked in
+          # every macOS run of v0.1.2 and v0.1.3. So macOS runs every case. In
+          # v0.1.3 the suite cost $6.88 on Ubuntu with 2 cases cut, and the hook
+          # cases $1.25 on macOS, hence $8.25.
           - os: macos-latest
             tools: Bash Edit Write
-            filter: --tag builder reviewer
-            cap: "1.75"
+            filter: ""
+            cap: "8.25"
+          # Ubuntu runs only the probe, one run per arm, to show when its sandbox
+          # writes work. The setup step below tries the fix from the issue.
+          - os: ubuntu-latest
+            tools: Bash Edit Write
+            filter: --tag probe
+            cap: "0.25"
           # Native Windows has no Bash sandbox, and `claude plugin eval` refuses
           # every run that grants a shell there. Windows runs only the cases
           # tagged no-shell, with Edit and Write granted: 2 cases, 8 runs.
@@ -117,7 +122,12 @@ jobs:
           [ -e "$dir/python3.exe" ] || cp "$dir/python.exe" "$dir/python3.exe"
 
       # The Bash sandbox on Linux needs bubblewrap and socat, and on Ubuntu
-      # 24.04 an AppArmor profile that lets bwrap create user namespaces.
+      # 24.04 an AppArmor profile that lets bwrap create user namespaces. The
+      # sandboxing docs give lifting Ubuntu's user-namespace limit as the other
+      # way, and the runner is thrown away after the job, so this does both.
+      # Two Linux hosts in issue #104631 made sandboxed writes work with TMPDIR
+      # at ~/.cache/claude-eval-tmp, outside the four temp folders the sandbox
+      # denies, so the probe runs with that.
       - name: Set up the Bash sandbox (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -128,7 +138,10 @@ jobs:
               'profile bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' \
               '  include if exists <local/bwrap>' '}' | sudo tee /etc/apparmor.d/bwrap > /dev/null
             sudo systemctl reload apparmor
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
+          mkdir -p "$HOME/.cache/claude-eval-tmp"
+          echo "TMPDIR=$HOME/.cache/claude-eval-tmp" >> "$GITHUB_ENV"
 
       - name: Install Claude Code (macOS, Linux)
         if: runner.os != 'Windows'
