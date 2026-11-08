@@ -4,7 +4,7 @@ Each version here matches `version` in `.claude-plugin/plugin.json`, the marketp
 
 ## Unreleased
 
-- `figma-writes`: each fragment in a board cell names its own subject, and a decision's recommendation gives the fact that decides it. Fragments like "− tagging work first" and a reason ending "we'll need all of them" left a room with no pre-read unable to tell what they referred to.
+- `figma-writes`: each row or decision block on a board reads alone, heard once with no pre-read. Every line says what it is about, gives a number rather than an adjective, and spells out its terms, and a recommendation gives the fact that decides it. Lines like "− tagging work first" and a reason ending "we'll need all of them" left a room with no pre-read unable to tell what they meant.
 - `setup-kit`'s setup check counts the project's listed checks only when each is accepted on this machine as it is now, since the push check runs no other. Before, it passed with any check listed, so it never gave `product-os accept`. In the v0.1.4 live evals, 2 of 3 runs with the plugin left that line out.
 - `build-change` reports each verdict as its checker's, such as "the reviewer said MATCHES at 1440", and ends with what the person decides: the section waits for their approval. In the live evals, a report that said the build "matches the mockup" read as a sign-off. With the plugin, 2 of 3 v0.1.4 runs read that way, and none without it.
 - The live evals' Ubuntu job runs on Ubuntu 24.04. In v0.1.4 the probe wrote neither file in either arm on `ubuntu-latest`, which has been moving to Ubuntu 26.
