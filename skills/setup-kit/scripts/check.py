@@ -14,7 +14,7 @@ Run it from anywhere in the project. It checks:
     against setup.min_version when it's set, and every setup.checks line, each run in app.dir and
     passing on exit 0;
   - at least one check listed in .claude/product-os-checks.json, since the push check refuses a
-    push with none;
+    push with none, and each accepted on this machine as it is now, since it runs no other;
   - each token setup.tokens or --token names: set or not, judged by its length only. Never printed;
   - whether Claude Code runs the plugin's hooks here, from the managed settings file. A note, never
     a miss: where policy runs no plugin hooks, the git hooks carry the rules.
@@ -78,6 +78,23 @@ def load_settings(root, cwd):
         return json.loads(out.splitlines()[-1]), None
     except (ValueError, IndexError):
         return None, "kit_config printed no settings"
+
+
+def unaccepted_checks(root, top, env=None):
+    """(the names of the checks the project lists that this machine hasn't accepted as they are
+    now, None) from the plugin's own product_os, or (None, why). The push check runs none of them."""
+    code = ("import json, os, sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
+            "from product_os import project as p; top = Path(sys.argv[2]).resolve(); "
+            "acc = p.read_accepted(top, os.environ); "
+            "print(json.dumps([c.name for c in p.project_checks(top) "
+            "if p.stale(c, top, acc.get(c.name), accepted=True)]))")
+    ok, out = sh([sys.executable, "-c", code, str(root), str(top)], top, env=env)
+    if not ok:
+        return None, (out.splitlines() or ["it printed nothing"])[-1][:160]
+    try:
+        return json.loads(out.splitlines()[-1]), None
+    except (ValueError, IndexError):
+        return None, "it printed no list"
 
 
 def token_set(name, root):
@@ -244,7 +261,17 @@ def run(argv, cwd=None, env=None):
     except (OSError, ValueError, AttributeError):
         checks = []
     if checks:
-        add(True, True, "project checks", f"{len(checks)} listed: {', '.join(str(c.get('name')) for c in checks if isinstance(c, dict))}")
+        listed = ", ".join(str(c.get("name")) for c in checks if isinstance(c, dict))
+        pending, why = unaccepted_checks(root, top, env)
+        accept = "read each check's run command in .claude/product-os-checks.json, then run: product-os accept"
+        if pending is None:
+            add(True, False, "project checks", f"{len(checks)} listed: {listed}; whether this machine "
+                f"accepted them did not run ({why})", accept)
+        elif pending:
+            add(True, False, "project checks", f"{len(checks)} listed, and this machine hasn't accepted "
+                f"{', '.join(pending)}, so the push check refuses", accept)
+        else:
+            add(True, True, "project checks", f"{len(checks)} listed, each accepted here: {listed}")
     else:
         add(True, False, "project checks", "none listed in .claude/product-os-checks.json, so the push check "
             "refuses every push", "write one, proven on a planted bad case and a good one: /product-os:miss-to-check")
@@ -327,6 +354,19 @@ def selftest():
               "def token(name):\n"
               "    return None\n")
         write(plug / "bin" / "product-os", "#!/bin/sh\necho kit_config\n", 0o755)
+        # A stand-in product_os: a listed check counts as accepted when planted-settings.json names it.
+        write(plug / "product_os" / "__init__.py", "")
+        write(plug / "product_os" / "project.py",
+              "import json\n"
+              "class Check:\n"
+              "    def __init__(self, name):\n"
+              "        self.name = name\n"
+              "def project_checks(top):\n"
+              "    return [Check(c['name']) for c in json.load(open(top / '.claude' / 'product-os-checks.json'))['checks']]\n"
+              "def read_accepted(top, environ):\n"
+              "    return {n: {} for n in json.load(open(top / 'planted-settings.json')).get('accepted', [])}\n"
+              "def stale(check, top, proof, accepted=False):\n"
+              "    return '' if proof is not None else 'not accepted on this machine'\n")
         write(plug / "hooks" / "hooks.json", json.dumps({"hooks": {"Stop": [{"hooks": [
             {"command": 'exec sh "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" qa_before_done'}]}]}}))
         write(plug / "ci" / "pre-push", f"#!/bin/sh\n{PUSH_MARK}\n", 0o755)
@@ -377,6 +417,12 @@ def selftest():
         os.environ["PLANTED_TOKEN"] = secret
         settings["withheld"] = []
         settings["settings"]["app"]["build_cmd"] = "true"
+        write(proj / "planted-settings.json", json.dumps(settings))
+        rows = run(base, str(proj), env)
+        expect("a listed check this machine hasn't accepted is a miss whose fix is product-os accept",
+               by("project checks") and not by("project checks")["ok"]
+               and "no-print" in by("project checks")["detail"] and "product-os accept" in by("project checks")["fix"])
+        settings["accepted"] = ["no-print"]
         write(proj / "planted-settings.json", json.dumps(settings))
         import contextlib
         import io

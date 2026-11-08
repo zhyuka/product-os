@@ -137,6 +137,9 @@ anything that was built. Then, for each section and width:
 - the reviewer's verdict, each item it sent back with its evidence, and each ASK DESIGN question;
 - the contrast grade, each criterion's result from `check-page`, and the picture paths.
 
-A check that didn't run is "did not run", never a pass. A MATCHES verdict and a passing
-`check-page` hand the section to the owner; they don't sign it off. Push, merge or share nothing
-before a person approves it.
+A check that didn't run is "did not run", never a pass. Give each verdict as its checker's, such as
+"the reviewer said MATCHES at 1440", never as the section's state, such as "it matches the mockup".
+A MATCHES verdict and a passing `check-page` hand the section to the owner; they don't sign it off.
+End the report with what the person decides: the section waits for their approval, and it isn't
+approved or ready to ship until they say so. Push, merge or share nothing before a person approves
+it.

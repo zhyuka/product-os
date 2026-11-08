@@ -2,6 +2,11 @@
 
 Each version here matches `version` in `.claude-plugin/plugin.json`, the marketplace entry in `.claude-plugin/marketplace.json`, and `pyproject.toml`. Claude Code installs an update only when that number changes.
 
+## Unreleased
+
+- `setup-kit`'s setup check counts the project's listed checks only when each is accepted on this machine as it is now, since the push check runs no other. Before, it passed with any check listed, so it never gave `product-os accept`. In the v0.1.4 live evals, 2 of 3 runs with the plugin left that line out.
+- `build-change` reports each verdict as its checker's, such as "the reviewer said MATCHES at 1440", and ends with what the person decides: the section waits for their approval. In the live evals, a report that said the build "matches the mockup" read as a sign-off. With the plugin, 2 of 3 v0.1.4 runs read that way, and none without it.
+
 ## 0.1.4
 
 - The Linux live evals use the default temp folder again. With `TMPDIR` at `/ev`, Bash in the v0.1.3 Linux evals ran no command at all, in either arm. Each call ended with `.bashrc: Permission denied` and a seccomp error about nested user namespaces. With the default, Bash runs and only its writes fail, as in v0.1.2.
