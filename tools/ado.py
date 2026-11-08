@@ -78,6 +78,7 @@ import sys
 if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
     sys.path[0] = os.path.dirname(os.path.realpath(__file__))
 import argparse
+import html
 import json
 import os
 import re
@@ -124,6 +125,28 @@ AC_FIELD = "Microsoft.VSTS.Common.AcceptanceCriteria"
 # saved and never seen. So the AC goes to a field the form does show: a Task's joins its
 # Description, and a Bug's goes to System Info.
 AC_OFF_FORM = {"Bug": "Microsoft.VSTS.TCM.SystemInfo", "Task": "System.Description"}
+
+# An open note: a point in an item's text still unsettled, written "[OPEN: <the point, who it waits
+# on>]" (a bare "OPEN: ..." without the bracket counts too). Closed means nothing follows up, so a
+# Closed item holds none: ado_write refuses the close, and ado_rest's audit names any that got through
+# (a close made in the web UI). Settled, a note is rewritten as its answer, or as "tracked in #N" when
+# the point moved to its own item; deleting it only to get past the refusal changes the criteria to
+# pass a check. Case-sensitive, so prose saying "open:" doesn't count.
+OPEN_NOTE = re.compile(r"\bOPEN:")
+OPEN_NOTE_FIELDS = ("System.Description", AC_FIELD, "Microsoft.VSTS.TCM.ReproSteps", AC_OFF_FORM["Bug"])
+
+
+def open_notes(fields):
+    """[(field, the note's first words)] for each open note in a work item's text fields, read with
+    the tags stripped and entities decoded, so markup inside a note doesn't hide it: a block tag reads
+    as a space, an inline one (<b>OPEN</b>:) as nothing."""
+    out = []
+    for ref in OPEN_NOTE_FIELDS:
+        raw = re.sub(r"</?(?:p|div|li|ul|ol|br|h\d|tr|td|th|table|blockquote|pre)\b[^>]*>", " ",
+                     str(fields.get(ref) or ""), flags=re.I)
+        text = " ".join(html.unescape(re.sub(r"<[^>]+>", "", raw)).split())
+        out += [(ref.rsplit(".", 1)[-1], text[m.start():m.start() + 70]) for m in OPEN_NOTE.finditer(text)]
+    return out
 
 # A parent in its child's own backlog category (a Story under a Story, a Bug under a Task) makes
 # ADO hide the parent from that backlog and turn off reordering, behind a "same category hierarchy"

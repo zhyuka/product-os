@@ -108,6 +108,12 @@ their lines on top. Putting back exactly what our own latest revision of the fie
 passes. A history that can't be read refuses. `--replaces` lifts it, its WHY in plain words on the
 command line. A batch PATCH then carries a `test /rev` at the revision the check read.
 
+A close over an open note. A write that sets State to Closed (`state`, `field`, a `batch` entry) is
+refused, and nothing is sent, while Description, AcceptanceCriteria, ReproSteps or SystemInfo, as the
+write leaves them, still hold an open note: `OPEN:` in the visible text, the rule ado.py's open_notes
+shares with ado_rest.py's audit. So one write that rewrites the note as its answer and closes passes.
+A `batch` with one such entry refuses the whole file; an undo file's entries pass.
+
 Each write goes out from its own command line, `ado_write.py <subcommand> ...`, which names the
 write, so a settings ask rule can prompt on it (ask_rules.py checks that each one does). --stack's
 and --replaces' WHY sit on that command, in plain words (ask_rules.plain), so the prompt shows why.
@@ -137,7 +143,7 @@ if os.path.dirname(os.path.realpath(__file__)) not in sys.path: sys.path.append(
 import ado_links  # a bare #1234 in a field or comment goes out as a link (ado_links.py)
 import ask_rules  # an override's reason is plain words, the one rule every override flag takes
 import kit_config
-from ado import categories_from, same_category, same_category_reason  # one copy of the rule: ado.py's
+from ado import categories_from, same_category, same_category_reason, open_notes, OPEN_NOTE_FIELDS  # one copy of each rule: ado.py's
 
 ORG, PROJECT = kit_config.ado()  # the project's .claude/product-os.json (kit_config.py); None when unset
 
@@ -393,11 +399,40 @@ def _linked(text):
     return new
 
 
-def patch_fields(wid, pairs, link=True, rev=None):
+def _closes(pairs):
+    """Whether a write's (ref, value) pairs set System.State to Closed."""
+    return any(ref.lower() == "system.state" and str(val).strip().lower() == "closed" for ref, val in pairs)
+
+
+def _open_close_refusal(wid, fields, pairs):
+    """A close over an open note (ado.py OPEN_NOTE), judged on the item's text as this write leaves it,
+    so one patch that rewrites the note and closes passes. Returns the lines to print, the refusal last,
+    or None when the write doesn't close or leaves no note."""
+    if not _closes(pairs):
+        return None
+    named = {r.lower(): r for r in OPEN_NOTE_FIELDS}  # a ref in any case reads as the field it names
+    after = dict(fields)
+    after.update({named.get(ref.lower(), ref): val for ref, val in pairs})
+    notes = open_notes(after)
+    if not notes:
+        return None
+    return [_ln(f"  #{wid} {where}: {text!r}") for where, text in notes] + [_ln(
+        f"REFUSED #{wid}: it still holds {len(notes)} open note(s), so it can't be Closed, and nothing was sent. "
+        f"Rewrite each as its answer, or as \"tracked in #N\" when the point moved to its own item, or leave "
+        f"#{wid} Resolved.")]
+
+
+def patch_fields(wid, pairs, link=True, rev=None, allow_open=False):
     # A bare #1234 in an HTML field goes out as a link; every check below compares what was sent.
     # link=False sends the values as they are: an undo puts back exactly what was there. rev pins the
     # PATCH to the revision a check read (a `test /rev` op), so ADO refuses it if the item moved since.
-    # Returns the revision read back.
+    # A close over an open note is refused before anything is sent; allow_open is for an undo file,
+    # which puts back exactly what was there. Returns the revision read back.
+    if not allow_open and _closes(pairs):
+        refusal = _open_close_refusal(wid, (_req(_p(f"/_apis/wit/workitems/{wid}?{API}")).get("fields") or {}), pairs)
+        if refusal:
+            print("\n".join(refusal[:-1]))
+            sys.exit(refusal[-1])
     if link:
         pairs = [(ref, _linked(val) if ref.lower() in _HTML and val else val) for ref, val in pairs]
     # An "add" with an empty value is a silent no-op in ADO (seen on System.Tags): exit 0, rev
@@ -889,6 +924,26 @@ def batch(path, replaces=None):
                   + (" An item whose history or identity can't be read has no override: check it by hand, then send "
                      "it on its own." if set(hit) - set(theirs) else "")))
         return 1
+    # A close over an open note refuses the whole file before anything is sent, judged on each item's text
+    # as its entry leaves it. An undo file's entries ("status") put back what was there and are let through.
+    closes = []
+    for it in items:
+        if "status" in it:
+            continue
+        sets = list((it.get("set") or {}).items())
+        if not _closes(sets):
+            continue
+        now = _req(_p(f"/_apis/wit/workitems/{it['id']}?{API}")).get("fields") or {}
+        refusal = _open_close_refusal(it["id"], now, sets)
+        if refusal:
+            closes += refusal
+    if closes:
+        refused = [line for line in closes if line.startswith("REFUSED")]
+        print("\n".join(line for line in closes if not line.startswith("REFUSED")))
+        print(_ln(f"REFUSED: {path} closes {len(refused)} item(s) over an open note "
+                  f"({', '.join(re.match(r'REFUSED (#[0-9]+)', line).group(1) for line in refused)}), so nothing "
+                  f"was sent. Rewrite each note as its answer in the same entry, or leave the item Resolved."))
+        return 1
     undo, applied, skipped, written = [], [], [], set()
 
     def save_undo():
@@ -962,7 +1017,7 @@ def batch(path, replaces=None):
                     _not_confirmed(f"#{wid} System.Parent: sent {parent}, stored {now}")
             written.add(wid)
             if sets:
-                pin = patch_fields(wid, list(sets.items()), link=False, rev=pin)
+                pin = patch_fields(wid, list(sets.items()), link=False, rev=pin, allow_open="status" in it)
             if cmt:
                 edit_comment(wid, cmt["id"], cmt_text, link=False)
         except SystemExit as e:
@@ -1822,6 +1877,7 @@ PLANTED_4 = [
 ]
 
 # ---- fifth batch: `batch`, one approval for a reviewed list ----------------------------------
+_AC = "Microsoft.VSTS.Common.AcceptanceCriteria"
 PLANTED_5 = [
     dict(
         name="b1 batch applies a state change and keeps the prior value for undo",
@@ -1865,6 +1921,43 @@ PLANTED_5 = [
         why="Lost record: a second run of the same file replaced the first run's undo file, and with it "
             "the only list of what to put back.",
     ),
+    # A close over an open note (ado.py OPEN_NOTE) is refused on every path, before anything is sent.
+    dict(name="o1 state Closed over an [OPEN: note in the criteria is refused, nothing sent", op="cli",
+         argv=["state", "4242", "Closed"], extra_fields={_AC: "<div>Rule. [OPEN: design to confirm.]</div>"},
+         store=lambda s: s, expect=1, says="REFUSED #4242: it still holds 1 open note(s)", names="stand-in writes: none",
+         why="Closed means nothing follows up, and a note left in the criteria is the follow-up the close drops."),
+    dict(name="o2 a Bug's bare OPEN: note in System Info, split by markup, is refused too", op="cli",
+         argv=["state", "4242", "Closed"], extra_fields={"System.WorkItemType": "Bug",
+                                                        "Microsoft.VSTS.TCM.SystemInfo": "<div><b>OPEN</b>: design.</div>"},
+         store=lambda s: s, expect=1, says="REFUSED #4242", names="stand-in writes: none",
+         why="A Bug's criteria live in System Info (ado.py AC_OFF_FORM), and older notes have no bracket."),
+    dict(name="o3 field System.State Closed over a note is refused", op="cli",
+         argv=["field", "4242", "System.State", "Closed"], extra_fields={_AC: "<div>[OPEN: waits on design.]</div>"},
+         store=lambda s: s, expect=1, says="REFUSED #4242", names="stand-in writes: none",
+         why="field reaches State through the same patch as state does."),
+    dict(name="o4 a batch that closes over a note is refused whole, nothing sent", op="batch", ref="System.State",
+         prior="Active", store=lambda s: s, extra_fields={_AC: "<div>Rule. [OPEN: design to confirm.]</div>"},
+         batch=[{"id": 4242, "set": {"System.State": "Closed"}}], expect=1,
+         says="closes 1 item(s) over an open note", names="so nothing was sent",
+         why="A batch is the same close in one command, so it is refused the same way, before any write."),
+    dict(name="o5 state Closed with no note passes", op="cli", argv=["state", "4242", "Closed"],
+         extra_fields={_AC: "<div>Rule. It reopens when the page is live.</div>"}, store=lambda s: s, expect=0,
+         says="read back", names="stand-in writes: PATCH fields",
+         why="Known good: \"reopens\" and plain prose are no note."),
+    dict(name="o6 Resolved with a note passes", op="cli", argv=["state", "4242", "Resolved"],
+         extra_fields={_AC: "<div>[OPEN: waits on design.]</div>"}, store=lambda s: s, expect=0, says="read back",
+         why="Known good: Resolved is where a waiting item belongs."),
+    dict(name="o7 a batch entry that rewrites the note as its answer and closes passes", op="batch",
+         ref="System.State", prior="Active", store=lambda s: s,
+         extra_fields={_AC: "<div>Rule. [OPEN: design to confirm.]</div>"},
+         batch=[{"id": 4242, "set": {_AC: "<div>Rule. Design confirmed it.</div>", "System.State": "Closed"}}],
+         expect=0, says="1 of 1 applied",
+         why="Known good: judged on the text as the entry leaves it, so settling and closing go in one write."),
+    dict(name="o8 an undo file's entry puts back a Closed state over a note", op="batch", ref="System.State",
+         prior="Active", store=lambda s: s, extra_fields={_AC: "<div>[OPEN: design to confirm.]</div>"},
+         batch=[{"id": 4242, "raw": True, "status": "applied", "expect": {"System.State": "Active"},
+                 "set": {"System.State": "Closed"}}], expect=0, says="1 of 1 applied",
+         why="Known good: an undo puts back exactly what was there."),
 ]
 
 

@@ -121,7 +121,7 @@ theirs, or this skill's close-out sweep run on their say-so.
 
 Before closing, check for follow-ups in three places: an unanswered question or a reviewer still
 checking in the comments, an open (New or Active) child, and a scenario in the body or AC that is not
-met. Any one keeps it `Resolved`; none means close it. A `related` link never holds an item: spinning
+met or an `[OPEN:` note. Any one keeps it `Resolved`; none means close it. A `related` link never holds an item: spinning
 a follow-up into its own ticket is what clears the parent, and treating a related item as a follow-up
 deadlocks the board. A reviewer's "looks good" or "feel free to close" means close it in the same
 pass.

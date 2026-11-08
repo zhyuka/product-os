@@ -41,7 +41,9 @@ the moment any other path files a ticket.
 The body is the living spec: when requirements change on a not-yet-started item, rewrite
 Description/AC to the clean current truth (the revision history is the diff). Comments are for
 watchers and for the resolution record. Don't pile a new comment per change; consolidate or delete
-your own redundant comments.
+your own redundant comments. A point still open goes in the body as `[OPEN: <the point>, waits on
+<who>]`; once it settles, rewrite the note as its answer, or as "tracked in #N". `ado_write.py`
+refuses to close an item that still holds one.
 
 **An error nobody has read yet is fixed in place, as if it had always been right.** No
 "corrected", "this first said" or "I was wrong" line, in a body, a comment or a design comment. A

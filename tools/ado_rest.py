@@ -32,7 +32,10 @@ WHAT THE CHECKS ENCODE. Each one is a rule that was prose and was still violated
   closed-with-open-children  Closed means shipped AND QA'd AND no follow-ups. An item closed over an
                              open child is none of those. Open means New or Active, as in the ado
                              skill's close check; a Resolved child does not count.
-  same-category-parent       A parent in the child's own backlog category (a Story under a Story, a
+  closed-with-open-note      A Closed item whose text still holds an open note ("[OPEN: ...]", ado.py
+                             OPEN_NOTE). ado_write refuses that close; this catches one made in the
+                             web UI. Settle it: the note as its answer, or the item back to Resolved.
+  same-category-parent      A parent in the child's own backlog category (a Story under a Story, a
                              Bug under a Task): ADO then hides the parent from that backlog.
                              Closed children count. `pull` prints these too, with the fix.
   frozen-branch-mentioned    Text that couples a merge or PR to ado.frozen_branch, a branch nobody
@@ -95,7 +98,7 @@ except Exception:
 
 if os.path.dirname(os.path.realpath(__file__)) not in sys.path: sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 from ado import (AC_FIELD, BODY_FIELD, TITLE_RE,  # one copy of each rule: ado.py's
-                 CATEGORY, categories_from, same_category)
+                 CATEGORY, categories_from, same_category, open_notes)
 import kit_config
 
 ORG, PROJECT = kit_config.ado()  # the project's .claude/product-os.json (kit_config.py); None when unset
@@ -517,7 +520,7 @@ def audit(expect_clean=False, scope_all=False, stale_ok=False):
     # Closed parents live outside the open-scoped loop, so this runs over the full set. So does
     # done-in-backlog: completed work parked in the unstarted bucket is the thing it looks for.
     # Each states its own M.
-    denom["done-in-backlog"] = denom["closed-with-open-children"] = 0
+    denom["done-in-backlog"] = denom["closed-with-open-children"] = denom["closed-with-open-note"] = 0
     for wid, w in allitems.items():
         if w[F].get(STATE) in ("Resolved", "Closed") and backlog:
             denom["done-in-backlog"] += 1
@@ -527,6 +530,11 @@ def audit(expect_clean=False, scope_all=False, stale_ok=False):
         if w[F].get(STATE) != "Closed":
             continue
         denom["closed-with-open-children"] += 1
+        denom["closed-with-open-note"] += 1
+        notes = open_notes(w[F])
+        if notes:
+            add("closed-with-open-note", f"#{wid} Closed '{w[F].get(TITLE, '')[:45]}' still holds {len(notes)} open "
+                                         f"note(s), first in {notes[0][0]}: {notes[0][1][:50]!r}")
         # New and Active only: the ado skill's close check reads an open child as New/Active.
         kids = [c for c in children.get(wid, [])
                 if allitems.get(c, {}).get(F, {}).get(STATE) in ("New", "Active")]
@@ -610,7 +618,7 @@ def audit(expect_clean=False, scope_all=False, stale_ok=False):
         denom[k] = read
     denom["comment-pile"] = followed
 
-    order = ["closed-with-open-children", "same-category-parent", "frozen-branch-mentioned",
+    order = ["closed-with-open-children", "closed-with-open-note", "same-category-parent", "frozen-branch-mentioned",
              "figma-not-a-url", "figma-colon-nodeid", "ac-not-gherkin", "orphan", "dup-title",
              "parent-missing", "iteration-mismatch", "root-iteration", "done-in-backlog",
              "ac-empty", "bug-body-wrong-field", "body-empty", "title-convention", "dangling-ref",
@@ -804,7 +812,11 @@ def selftest():
                                                           "text": "<p>Same as #3247, see #3998.</p>"}]},
              "items": {"4511": item(4511, "Task", "T // Tooling - Links // Print links", [up(3247)],
                                     **{"System.Description": "<p>Related. #3247 built the search; #3999 is gone.</p>"}),
-                       "3247": item(3247, "Task", "T // Repo - Search // Search and filters", [up(7777)])}}
+                       "3247": item(3247, "Task", "T // Repo - Search // Search and filters", [up(7777)]),
+                       "4512": item(4512, "User Story", "T // About - Hero // Closed over a note", [up(3247)],
+                                    **{AC_FIELD: "<li>Rule. [OPEN: waits on design.]</li>", STATE: "Closed"}),
+                       "4513": item(4513, "User Story", "T // About - Hero // Closed and settled", [up(3247)],
+                                    **{AC_FIELD: "<li>Rule. It reopens when the page is live.</li>", STATE: "Closed"})}}
     keep = ORG, PROJECT, CACHE, fetch_attachments, _ready, _req
     tmp = tempfile.mkdtemp(prefix="ado-rest-selftest-")
     try:
@@ -820,6 +832,10 @@ def selftest():
         out = run(audit, False, False, True)
         chk("audit: a finding naming a parent, a cited id and a missing one links each",
             "#7777" in out and "#3999" in out and not bare_ids.unlinked(out), bare_ids.unlinked(out) or out)
+        line = next((l for l in out.splitlines() if "closed-with-open-note" in l), "")
+        chk("audit: a Closed item holding an [OPEN: note is named, and a settled one is not",
+            "FAIL" in line and "1 of 2" in line and "#4512" in out
+            and "#4513" not in out.split("closed-with-open-note")[1].split("same-category-parent")[0], line or out)
         out = run(show, "4511")
         chk("show: the item line and the ids its body and comments cite carry their links",
             "_workitems/edit/4511/" in out.splitlines()[0] and not bare_ids.unlinked(out), bare_ids.unlinked(out) or out)
@@ -843,7 +859,7 @@ def selftest():
         ORG, PROJECT, CACHE = keep[:3]
         globals().update(fetch_attachments=keep[3], _ready=keep[4], _req=keep[5])
         shutil.rmtree(tmp, ignore_errors=True)
-    print(f"\nado_rest selftest: {len(fails) or 'no'} failure(s) in 7 planted cases")
+    print(f"\nado_rest selftest: {len(fails) or 'no'} failure(s) in 8 planted cases")
     return 1 if fails else 0
 
 
