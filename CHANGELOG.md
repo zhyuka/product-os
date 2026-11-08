@@ -6,6 +6,8 @@ Each version here matches `version` in `.claude-plugin/plugin.json`, the marketp
 
 - `setup-kit`'s setup check counts the project's listed checks only when each is accepted on this machine as it is now, since the push check runs no other. Before, it passed with any check listed, so it never gave `product-os accept`. In the v0.1.4 live evals, 2 of 3 runs with the plugin left that line out.
 - `build-change` reports each verdict as its checker's, such as "the reviewer said MATCHES at 1440", and ends with what the person decides: the section waits for their approval. In the live evals, a report that said the build "matches the mockup" read as a sign-off. With the plugin, 2 of 3 v0.1.4 runs read that way, and none without it.
+- The live evals' Ubuntu job runs on Ubuntu 24.04. In v0.1.4 the probe wrote neither file in either arm on `ubuntu-latest`, which has been moving to Ubuntu 26.
+- A probe tag such as `v0.1.4-probe.1` runs only the Ubuntu probe, for up to $0.25, and `release.yml` runs only on a release tag such as `v0.1.4`.
 
 ## 0.1.4
 

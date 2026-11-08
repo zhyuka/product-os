@@ -300,6 +300,90 @@ class TheCeiling(unittest.TestCase):
         self.assertTrue(tag_cost(self.live, unbudgeted)[1])
 
 
+def tag_pattern(pattern):
+    """GitHub's filter pattern for a tag, as a regex: * is any run of characters but /, ** any
+    run at all, + and ? repeat what's before them, [...] is a set, anything else is itself."""
+    out, i = "", 0
+    while i < len(pattern):
+        if pattern[i] == "[":
+            end = pattern.index("]", i)
+            out, i = out + pattern[i:end + 1], end + 1
+        elif pattern.startswith("**", i):
+            out, i = out + ".*", i + 2
+        else:
+            out, i = out + {"*": "[^/]*", "+": "+", "?": "?"}.get(pattern[i], re.escape(pattern[i])), i + 1
+    return re.compile(out)
+
+
+def runs_on_tag(text, name):
+    """Whether pushing the tag name starts the workflow."""
+    push = triggers(tree(text)).get("push")
+    tags = child(push, "tags")[0] if push is not None else None
+    return bool(tags) and any(tag_pattern(p).fullmatch(name) for p in flow_list(tags))
+
+
+PROBE_TAG, RELEASE_TAG = "v0.1.4-probe.1", "v0.1.4"
+PROBE_FILTER = "evals/live.py ${{ contains(github.ref_name, '-probe') && '--tag probe' || matrix.filter }}"
+
+
+def probe_problems(live, release):
+    """What would let a probe tag cut a release, or spend anywhere but Ubuntu's probe."""
+    found = []
+    if runs_on_tag(release, PROBE_TAG):
+        found.append(f"release.yml runs on the probe tag {PROBE_TAG}")
+    if not runs_on_tag(release, RELEASE_TAG):
+        found.append(f"release.yml doesn't run on the release tag {RELEASE_TAG}")
+    if not runs_on_tag(live, PROBE_TAG) or not runs_on_tag(live, RELEASE_TAG):
+        found.append("live.yml doesn't run on both a probe tag and a release tag")
+    job = jobs(tree(live)).get("evals", [])
+    paid = child(child(job, "env")[1], "PAID")[0] or ""
+    if "'-probe'" not in paid or "'ubuntu'" not in paid:
+        found.append("live.yml: PAID doesn't leave out every runner but Ubuntu on a probe tag")
+    for text, sub in child(job, "steps")[1]:
+        key, value = kv(text)
+        cond = child(sub, "if")[0] or ""
+        if (key == "uses" and value.startswith("actions/checkout@")) or "env.PAID != 'true'" in cond:
+            continue
+        if "env.PAID == 'true'" not in cond:
+            found.append(f"live.yml: the step {value} runs on a probe tag on every runner")
+    if PROBE_FILTER not in live:
+        found.append("live.yml: a probe tag doesn't run only the cases tagged probe")
+    return found
+
+
+class TheProbeTag(unittest.TestCase):
+    """A tag such as v0.1.4-probe.1 runs Ubuntu's sandbox-write probe alone: no release, and no
+    paid step on macOS or Windows."""
+
+    def setUp(self):
+        flows = ROOT / ".github" / "workflows"
+        self.live = (flows / "live.yml").read_text(encoding="utf-8")
+        self.release = (flows / "release.yml").read_text(encoding="utf-8")
+
+    def test_a_probe_tag_runs_only_the_ubuntu_probe(self):
+        self.assertEqual(probe_problems(self.live, self.release), [])
+
+    def test_the_tag_patterns_read_as_github_reads_them(self):
+        exact = tag_pattern("v[0-9]+.[0-9]+.[0-9]+")
+        self.assertTrue(exact.fullmatch("v0.1.4") and exact.fullmatch("v1.10.0"))
+        self.assertFalse(exact.fullmatch("v0.1.4-probe.1") or exact.fullmatch("v0x1.4"))
+        self.assertTrue(tag_pattern("v*").fullmatch("v0.1.4-probe.1"))
+
+    def test_each_planted_mistake_is_caught(self):
+        guard = "if: env.PAID == 'true'\n        run: |\n          python3 evals/live.py"
+        planted = {
+            "release on every v tag": (self.live, re.sub(r'tags: \["v\[[^\n]*\]', 'tags: ["v*"]', self.release)),
+            "the eval step unguarded": (self.live.replace(guard, "run: |\n          python3 evals/live.py"), self.release),
+            "PAID on every runner": (re.sub(r"PAID: \$\{\{[^\n]*\}\}", "PAID: true", self.live), self.release),
+            "the matrix filter on a probe tag": (self.live.replace(PROBE_FILTER, "evals/live.py ${{ matrix.filter }}"),
+                                                 self.release),
+        }
+        for name, (live, release) in planted.items():
+            with self.subTest(name):
+                self.assertNotEqual((live, release), (self.live, self.release))
+                self.assertTrue(probe_problems(live, release), f"{name} passed")
+
+
 def token_script(text):
     """The oidc_token.py a paid workflow's fetch step writes, as Python reads it."""
     lines = text.splitlines()

@@ -3,10 +3,13 @@ name: live evals
 # Runs the eval suite in evals/ through `claude plugin eval`: real Claude Code
 # sessions with the plugin loaded, and the same cases again without it as the
 # baseline. Every run is a paid model call, so the workflow runs only when a
-# release tag vX.Y.Z is pushed. macOS runs every case, capped at $8.25. Ubuntu
-# runs only the sandbox-write probe, capped at $0.25, until Bash can write in
-# plugin eval's sandbox there. Windows runs the no-shell cases, capped at $0.50.
-# With release.yml's $1, a tag costs at most $10.
+# v tag is pushed. On a release tag vX.Y.Z, macOS runs every case, capped at
+# $8.25. Ubuntu runs only the sandbox-write probe, capped at $0.25, until Bash
+# can write in plugin eval's sandbox there. Windows runs the no-shell cases,
+# capped at $0.50. With release.yml's $1, a release tag costs at most $10.
+# A probe tag, such as v0.1.4-probe.1, runs only Ubuntu's sandbox-write probe,
+# for at most $0.25, and release.yml doesn't run on it. The other runners start,
+# say so in a notice and spend nothing.
 #
 # It signs in through Anthropic workload identity federation: the job asks GitHub
 # for an OIDC token and Claude Code exchanges it, so no API key is stored. The
@@ -68,6 +71,10 @@ jobs:
       ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
       ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
       ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+      # Whether this runner spends anything: every runner on a release tag, only
+      # Ubuntu on a probe tag. A job's if can't read the matrix, so each step after
+      # the checkout reads this instead.
+      PAID: ${{ !contains(github.ref_name, '-probe') || startsWith(matrix.os, 'ubuntu') }}
     strategy:
       fail-fast: false
       # cap is each runner's --max-cost-usd, a list-price estimate checked before
@@ -86,8 +93,12 @@ jobs:
             filter: ""
             cap: "8.25"
           # Ubuntu runs only the probe, one run per arm, to show when its sandbox
-          # writes work. The setup step below tries the fix from the issue.
-          - os: ubuntu-latest
+          # writes work. The setup step below tries the fix from the issue. In
+          # v0.1.4 the probe wrote neither file in either arm on ubuntu-latest,
+          # which has been moving to Ubuntu 26 since 2026-10-19
+          # (actions/runner-images#14748). Bash still ran commands in v0.1.2's
+          # Ubuntu runs, so this pins 24.04 to rule the new image in or out.
+          - os: ubuntu-24.04
             tools: Bash Edit Write
             filter: --tag probe
             cap: "0.25"
@@ -109,14 +120,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Skip this runner on a probe tag
+        if: env.PAID != 'true'
+        run: echo "::notice title=Probe tag::$GITHUB_REF_NAME runs only Ubuntu's sandbox-write probe, so this runner spends nothing."
+
       # The plugin's hooks run `python3`. Linux and macOS runners have one;
       # setup-python on Windows installs python.exe only, so add python3.exe.
       - uses: actions/setup-python@v7
-        if: runner.os == 'Windows'
+        if: env.PAID == 'true' && runner.os == 'Windows'
         with:
           python-version: "3.12"
       - name: Make python3 resolve (Windows)
-        if: runner.os == 'Windows'
+        if: env.PAID == 'true' && runner.os == 'Windows'
         run: |
           dir="$(dirname "$(command -v python)")"
           [ -e "$dir/python3.exe" ] || cp "$dir/python.exe" "$dir/python3.exe"
@@ -129,7 +144,7 @@ jobs:
       # at ~/.cache/claude-eval-tmp, outside the four temp folders the sandbox
       # denies, so the probe runs with that.
       - name: Set up the Bash sandbox (Linux)
-        if: runner.os == 'Linux'
+        if: env.PAID == 'true' && runner.os == 'Linux'
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q bubblewrap socat
@@ -144,24 +159,26 @@ jobs:
           echo "TMPDIR=$HOME/.cache/claude-eval-tmp" >> "$GITHUB_ENV"
 
       - name: Install Claude Code (macOS, Linux)
-        if: runner.os != 'Windows'
+        if: env.PAID == 'true' && runner.os != 'Windows'
         run: |
           curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE_CODE_VERSION"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Install Claude Code (Windows)
-        if: runner.os == 'Windows'
+        if: env.PAID == 'true' && runner.os == 'Windows'
         shell: pwsh
         run: |
           & ([scriptblock]::Create((irm https://claude.ai/install.ps1))) $env:CLAUDE_CODE_VERSION
           "$env:USERPROFILE\.local\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Versions
+        if: env.PAID == 'true'
         run: |
           claude --version
           python3 --version
           git --version
 
       - name: Validate the plugin and the marketplace
+        if: env.PAID == 'true'
         run: |
           claude plugin validate .claude-plugin/plugin.json
           claude plugin validate .
@@ -173,6 +190,7 @@ jobs:
       # federation rule matches, so a rule that doesn't match the subject format shows here
       # (docs/checks.md). It never prints the token. release.yml holds the same script.
       - name: Fetch GitHub OIDC token
+        if: env.PAID == 'true'
         run: |
           echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/gha-jwt" >> "$GITHUB_ENV"
           cat > "$RUNNER_TEMP/oidc_token.py" <<'EOF'
@@ -225,10 +243,12 @@ jobs:
       # product-os-checks.json of the config folder each eval session reads,
       # as /product-os:setup-kit has the person do (evals/_fixtures/workspace.sh).
       # --trust-plugin answers the first-run trust prompt. The cost ceiling is
-      # a list-price estimate checked before each run starts.
+      # a list-price estimate checked before each run starts. A probe tag runs
+      # only the cases tagged probe.
       - name: Run the live evals
+        if: env.PAID == 'true'
         run: |
-          python3 evals/live.py ${{ matrix.filter }} ${{ matrix.notice }} \
+          python3 evals/live.py ${{ contains(github.ref_name, '-probe') && '--tag probe' || matrix.filter }} ${{ matrix.notice }} \
             --json "evals/results/live-${{ runner.os }}.json" \
             --cap ${{ matrix.cap }} \
             --judge-model "$JUDGE_MODEL" \
@@ -239,7 +259,7 @@ jobs:
       # traces live.py keeps on the runner: its tool calls, denials and last reply,
       # with token-shaped strings masked. The traces themselves are not uploaded.
       - name: Summarize
-        if: always()
+        if: always() && env.PAID == 'true'
         run: |
           result="evals/results/live-${{ runner.os }}.json"
           if [ -f "$result" ]; then
@@ -249,7 +269,7 @@ jobs:
           fi
 
       - name: Upload the JSON results
-        if: always()
+        if: always() && env.PAID == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: live-evals-${{ runner.os }}
