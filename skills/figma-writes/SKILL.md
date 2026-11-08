@@ -31,10 +31,10 @@ OS keychain (`figma_auth.py --source` says which), and file keys from their argu
   delete there, even on a keyword match. A main edit reaches personal pages anyway; report what
   lands there, and don't undo it.
 - On a board, build content from native text, sticky, table, code-block and shape objects the team
-  can edit; upload an image only for a picture of real UI, never a rendered PNG of text. Make a
-  section look like the board around it: before building, read a section a teammate made on the
-  same board, one of the same kind (a table for a lookup, shapes and arrows for a flow), and use the
-  object types, fonts, sizes and colours it uses. The team works from a section live in the room,
+  can edit; upload an image only for a picture of real UI, never a rendered PNG of text. Give each
+  part the form its use in the room needs: a table for a lookup, stickies for a set the room will
+  sort or add to, shapes and arrows for a flow, and a small picture beside any part the room should
+  get at a glance. The team works from a section live in the room,
   so it carries the answers the work proposes and the reasons behind them, in short plain text that
   reads in seconds. Build history stays in the record and owners with the user, and it names no
   repos or local paths, which a reader on the board cannot follow.
