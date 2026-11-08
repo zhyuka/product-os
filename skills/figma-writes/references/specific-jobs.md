@@ -20,8 +20,9 @@ Detail for one job each. Read the section when the job comes up; it is not loade
 ## Board text
 
 - Lead each part with its answer in one sentence; its evidence sits beside it as a table or picture.
-- Cells and options are fragments: the point in the first two words, one idea per line, no
-  sub-bullets.
+- Cells are fragments: the point in the first two words, one idea per line. Write each open
+  decision as one block, not columns: the question, its options as nested bullets, then the
+  recommendation and its reason, set apart by colour and a word.
 - Draw numbers the room compares on one shared scale.
 - Show status as a word, not colour alone.
 
