@@ -267,55 +267,6 @@ def tag_cost(live, release):
     return sum(caps) + sum(budgets), found
 
 
-SANDBOX_DENIES = ("/tmp", "/var/tmp", "/dev/shm", "/run/shm")
-SANDBOX_STEP = "- name: Set up the Bash sandbox (Linux)"
-
-
-def eval_tmpdir_problems(live):
-    """What's wrong with the TMPDIR live.yml gives `claude plugin eval` on Linux, as a list. Each
-    run's folder is made in TMPDIR, and the Bash sandbox denies writes in SANDBOX_DENIES, that
-    folder included. Bash's own temp folder, <TMPDIR>/claude-eval-XXXXXX/tmp/claude-<uid>, must
-    fit in 44 bytes, or Claude Code puts it in /tmp. The runner's uid is 1001."""
-    start = live.find(SANDBOX_STEP)
-    if start == -1:
-        return ["live.yml has no Linux sandbox step"]
-    end = live.find("\n      - ", start + len(SANDBOX_STEP))
-    step = live[start:end if end != -1 else len(live)]
-    if "if: runner.os == 'Linux'" not in step:
-        return ["the sandbox step isn't Linux only"]
-    found = re.findall(r'echo "TMPDIR=([^"]*)" >> "\$GITHUB_ENV"', step)
-    if len(found) != 1:
-        return [f"the Linux sandbox step sets TMPDIR {len(found)} times, not once"]
-    folder, problems = found[0], []
-    if not folder.startswith("/") or "$" in folder:
-        problems.append(f"TMPDIR={folder} isn't a literal absolute path, so its length can't be checked")
-    if any(folder == denied or folder.startswith(denied + "/") for denied in SANDBOX_DENIES):
-        problems.append(f"TMPDIR={folder} is in a folder the sandbox denies")
-    own = f"{folder}/claude-eval-XXXXXX/tmp/claude-1001"
-    if len(own.encode()) > 44:
-        problems.append(f"{own} is {len(own.encode())} bytes, over 44")
-    return problems
-
-
-class LinuxEvalTemp(unittest.TestCase):
-    """live.yml's Linux evals give `claude plugin eval` a TMPDIR where sandboxed Bash can write."""
-
-    def setUp(self):
-        self.live = (ROOT / ".github" / "workflows" / "live.yml").read_text(encoding="utf-8")
-
-    def test_the_linux_runs_get_a_writable_short_tmpdir(self):
-        self.assertEqual(eval_tmpdir_problems(self.live), [])
-
-    def test_planted_tmpdirs_are_caught(self):
-        for planted in ('$RUNNER_TEMP/eval-tmp', '/tmp/x', '/home/runner/eval-tmp'):
-            changed = self.live.replace('echo "TMPDIR=/ev"', f'echo "TMPDIR={planted}"')
-            self.assertNotEqual(changed, self.live)
-            self.assertTrue(eval_tmpdir_problems(changed), planted)
-        gone = self.live.replace('echo "TMPDIR=/ev" >> "$GITHUB_ENV"', "")
-        self.assertNotEqual(gone, self.live)
-        self.assertTrue(eval_tmpdir_problems(gone))
-
-
 class TheCeiling(unittest.TestCase):
     """docs/checks.md says what a release tag can cost at most. The caps in the paid workflows
     have to add up to no more than that."""

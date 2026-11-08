@@ -2,6 +2,10 @@
 
 Each version here matches `version` in `.claude-plugin/plugin.json`, the marketplace entry in `.claude-plugin/marketplace.json`, and `pyproject.toml`. Claude Code installs an update only when that number changes.
 
+## Unreleased
+
+- The Linux live evals use the default temp folder again. With `TMPDIR` at `/ev`, Bash in the v0.1.3 Linux evals ran no command at all, in either arm. Each call ended with `.bashrc: Permission denied` and a seccomp error about nested user namespaces. With the default, Bash runs and only its writes fail, as in v0.1.2.
+
 ## 0.1.3
 
 - Each skill line that tells the agent to run the launcher now names it by its path in the plugin, `"${CLAUDE_PLUGIN_ROOT}/bin/product-os"`. It runs in the session's working folder with no `cd` first. In the v0.1.2 live evals on Linux, Bash had no `product-os` on its PATH. Skills that read their settings through `kit_config` then worked without them. Where another agent tool leaves the path unfilled, a skill takes the plugin folder from its own path, and falls back to plain `product-os` only when no launcher is there. Lines the person runs in their own shell still say plain `product-os`. `doctor` also flags a skill that calls a missing tool through the launcher's path.
