@@ -7,7 +7,9 @@ near misses that shouldn't, each marked "train", "test" or "heldout". A descript
 the train queries, so the test queries are a held-out score. Once a decision has used the test
 split, "heldout" holds new queries written for the next comparison. Each query runs --runs times
 in a fresh scratch repository, as `claude -p` with this plugin loaded and at most
---max-turns turns, and counts as fired when the Skill tool was called with the skill's name.
+--max-turns turns, and counts as fired when the Skill tool was called with the skill's name and
+Claude Code didn't refuse the call. A skill that sets disable-model-invocation is not run and
+is named in the report: only a person may start it, so no query can fire it.
 The runs leave out your own user settings, skills and CLAUDE.md, so the score doesn't depend
 on what else is installed on this machine; --user-settings puts them back. Claude Code's
 built-in skills, such as code-review, still compete. A run that fails before the model
@@ -25,6 +27,7 @@ results as JSON to --out, outside the repository by default; they stay local.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -66,8 +69,9 @@ def fired(stream, skill):
     """(fired, the skills the run called, cost in USD, error or "", session id) from stream-json
     output. A run that used up --max-turns without calling a skill is an answer, not an error: in
     some runs Claude Code ends those with subtype error_during_execution, so the terminal reason
-    decides."""
-    called, cost, error, session = [], 0.0, "", ""
+    decides. A call whose result is an error, such as Claude Code refusing a skill only a person
+    may start, didn't start the skill: it is listed with " (refused)" and doesn't count."""
+    called, ids, cost, error, session = [], {}, 0.0, "", ""
     for line in stream.splitlines():
         try:
             event = json.loads(line)
@@ -77,7 +81,13 @@ def fired(stream, skill):
         if event.get("type") == "assistant":
             for block in (event.get("message") or {}).get("content") or []:
                 if block.get("type") == "tool_use" and block.get("name") == "Skill":
+                    ids[block.get("id")] = len(called)
                     called.append(str((block.get("input") or {}).get("skill", "")))
+        elif event.get("type") == "user":
+            for block in (event.get("message") or {}).get("content") or []:
+                if (isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error")
+                        and block.get("tool_use_id") in ids):
+                    called[ids.pop(block["tool_use_id"])] += " (refused)"
         elif event.get("type") == "result":
             cost = event.get("total_cost_usd") or 0.0
             turns_out = event.get("subtype") == "error_max_turns" or event.get("terminal_reason") == "max_turns"
@@ -85,6 +95,14 @@ def fired(stream, skill):
                 error = str(event.get("result") or event.get("subtype"))
     names = {skill, f"{PLUGIN}:{skill}"}
     return any(c.lstrip("/") in names for c in called), called, cost, error, session
+
+
+def person_only(skill):
+    """True when the skill sets disable-model-invocation. Claude Code leaves such a skill out of
+    Claude's listing and refuses Claude's Skill call for it, so no query can fire it."""
+    path = ROOT / "skills" / skill / "SKILL.md"
+    parts = path.read_text(encoding="utf-8").split("---", 2) if path.is_file() else []
+    return len(parts) == 3 and bool(re.search(r"^disable-model-invocation:\s*true\s*$", parts[1], re.M | re.I))
 
 
 def listing(session):
@@ -151,6 +169,8 @@ def main(argv=None):
                         help="load your own user settings, skills and CLAUDE.md too")
     args = parser.parse_args(argv)
     skills = args.skill or sorted(p.stem for p in QUERIES.glob("*.json"))
+    solo = [skill for skill in skills if person_only(skill)]
+    skills = [skill for skill in skills if skill not in solo]
     queries = {skill: [q for q in json.loads((QUERIES / f"{skill}.json").read_text(encoding="utf-8"))
                        if not args.split or q["split"] == args.split] for skill in skills}
     # Run number outermost, so a stop at --max-cost leaves fewer runs of every query, not no runs of the last skill.
@@ -186,6 +206,8 @@ def main(argv=None):
     print(f"  Listing: {sum(not names for names in seen)} of {len(results)} runs showed every {PLUGIN} skill "
           f"with its description ({len(results) - len(seen)} listings not found)"
           + (f"; shown by name only in some: {', '.join(bare)}" if bare else ""))
+    for skill in solo:
+        print(f"  not run: {skill}: only a person may start it (disable-model-invocation), so no query can fire it")
     print("  A run that ended on an error counts only under errors.")
     print("  skill          split  should fire  fired      should not  stayed quiet  errors")
     for skill in skills:

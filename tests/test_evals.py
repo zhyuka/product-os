@@ -4,7 +4,9 @@
 CLAUDE_CONFIG_DIR, then starts the session there with CLAUDE_CONFIG_DIR set to <run>/config. These
 tests plant that layout and read the result the way the session's hooks do.
 """
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -347,6 +349,77 @@ class LiveRunner(unittest.TestCase):
         code, doc, calls = self.live(100, 0.01)
         self.assertEqual([c["case"] for c in calls], names)
         self.assertEqual(len(names), 28)
+
+
+def load_triggers():
+    spec = importlib.util.spec_from_file_location("triggers", ROOT / "evals" / "triggers.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def skill_stream(skill, refused):
+    """A run's stream-json as `claude -p` printed it under a local mock API: one Skill call, its
+    result and the end. Claude Code 2.1.318 marked the refusal of a skill that sets
+    disable-model-invocation with is_error, and an allowed call's result with no is_error."""
+    result = {"type": "tool_result", "tool_use_id": "toolu_1", "content": "Launching skill: " + skill}
+    if refused:
+        result.update(is_error=True, content=f"<tool_use_error>Skill {skill} cannot be used with Skill tool "
+                                             "due to disable-model-invocation.</tool_use_error>")
+    events = [
+        {"type": "system", "subtype": "init", "session_id": "s1"},
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "toolu_1", "name": "Skill", "input": {"skill": skill}}]}},
+        {"type": "user", "message": {"content": [result]}},
+        {"type": "result", "subtype": "success", "is_error": False, "total_cost_usd": 0.001},
+    ]
+    return "\n".join(json.dumps(e) for e in events)
+
+
+class TriggerRunner(unittest.TestCase):
+    """evals/triggers.py counts a query as fired when Claude called the Skill tool for its skill.
+    A skill that sets disable-model-invocation can't fire from words: Claude Code leaves it out of
+    Claude's listing and refuses the call."""
+
+    def setUp(self):
+        self.triggers = load_triggers()
+
+    def test_an_allowed_skill_call_fires(self):
+        hit, called, *_ = self.triggers.fired(skill_stream("product-os:review", refused=False), "review")
+        self.assertTrue(hit)
+        self.assertEqual(called, ["product-os:review"])
+
+    def test_a_refused_skill_call_does_not_fire(self):
+        # In v0.1.4 a retro-quiet run made this call, and its refusal ended the run.
+        hit, called, *_ = self.triggers.fired(skill_stream("product-os:retro", refused=True), "retro")
+        self.assertFalse(hit)
+        self.assertEqual(called, ["product-os:retro (refused)"])
+
+    def test_a_skill_only_a_person_may_start_is_not_run(self):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        for name, flag in (("solo", "disable-model-invocation: true\n"), ("open", "")):
+            (root / "skills" / name).mkdir(parents=True)
+            (root / "skills" / name / "SKILL.md").write_text(
+                f"---\nname: {name}\ndescription: x\n{flag}---\n\n# {name}\n", encoding="utf-8")
+        queries = root / "evals" / "triggers"
+        queries.mkdir(parents=True)
+        for name in ("solo", "open"):
+            (queries / f"{name}.json").write_text(json.dumps(
+                [{"query": f"start {name}", "should_trigger": True, "split": "train"}]), encoding="utf-8")
+        ran = []
+
+        def run_one(query, skill, *rest):
+            ran.append(skill)
+            return {"fired": True, "called": [skill], "cost": 0.0, "error": "", "attempts": 1, "bare": []}
+
+        self.triggers.ROOT, self.triggers.QUERIES, self.triggers.run_one = root, queries, run_one
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.triggers.main(["--runs", "1", "--out", str(root / "out.json")])
+        self.assertEqual(ran, ["open"])
+        self.assertEqual(code, 0)
+        self.assertIn("not run: solo: only a person may start it", out.getvalue())
 
 
 if __name__ == "__main__":
