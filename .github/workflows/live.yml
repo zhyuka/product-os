@@ -129,6 +129,18 @@ jobs:
               '  include if exists <local/bwrap>' '}' | sudo tee /etc/apparmor.d/bwrap > /dev/null
             sudo systemctl reload apparmor
           fi
+          # `claude plugin eval` makes each run's folder in $TMPDIR, and on Linux its sandbox
+          # denies writes anywhere in /tmp, that folder included, so Bash could write nothing
+          # (anthropics/claude-code#104631). The runs get a TMPDIR outside /tmp. It has to be
+          # short too: Bash's own temp folder, <TMPDIR>/claude-eval-XXXXXX/tmp/claude-<uid>,
+          # must fit in 44 bytes, or Claude Code puts it back in /tmp.
+          sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" /ev
+          own="/ev/claude-eval-XXXXXX/tmp/claude-$(id -u)"
+          if [ "${#own}" -gt 44 ]; then
+            echo "::error::Bash's temp folder in an eval run would be $own, over 44 bytes"
+            exit 1
+          fi
+          echo "TMPDIR=/ev" >> "$GITHUB_ENV"
 
       - name: Install Claude Code (macOS, Linux)
         if: runner.os != 'Windows'
