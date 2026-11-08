@@ -22,8 +22,11 @@ Detail for one job each. Read the section when the job comes up; it is not loade
 - Fold a section into the fewest parts that show how its items relate, often one table: a row per
   item, its relations as columns. Evidence sits in its own zone beside them.
 - Cells are fragments: the point in the first two words, one idea per line. Write each open
-  decision as one block, not columns: the question, its options as nested bullets, then the
-  recommendation and its reason, set apart by colour and a word.
+  decision as one block, not columns: the question, its options as nested bullets, each with what it
+  gains and what it costs nested under it, then the recommendation and its reason, set apart by
+  colour and a word.
+- Open the section with what it serves: the page or product, and the nearby ones it does not cover,
+  so a reader with no pre-read knows where they are.
 - Draw numbers the room compares on one shared scale.
 - Show status as a word, not colour alone.
 
