@@ -8,7 +8,8 @@ hooks.load_config().
 
 session_status() is the SessionStart hook: one line that says what the hooks
 will block, shown once per project unless the session_status option says
-"always" or "off". A config problem is shown every time.
+"always" or "off". A config problem is shown every time. It also tells the
+model, every time, which folder is the project and which is the plugin's.
 """
 import contextlib
 import hashlib
@@ -99,9 +100,29 @@ def session_status(environ=None):
     shown = [f"product-os: {p}." for p in problems]
     if mode == "always" or (mode == "once" and _first_time(environ, project, line)):
         shown.append(line)
-    if shown:
-        print(json.dumps({"systemMessage": " ".join(shown)}))
+    output = {"systemMessage": " ".join(shown)} if shown else {}
+    context = project_context(project, environ)
+    if context:
+        output["hookSpecificOutput"] = {"hookEventName": "SessionStart", "additionalContext": context}
+    if output:
+        print(json.dumps(output))
     return 0
+
+
+def project_context(project, environ):
+    """What the model is told about the two folders. Claude Code puts "Base directory for this skill:"
+    and a folder in the plugin above each skill, and runs have taken that folder for the project.
+    None when one folder holds the other, as when someone works on the plugin itself."""
+    root = environ.get("CLAUDE_PLUGIN_ROOT") or str(Path(__file__).resolve().parent.parent)
+    try:
+        here, plugin = Path(project).resolve(), Path(root).resolve()
+    except (OSError, RuntimeError):
+        return None
+    if here == plugin or plugin in here.parents or here in plugin.parents:
+        return None
+    return (f"The project is the session's working folder, {here}. Read its files and run commands there. "
+            f"Product OS skills load from the plugin's own folder, {plugin}, which isn't the project. "
+            "Don't look for the project's files there, write there or `cd` into it.")
 
 
 def status_line(config, from_file="", proposed=(), user_file=None):

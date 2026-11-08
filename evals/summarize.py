@@ -25,10 +25,15 @@ trace is still on disk (evals/live.py keeps them), it also prints what the run
 did: each tool call with the start of its result or its denial, the calls of an
 agent the run started indented under it, and the end of the last reply. Anything
 shaped like a token or key is masked.
+
+From the same traces it counts the scored runs with the plugin that took the
+plugin's folder for the project: a `cd` into it, or a path there outside the
+plugin's own files. Each such run is named under its case.
 """
 import json
 import re
 import sys
+from pathlib import Path
 
 
 def fmt(value, signed=False):
@@ -114,6 +119,11 @@ def errors(runs):
 DIGESTS = 600_000
 # A JWT such as GitHub's OIDC token, an Anthropic key, or a bearer token.
 SECRET = re.compile(r"eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]*|sk-ant-[\w-]+|(?i:bearer)\s+[\w.~+/=-]{16,}")
+# The plugin live.py evaluates: it runs `claude plugin eval .` in the checkout that holds this file.
+PLUGIN = Path(__file__).resolve().parent.parent
+# The plugin's own files, which its skills name by path. Another path in its folder is a project file
+# looked for in the wrong place.
+OWN = {"bin", "tools", "skills", "agents", "templates", "ci", "hooks"}
 
 
 def clip(text, width):
@@ -131,6 +141,50 @@ def call_text(name, given):
     return json.dumps(given)
 
 
+def events(path):
+    """Each event in a trace with its message's content blocks, or None when it has none. Lines
+    that aren't a JSON object are passed over. OSError when the trace can't be read."""
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            message = event.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            yield event, ([block for block in content if isinstance(block, dict)]
+                          if isinstance(content, list) else None)
+
+
+def strays(path, root=PLUGIN):
+    """The tool calls in one run's trace, its agents' included, that took the plugin's folder for
+    the project: a `cd` into it, or a path in it outside OWN. None when the trace isn't there."""
+    if not path:
+        return None
+    homes = "(?:" + "|".join(re.escape(home) for home in {str(root), root.as_posix()}) + ")"
+    into = re.compile(r"""(?:^|[\s;&|(])cd\s+["']?""" + homes + r"""(?=$|[/\\\s"';&|)])""")
+    named = re.compile(homes + r"""(?:[/\\]([^/\\\s"';&|)]*))?(?=$|[/\\\s"';&|)])""")
+    found = []
+    try:
+        for event, content in events(path):
+            if event.get("type") != "assistant" or content is None:
+                continue
+            for block in content:
+                given = block.get("input") if block.get("type") == "tool_use" else None
+                if not isinstance(given, dict):
+                    continue
+                for value in given.values():
+                    if isinstance(value, str) and (into.search(value) or any(
+                            match.group(1) not in OWN for match in named.finditer(value))):
+                        found.append(f"{block.get('name', '?')}: {clip(value, 140)}")
+                        break
+    except OSError:
+        return None
+    return found
+
+
 def what_it_did(path, calls=24, width=140, tail=600):
     """Lines saying what one run did, from its trace: each tool call with the start of its result,
     or "DENIED" and why, the calls of an agent it started indented, and the end of its last reply.
@@ -139,36 +193,26 @@ def what_it_did(path, calls=24, width=140, tail=600):
         return []
     order, outcome, last = [], {}, ""
     try:
-        with open(path, encoding="utf-8") as handle:
-            for line in handle:
-                try:
-                    event = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(event, dict):
-                    continue
-                inner = bool(event.get("parent_tool_use_id"))
-                message = event.get("message")
-                content = message.get("content") if isinstance(message, dict) else None
-                content = [block for block in content if isinstance(block, dict)] if isinstance(content, list) else None
-                if event.get("type") == "assistant" and content is not None:
-                    for block in content:
-                        if block.get("type") == "tool_use":
-                            order.append((block.get("id"), block.get("name", "?"), inner,
-                                          call_text(block.get("name"), block.get("input") or {})))
-                        elif block.get("type") == "text" and not inner and block.get("text", "").strip():
-                            last = block["text"]
-                elif event.get("type") == "user" and content is not None:
-                    for block in content:
-                        if block.get("type") == "tool_result" and block.get("tool_use_id") not in outcome:
-                            body = block.get("content")
-                            if isinstance(body, list):
-                                body = " ".join(part.get("text", "") for part in body if isinstance(part, dict))
-                            outcome[block.get("tool_use_id")] = ("error: " if block.get("is_error") else "") + str(body)
-                elif event.get("subtype") == "permission_denied":
-                    outcome[event.get("tool_use_id")] = f"DENIED ({event.get('decision_reason_type', '?')})"
-                elif event.get("type") == "result" and isinstance(event.get("result"), str) and event["result"].strip():
-                    last = event["result"]
+        for event, content in events(path):
+            inner = bool(event.get("parent_tool_use_id"))
+            if event.get("type") == "assistant" and content is not None:
+                for block in content:
+                    if block.get("type") == "tool_use":
+                        order.append((block.get("id"), block.get("name", "?"), inner,
+                                      call_text(block.get("name"), block.get("input") or {})))
+                    elif block.get("type") == "text" and not inner and block.get("text", "").strip():
+                        last = block["text"]
+            elif event.get("type") == "user" and content is not None:
+                for block in content:
+                    if block.get("type") == "tool_result" and block.get("tool_use_id") not in outcome:
+                        body = block.get("content")
+                        if isinstance(body, list):
+                            body = " ".join(part.get("text", "") for part in body if isinstance(part, dict))
+                        outcome[block.get("tool_use_id")] = ("error: " if block.get("is_error") else "") + str(body)
+            elif event.get("subtype") == "permission_denied":
+                outcome[event.get("tool_use_id")] = f"DENIED ({event.get('decision_reason_type', '?')})"
+            elif event.get("type") == "result" and isinstance(event.get("result"), str) and event["result"].strip():
+                last = event["result"]
     except OSError:
         return []
     lines = [f"{'    ' if inner else ''}{name}: {clip(text, width)} -> {clip(outcome.get(ident, 'no result'), width)}"
@@ -219,13 +263,19 @@ def summarize(doc):
         unscored += sum(not scored(run) for run in with_runs + without_runs)
         partly += sum(scored(run) and any(skipped(mark) for mark in run.get("graders") or [])
                       for run in with_runs + without_runs)
-        rows.append((case, with_runs, without_runs, score, without, delta))
+        rows.append((case, with_runs, without_runs, score, without, delta,
+                     [strays(run.get("tracePath")) if scored(run) else None for run in with_runs]))
     lines.append(f"## Live evals: Claude Code {doc.get('claudeVersion', '?')}, {len(cases)} cases, "
                  f"${doc.get('costUsd', 0):.2f}, {doc.get('durationSeconds', 0)}s")
     lines.append("")
     lines.append(f"{passed} of {len(cases)} cases at or above the threshold of "
                  f"{'?' if threshold is None else threshold}. "
                  f"Mean delta: {fmt(sum(deltas) / len(deltas) if deltas else None, True)}.")
+    read = [found for *_, each in rows for found in each if found is not None]
+    if read:
+        took = sum(bool(found) for found in read)
+        lines += ["", f"{took} of {len(read)} scored with-plugin runs took the plugin's folder for the project: "
+                      "a `cd` into it, or a file there other than the plugin's own. Each is named under its case."]
     if doc.get("notice"):
         lines += ["", f"**Notice:** {doc['notice']}"]
     if unscored:
@@ -250,11 +300,11 @@ def summarize(doc):
         lost = sum(not ok for _, _, ok in found)
         return f"{len(found)} of {len(runs)}" + (f", {lost} not scored" if lost else "")
 
-    for case, with_runs, without_runs, score, without, delta in rows:
+    for case, with_runs, without_runs, score, without, delta, _ in rows:
         lines.append(f"| {case.get('name')} | {fmt(score)} | {fmt(without)} | {fmt(delta, True)} | "
                      f"{errored(with_runs)} | {errored(without_runs)} |")
     budget = [DIGESTS, 0]
-    for case, with_runs, without_runs, *_ in rows:
+    for case, with_runs, without_runs, *_, each in rows:
         lines += ["", f"### {case.get('name')}", "",
                   "| grader | type | weight | with plugin | without |",
                   "| --- | --- | --- | --- | --- |"]
@@ -267,6 +317,10 @@ def summarize(doc):
         for arm, runs in (("with plugin", with_runs), ("without", without_runs)):
             for number, error, ok in errors(runs):
                 lines.append(f"- {arm}, run {number}{'' if ok else ', not scored'}: {error}")
+        for number, found in enumerate(each, 1):
+            if found:
+                lines.append(f"- with plugin, run {number} took the plugin's folder for the project in "
+                             f"{len(found)} {'call' if len(found) == 1 else 'calls'}, first {found[0]}")
         lines += failures(case, with_runs, without_runs)
         for advisory in case.get("advisories") or []:
             lines.append(f"- advisory: {advisory}")

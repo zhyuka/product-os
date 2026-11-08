@@ -186,6 +186,54 @@ class Summarize(unittest.TestCase):
         self.assertIn("last reply: VERDICT: PASS (0 BLOCKER)\n", text)
         self.assertNotIn(jwt.split(".")[1], text)
 
+    def test_a_run_that_took_the_plugin_folder_for_the_project_is_named(self):
+        """In the v0.1.2 and v0.1.3 live evals, runs with the plugin read the project's files in the
+        plugin's folder, or ran `cd` into it before the launcher. The summary counts those runs,
+        so each release shows whether runs still go there."""
+        module = load_summarize()
+        root = module.PLUGIN
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, folder, True)
+
+        def trace(name, *calls, parent=None):
+            blocks = [{"type": "tool_use", "id": f"{name}{n}", "name": tool, "input": given}
+                      for n, (tool, given) in enumerate(calls)]
+            event = {"type": "assistant", "message": {"content": blocks}}
+            if parent:
+                event["parent_tool_use_id"] = parent
+            path = folder / f"{name}.jsonl"
+            path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            return str(path)
+
+        clean = trace("clean", ("Bash", {"command": f'"{root}/bin/product-os" kit_config'}),
+                      ("Read", {"file_path": f"{root}/skills/review/references/rules.md"}),
+                      ("Read", {"file_path": "stats.py"}), ("Skill", {"skill": "product-os:review"}),
+                      ("Bash", {"command": f"cd {root}-old && ls"}))
+        moved = trace("moved", ("Bash", {"command": f'cd "{root}" && ./bin/product-os kit_config'}))
+        looked = trace("looked", ("Read", {"file_path": f"{root}/stats.py"}),
+                       ("Glob", {"pattern": "*.py", "path": str(root)}))
+        agent = trace("agent", ("Grep", {"pattern": "median", "path": f"{root}/stats.py"}), parent="t9")
+        self.assertEqual(module.strays(clean), [])
+        self.assertEqual(module.strays(moved), [f'Bash: cd "{root}" && ./bin/product-os kit_config'])
+        self.assertEqual(module.strays(looked), [f"Read: {root}/stats.py", f"Glob: {root}"])
+        self.assertEqual(module.strays(agent), [f"Grep: {root}/stats.py"])
+        self.assertIsNone(module.strays(str(folder / "removed.jsonl")))
+        self.assertIsNone(module.strays(None))
+
+        runs = []
+        for path in (clean, moved, looked, str(folder / "removed.jsonl")):
+            runs.append(run(1.0, True, True))
+            runs[-1]["tracePath"] = path
+        signed_out = run(0.33, True, False, cost=0.002, error=SIGN_IN)
+        signed_out["tracePath"] = looked
+        text = module.summarize(result(runs + [signed_out], [run(0.0, False, False)]))
+        self.assertIn("\n2 of 3 scored with-plugin runs took the plugin's folder for the project:", text)
+        self.assertIn(f'- with plugin, run 2 took the plugin\'s folder for the project in 1 call, first Bash: cd "{root}"', text)
+        self.assertIn(f"- with plugin, run 3 took the plugin's folder for the project in 2 calls, first Read: {root}/stats.py\n", text)
+        self.assertNotIn("run 1 took", text)
+        self.assertNotIn("run 5 took", text)
+        self.assertNotIn("scored with-plugin runs", self.summarize(result([run(1.0, True, True)], [])))
+
     def test_a_run_that_worked_then_timed_out_is_scored(self):
         timed_out = run(0.33, True, False, error="timed out after 420s")
         text = self.summarize(result([timed_out, run(1.0, True, True)], [run(0.0, False, False)]))

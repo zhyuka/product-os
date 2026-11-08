@@ -466,6 +466,9 @@ class SessionStatusTest(unittest.TestCase):
             json.dumps({"projects": {str(self.project): {"qa_commands": list(qa)}}}))
 
     def status(self, mode=None, data=True, **env):
+        return self.output(mode, data, **env).get("systemMessage", "")
+
+    def output(self, mode=None, data=True, **env):
         env = {"CLAUDE_PROJECT_DIR": str(self.project), "CLAUDE_CONFIG_DIR": str(self.user), **env}
         if mode:
             env["CLAUDE_PLUGIN_OPTION_SESSION_STATUS"] = mode
@@ -477,7 +480,7 @@ class SessionStatusTest(unittest.TestCase):
                               env={**{k: v for k, v in os.environ.items()
                                       if not k.startswith(("CLAUDE_PLUGIN_", "CLAUDE_PROJECT_DIR"))}, **env})
         self.assertEqual(done.returncode, 0, done.stderr)
-        return json.loads(done.stdout)["systemMessage"] if done.stdout.strip() else ""
+        return json.loads(done.stdout) if done.stdout.strip() else {}
 
     def configure(self, text, name="product-os-checks.json"):
         (self.project / ".claude").mkdir(exist_ok=True)
@@ -497,6 +500,31 @@ class SessionStatusTest(unittest.TestCase):
         self.assertEqual(self.status(), "")
         self.configure('{"qa_commands": ["npm test", "make"]}')
         self.assertIn('The project\'s file also proposes "make", which doesn\'t count', self.status())
+
+    def test_the_model_is_told_which_folder_is_the_project_every_time(self):
+        """Claude Code puts "Base directory for this skill:" and a folder in the plugin above each
+        skill. In the v0.1.2 and v0.1.3 live evals, runs with the plugin looked for the project's
+        files in the plugin's folder, or ran `cd` into it before the launcher."""
+        plugin = self.project.parent / "plugin"
+        plugin.mkdir()
+        project, plugin = self.project.resolve(), plugin.resolve()
+        expected = {"hookEventName": "SessionStart", "additionalContext": (
+            f"The project is the session's working folder, {project}. Read its files and run commands there. "
+            f"Product OS skills load from the plugin's own folder, {plugin}, which isn't the project. "
+            "Don't look for the project's files there, write there or `cd` into it.")}
+        for mode in ("once", "once", "always", "off"):
+            with self.subTest(mode=mode):
+                self.assertEqual(self.output(mode, CLAUDE_PLUGIN_ROOT=str(plugin))["hookSpecificOutput"], expected)
+        self.assertEqual(self.output("off"), {"hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": expected["additionalContext"].replace(str(plugin), str(ROOT.resolve()))}})
+
+    def test_no_folder_is_named_when_one_holds_the_other(self):
+        inside = self.project / "plugins" / "product-os"
+        inside.mkdir(parents=True)
+        for root in (self.project, inside, self.project.parent):
+            with self.subTest(root=root):
+                self.assertEqual(self.output("off", CLAUDE_PLUGIN_ROOT=str(root)), {})
 
     def test_always_and_off(self):
         self.assertIn("product-os is on", self.status("always"))
