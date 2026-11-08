@@ -7,6 +7,10 @@ disable-model-invocation: true
 
 # Retro: improve how you work with Claude Code, on a cycle
 
+This run started from `/product-os:retro`, typed by hand or by a scheduled task, and this text is
+the whole skill: carry it out here. Don't call the Skill tool for retro. That tool refuses a skill
+only a person may start, and its refusal doesn't end a run that has already started.
+
 A run ends with one report that does three things. It says whether the last run's upgrades are
 working, each by its own measure. It names at most five new upgrades, each tied to a number in the
 user's own records and, when the idea comes from outside, to a cited source. And it files each one

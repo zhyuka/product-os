@@ -128,6 +128,23 @@ class PluginFilesTest(unittest.TestCase):
             self.assertRegex(text.split("---")[1], r"\nname: " + re.escape(path.parent.name) + r"\n", path)
             self.assertRegex(text.split("---")[1], r"\ndescription: \S", path)
 
+    def test_a_skill_only_a_person_may_start_says_it_is_already_running(self):
+        # Claude Code expands /product-os:<name> before the model's first turn. A Skill call for it
+        # after that is refused for a skill with disable-model-invocation, and the refusal tells the
+        # model to ask the person to type the command, which ends the run. The opening says so first.
+        checked = []
+        for path in sorted((ROOT / "skills").glob("*/SKILL.md")):
+            front, body = path.read_text(encoding="utf-8").split("---", 2)[1:]
+            if not re.search(r"^disable-model-invocation:\s*true\s*$", front, re.M):
+                continue
+            name = path.parent.name
+            opening = body.split("\n## ", 1)[0]
+            self.assertIn(f"`/product-os:{name}`", opening, path)
+            self.assertIn(f"Don't call the Skill tool for {name}.", opening, path)
+            checked.append(name)
+        if not checked:
+            self.skipTest("no skill sets disable-model-invocation")
+
     def test_each_retro_setting_that_runs_something_needs_accepting_from_a_project(self):
         # kit_config.py withholds a project's command settings until they're accepted; a retro key
         # whose row says it runs a command must be one of them.
