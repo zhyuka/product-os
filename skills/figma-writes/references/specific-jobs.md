@@ -17,6 +17,14 @@ Detail for one job each. Read the section when the job comes up; it is not loade
 - To screenshot a diagram built from page-level siblings, put a temporary transparent shape behind
   it, screenshot that shape with `contentsOnly: false`, then delete the shape.
 
+## Board text
+
+- Lead each part with its answer in one sentence; its evidence sits beside it as a table or picture.
+- Cells and options are fragments: the point in the first two words, one idea per line, no
+  sub-bullets.
+- Draw numbers the room compares on one shared scale.
+- Show status as a word, not colour alone.
+
 ## Ready for dev
 
 - `use_figma` can't read or set `devStatus`, and REST can't write it. Set Ready for dev with the

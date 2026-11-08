@@ -10,8 +10,9 @@ back. `figma-use` (and `figma-use-figjam` on a `/board/` file) covers the Plugin
 covers what a write can destroy, what REST can't do, and how to prove a write landed. Read
 `references/specific-jobs.md` first when the job is one of these: placing frames on a dark board or
 nesting sections, uploading or replacing an image, building a hover, styling a board diagram,
-setting Ready for dev, checking a text edit in the export, starting a new thread or cleaning up
-comments, checking whether a draft was already posted, or reading an old version.
+writing a board section the team walks through, setting Ready for dev, checking a text edit in the
+export, starting a new thread or cleaning up comments, checking whether a draft was already posted,
+or reading an old version.
 
 The tools named below live in this plugin's `tools/` folder; run them as
 `python3 "${CLAUDE_PLUGIN_ROOT}/tools/<name>.py" ...`. They read the token from `FIGMA_TOKEN` or the
@@ -34,12 +35,12 @@ OS keychain (`figma_auth.py --source` says which), and file keys from their argu
   can edit; upload an image only for a picture of real UI, never a rendered PNG of text. Give each
   part the form its use in the room needs: a table for a lookup, stickies for a set the room will
   sort or add to, shapes and arrows for a flow, and a small picture beside any part the room should
-  get at a glance. The team works from a section live in the room,
-  so it carries the answers the work proposes and the evidence for each, in plain words: every
-  option, value and item a point rests on, named, with its data beside it, so the room can check an
-  answer or overturn it. The data is measured on the real population or taken from published
-  research; a sample picked to show the types, or a mock-up's placeholder, is neither. A count can
-  measure a named thing; it never stands in for the set the room has to judge. Build history stays
+  get at a glance. The team works from a section live in the room, so each part reads at a glance
+  and lets the room check or overturn it: the answer the work proposes comes first, and beside it its
+  evidence, every option, value and item it rests on, named, with data measured on the real
+  population or taken from published research, never a sample picked to show the types or a
+  mock-up's placeholder. A count can measure a named thing; it never stands in for the set the room
+  has to judge, so a long set sits beside the answer in its own table or picture. Build history stays
   in the record and owners with the user, and it names no repos or local paths, which a reader on
   the board cannot follow.
 
