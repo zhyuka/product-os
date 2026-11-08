@@ -22,6 +22,8 @@ from unittest import mock
 from product_os import design, exercise, gates
 from product_os.cli import main
 
+from each import one_test_each
+
 GOOD = """<!doctype html><meta name=viewport content="width=device-width">
 <style>
   body { margin: 0; font: 16px sans-serif; }
@@ -567,21 +569,21 @@ class GatesTest(unittest.TestCase):
 
     def test_the_good_page_passes_every_gate(self):
         self.assertEqual(self.failing(site(self.root, "good")), {})
-        for name, changes in STILL_GOOD.items():  # their motion isn't what's tested
-            with self.subTest(page=name):
-                self.assertEqual(self.failing(site(self.root, name, changes),
-                                              tuple(g for g in gates.GATES if g != "motion")), {})
 
-    def test_each_plant_fails_its_own_gate_and_no_other(self):
-        # The motion gate watches each page for 11 s, so only the motion plants run it.
+    def still_good(self, name, changes):
+        """Each page in STILL_GOOD passes every gate; their motion isn't what's tested."""
+        self.assertEqual(self.failing(site(self.root, name, changes),
+                                      tuple(g for g in gates.GATES if g != "motion")), {})
+
+    def planted(self, name, plant):
+        """Each plant fails its own gate and no other. The motion gate watches each page for 11 s,
+        so only the motion plants run it."""
+        changes, gate = plant
         quick = tuple(g for g in gates.GATES if g != "motion")
-        for name, (changes, gate) in PLANTED.items():
-            with self.subTest(plant=name):
-                failed = self.failing(site(self.root, name, changes),
-                                      gates.GATES if gate == "motion" else quick)
-                self.assertEqual(list(failed), [gate])
-                self.assertEqual(failed[gate]["status"], "fail")
-                self.assertTrue(failed[gate]["findings"], "a failure names what failed")
+        failed = self.failing(site(self.root, name, changes), gates.GATES if gate == "motion" else quick)
+        self.assertEqual(list(failed), [gate])
+        self.assertEqual(failed[gate]["status"], "fail")
+        self.assertTrue(failed[gate]["findings"], "a failure names what failed")
 
     def test_a_finding_names_the_element_and_the_number(self):
         failed = self.failing(site(self.root, "named", PLANTED["a small image drawn large"][0]), ("images",))
@@ -667,6 +669,10 @@ class GatesTest(unittest.TestCase):
         self.assertIn("--- focus at 390 px", out.getvalue())
         saved = json.loads(path.read_text())
         self.assertEqual([r["gate"] for r in saved["results"]], ["keyboard", "focus"])
+
+
+one_test_each(GatesTest, "still_good", STILL_GOOD, GatesTest.still_good)
+one_test_each(GatesTest, "plant", PLANTED, GatesTest.planted)
 
 
 class StrayNavigationTest(unittest.TestCase):

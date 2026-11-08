@@ -18,6 +18,7 @@ from product_os import design, exercise
 from product_os.cli import main
 
 from design_payload import box, go, node, payload, reaction
+from each import one_test_each
 
 GOOD = """<!doctype html><meta name=viewport content="width=device-width">
 <style>
@@ -103,6 +104,11 @@ def plant(changes):
     return html
 
 
+NOISE = ("<style>@keyframes blink { 50% { opacity: 0.2; transform: scale(0.8) } }\n"
+         "  .noise { width: 300px; height: 120px; background: #e33; "
+         "animation: blink 0.15s infinite; }</style>\n<div class=noise></div>\n</main>")
+
+
 class ExerciseTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -152,46 +158,43 @@ class ExerciseTest(unittest.TestCase):
         self.assertTrue(all(Path(p).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
                             for p in hover["evidence"]))
 
-    def test_each_planted_build_fails_on_its_own_state(self):
+    def test_the_unplanted_build_responds_in_every_state(self):
         good = {key: r["status"] for key, r in self.results(self.build("good", GOOD)).items()}
         self.assertEqual(set(good.values()), {"responds"})
-        for name, (changes, state, status) in PLANTED.items():
-            with self.subTest(name):
-                got = self.results(self.build(name, plant(changes)), settle_ms=150)
-                self.assertEqual(got[state]["status"], status, got[state]["detail"])
-                others = {key: r["status"] for key, r in got.items() if key != state}
-                self.assertEqual(set(others.values()), {"responds"}, others)
+
+    def planted(self, name, entry):
+        """Each planted build fails on its own state, and responds in every other."""
+        changes, state, status = entry
+        got = self.results(self.build(name, plant(changes)), settle_ms=150)
+        self.assertEqual(got[state]["status"], status, got[state]["detail"])
+        others = {key: r["status"] for key, r in got.items() if key != state}
+        self.assertEqual(set(others.values()), {"responds"}, others)
 
     def test_a_planted_build_fails_the_command(self):
         code, out = self.command(self.build("planted", plant(PLANTED["no hover style"][0])))
         self.assertEqual(code, 1, out)
         self.assertIn("5 of 6 exercised states responded", out)
 
-    def test_an_animation_that_loops_elsewhere_isnt_a_response(self):
-        noise = ("<style>@keyframes blink { 50% { opacity: 0.2; transform: scale(0.8) } }\n"
-                 "  .noise { width: 300px; height: 120px; background: #e33; "
-                 "animation: blink 0.15s infinite; }</style>\n<div class=noise></div>\n</main>")
-        dead = {("1:7", "click"): PLANTED["a menu that doesn't open"][0],
-                ("1:2", "key"): PLANTED["no key reaction"][0]}
-        for state, changes in dead.items():
-            with self.subTest(state):
-                html = plant(changes).replace("</main>", noise)
-                for run in range(3):
-                    got = self.results(self.build(f"noise-{run}", html))
-                    self.assertEqual(got[state]["status"], "no change", f"run {run + 1}")
-        got = self.results(self.build("noise-good", GOOD.replace("</main>", noise)))
+    def test_a_good_build_with_an_animation_elsewhere_still_responds(self):
+        got = self.results(self.build("noise-good", GOOD.replace("</main>", NOISE)))
         self.assertEqual({r["status"] for r in got.values()}, {"responds"})
 
-    def test_a_timed_state_passes_only_when_its_own_node_moves(self):
-        folder = self.root / "timed"
+    def noisy(self, name, entry):
+        """An animation that loops elsewhere isn't a response: a dead state stays dead beside it,
+        on each of three runs."""
+        state, changes, run = entry
+        got = self.results(self.build(f"noise-{run}", plant(changes).replace("</main>", NOISE)))
+        self.assertEqual(got[state]["status"], "no change", f"run {run}")
+
+    def timed(self, name, entry):
+        """A timed state passes only when its own node moves."""
+        markup, status = entry
+        folder = self.root / f"timed-{name.replace(' ', '-')}"
         design.save_frame(folder, timed_payload())
-        for name, (markup, status) in TIMED.items():
-            with self.subTest(name):
-                html = GOOD.replace("</main>", f"{PULSE}{markup}\n</main>")
-                got = {(r["node"], r["do"]): r for r in exercise.exercise(
-                    folder, self.build(name, html), browser=self.browser, wait_s=1.5)}
-                self.assertEqual(got[("1:9", "wait")]["status"], status,
-                                 got[("1:9", "wait")]["detail"])
+        html = GOOD.replace("</main>", f"{PULSE}{markup}\n</main>")
+        got = {(r["node"], r["do"]): r for r in exercise.exercise(
+            folder, self.build(name, html), browser=self.browser, wait_s=1.5)}
+        self.assertEqual(got[("1:9", "wait")]["status"], status, got[("1:9", "wait")]["detail"])
 
     def test_an_accepted_state_is_reported_with_its_reason_and_passes(self):
         hover = next(s for s in design.plan_states(self.baseline) if s.do == "hover")
@@ -269,6 +272,15 @@ class ExerciseTest(unittest.TestCase):
         code, out = self.command(self.build("good", GOOD), baseline=folder)
         self.assertEqual(code, 1, out)
         self.assertIn("No state was exercised, so nothing passed.", out)
+
+
+one_test_each(ExerciseTest, "planted", PLANTED, ExerciseTest.planted)
+one_test_each(ExerciseTest, "noise", {
+    f"{label} run {run}": (state, PLANTED[plant_name][0], run)
+    for label, state, plant_name in (("click", ("1:7", "click"), "a menu that doesn't open"),
+                                     ("key", ("1:2", "key"), "no key reaction"))
+    for run in (1, 2, 3)}, ExerciseTest.noisy)
+one_test_each(ExerciseTest, "timed", TIMED, ExerciseTest.timed)
 
 
 class SameUrlTest(unittest.TestCase):

@@ -23,6 +23,8 @@ from unittest import mock
 
 from product_os import hooks, plugin
 
+from each import one_test_each
+
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "fixtures" / "hooks"
 HOOKS = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
@@ -145,16 +147,17 @@ class EveryShellTest(unittest.TestCase):
         required = [s for s in os.environ.get("REQUIRE_SHELLS", "").split(",") if s]
         self.assertEqual([s for s in required if s not in SHELLS], [])
 
-    def test_every_fixture_gets_the_outcome_in_its_name_in_every_shell(self):
+    def test_a_shell_is_here_to_run_the_hook_commands(self):
         self.assertTrue(SHELLS, "no shell found to run the hook commands in")
-        for label, shell in SHELLS.items():
-            for path, event, payload in fixture_events():
-                with self.subTest(shell=label, fixture=path.name):
-                    self.assertIn(event, COMMANDS, "hooks.json has no command for this fixture's event")
-                    code, output, stderr = self.plugin.run(shell, event, payload)
-                    self.assertEqual((code, outcome(output)), (0, path.stem.split("-")[0]),
-                                     f"{output} {stderr}")
-                    self.assertNotIn("systemMessage", output.get("hookSpecificOutput", {}))
+
+    def every_fixture(self, label, shell):
+        """Every fixture gets the outcome in its name, in each shell."""
+        for path, event, payload in fixture_events():
+            with self.subTest(fixture=path.name):
+                self.assertIn(event, COMMANDS, "hooks.json has no command for this fixture's event")
+                code, output, stderr = self.plugin.run(shell, event, payload)
+                self.assertEqual((code, outcome(output)), (0, path.stem.split("-")[0]), f"{output} {stderr}")
+                self.assertNotIn("systemMessage", output.get("hookSpecificOutput", {}))
 
     def test_the_search_finds_a_python_on_the_path(self):
         payload = (FIXTURES / "deny-reviewer-write.json").read_text(encoding="utf-8")
@@ -220,6 +223,9 @@ class EveryShellTest(unittest.TestCase):
                 self.assertIn("needs Python 3.9 or later", answers[0][1]["systemMessage"])
                 self.assertEqual(answers[1][1], {}, "the second call in a session warns again")
                 self.assertIn("needs Python 3.9 or later", answers[2][1]["systemMessage"])
+
+
+one_test_each(EveryShellTest, "every_fixture_in", SHELLS, EveryShellTest.every_fixture)
 
 
 @unittest.skipUnless(POSIX and os.name != "nt", "needs sh, dash or bash on macOS or Linux")
