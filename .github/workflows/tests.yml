@@ -35,7 +35,8 @@ jobs:
       # Claude Code can use: sh, dash and bash on macOS and Linux, Git Bash on
       # Windows, and PowerShell (pwsh, and Windows PowerShell 5.1) for Windows
       # without Git Bash. REQUIRE_SHELLS makes a missing shell a failure.
-      # run_tests.py also prints the first failures as error annotations.
+      # run_tests.py runs the tests in one process per CPU, up to eight, and
+      # prints the first failures as error annotations.
       - name: Unit tests, with every hook command run in every shell
         env:
           REQUIRE_SHELLS: ${{ runner.os == 'Windows' && 'git-bash,pwsh,powershell' || 'sh,dash,bash,pwsh' }}

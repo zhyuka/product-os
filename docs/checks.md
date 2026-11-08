@@ -510,7 +510,7 @@ The demo runs each check with stub agents: small deterministic Python functions 
 
 ## Testing
 
-A check counts only after it catches a planted bad case and passes a known-good one. Each one reports counts, not a verdict. Run the tests with `python -m unittest discover -s tests`.
+A check counts only after it catches a planted bad case and passes a known-good one. Each one reports counts, not a verdict. Run the tests with `python .github/run_tests.py`, which runs them in one process per CPU, up to eight. On your machine it skips a test that passed before when nothing its module's tests read has changed since, and says so on its line. From Python 3.12, an edit to a function those tests never ran doesn't count, except in a file a browser test runs through, which counts whole. A test that starts a program always runs. Playwright's driver, which runs the browser, doesn't count. Pass `--no-cache` to run every test, as CI does.
 
 - `product_os/calibrate.py` plants one bad case and one good case for each demo check, and demo part 4 prints the result. The tests show that a check which never objects, or always objects, fails calibration.
 - `tests/test_check.py` calibrates `product-os check` on the four runs in `examples/runs/`. CI also runs the command on them, and fails if a good run doesn't pass or a bad run doesn't fail.
