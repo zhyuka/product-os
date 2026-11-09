@@ -22,9 +22,10 @@ Detail for one job each. Read the section when the job comes up; it is not loade
 - Fold a section into the fewest parts that show how its items relate, often one table: a row per
   item, its relations as columns. Evidence sits in its own zone beside them.
 - Cells are fragments: the point in the first two words, one idea per line, a number rather than
-  an adjective. Write each open decision as one block: the question and why it is open (the fact or
-  disagreement that makes it one), its options as nested bullets with what each gains and costs,
-  then the recommendation and the fact that decides it.
+  an adjective. Each count names what it counts ("24 of 27 assets"), and no "one" or "it" leans on
+  another line. Write each open decision as one block that leads with its context, the fact or
+  disagreement that makes it open, then the question, its options as nested bullets with what each
+  gains and costs, then the recommendation and the fact that decides it.
 - Draw numbers the room compares on one shared scale.
 - Show status as a word, not colour alone.
 - The one look before handover is a fresh `cold-reader` given pictures of each part, the reader's
