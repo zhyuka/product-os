@@ -21,16 +21,16 @@ Detail for one job each. Read the section when the job comes up; it is not loade
 
 - Fold a section into the fewest parts that show how its items relate, often one table: a row per
   item, its relations as columns. Evidence sits in its own zone beside them.
-- Cells are fragments: the point in the first two words, one idea per line. Each row or decision
-  block reads alone, heard once with no pre-read: every line says who or what it is about, gives the
-  number rather than an adjective for it, and spells out any term or abbreviation the block itself
-  hasn't. Write each open decision as one block, not columns: the question, its options as nested
-  bullets, each with what it gains and what it costs nested under it, then the recommendation and the
-  fact that decides it, set apart by colour and a word.
-- Open the section with what it serves: the page or product, and the nearby ones it does not cover,
-  so a reader with no pre-read knows where they are.
+- Cells are fragments: the point in the first two words, one idea per line, a number rather than
+  an adjective. Write each open decision as one block: the question and why it is open (the fact or
+  disagreement that makes it one), its options as nested bullets with what each gains and costs,
+  then the recommendation and the fact that decides it.
 - Draw numbers the room compares on one shared scale.
 - Show status as a word, not colour alone.
+- The one look before handover is a fresh `cold-reader` given pictures of each part, the reader's
+  job, the meeting's time and the section's word count now. Ask what they would cut and what they
+  didn't need, as well as where they got lost. Fix by cutting, renaming or moving; a finding that
+  something lacks a key or a definition means the label changes. One round, in the background.
 
 ## Ready for dev
 

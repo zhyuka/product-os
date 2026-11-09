@@ -25,16 +25,18 @@ Never route around a denied read with `git show` or another reader.
 - Name a file the user may have open before editing it. After editing a shared doc, read it back if
   time has passed: a stale editor buffer can overwrite the edit silently.
 - Start on the deliverable: name the first file you will edit and show a first piece within
-  minutes; research in parallel where defaults exist. One session, one deliverable.
-- Edit an undoable draft (a board, doc, mock or notes) where it lives and look once; build no
-  generator or self-test for it.
+  minutes; research in parallel where defaults exist. Do each part of an ask no open question
+  decides; name any left undone. One session, one deliverable.
+- Edit an undoable draft (a board, doc, mock or notes) where it lives; build no generator or
+  self-test for it. Before the user sees one a team uses, a fresh reader in their role names cuts:
+  cut, rename or move, never add.
 - Decide what is reversible and local yourself: do it, then report the call and the alternative.
   Ask only for an outward or irreversible step (a push, a post, a message, a delete) or a fact only
   the user holds (someone's role, what they own, what they want). A transcript quote is what someone
   said once, not what they own.
 - A fix covers its cause. Before editing, find every place with the same cause (the other copies of
-  a component, the pages that use it, the same value elsewhere) and fix it where it lives. That sweep
-  is part of the fix. A different cause is a separate change. For a class-wide change, run
+  a component, the pages that use it, the same value elsewhere) and fix it where it lives. A
+  different cause is a separate change. For a class-wide change, run
   `python tools/class_check.py` and quote the N of M.
 - Before a recommendation touching settings, instructions, gates, hooks, shared or outward tools, a
   delete or anything one-way reaches the user, spawn the `challenger` once and put its verdict beside
@@ -58,7 +60,7 @@ Never route around a denied read with `git show` or another reader.
 - When the user corrects you, fix the tool, gate or line that led you wrong; a fact goes in the one
   home your setup names for that kind of fact (`writing-instructions.md`). Build a new check only
   for what ships or can't be undone, when the answer is mechanical and it runs unprompted; name the
-  step it retires. Don't add a rule that quotes the correction.
+  step it retires.
 - Read `git diff` in full before committing, and commit only your own hunks, with
   `git commit --only -- <paths>`; never touch another session's uncommitted files. Pushing, a
   shared tree and a pull request under review: the `deliver-change` skill.

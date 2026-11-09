@@ -1645,8 +1645,10 @@ def minutes_between(a, b):
 
 def carry(es):
     """An open request typed again word for word, or added to before any reply came, is carried by the
-    later request: it takes that one's state, and the later one points back at it. Not a card pick: two
-    cards that get the same pick are two requests, and only a card that names its id carries one."""
+    later request: it takes that one's state, and the later one points back at it. A question card the
+    agent put to the user is a reply: what they type next answers the card, so it doesn't carry the
+    request, which keeps its own state. Not a card pick: two cards that get the same pick are two
+    requests, and only a card that names its id carries one."""
     reqs = [e for e in es if e["kind"] in ("request", "decision")]
     for a_i in range(len(reqs) - 1, -1, -1):
         a = reqs[a_i]
@@ -1662,7 +1664,8 @@ def carry(es):
                 set_state(a, same["state"], same.get("ref"), "typed again later (" + same["id"] + "); " + same["why"])
             continue
         nxt = later[0] if later else None
-        if (nxt and not (a.get("ev") or {}).get("reply") and nxt["source"] in ("typed", "mid-turn", "card")
+        ev = a.get("ev") or {}
+        if (nxt and not ev.get("reply") and not ev.get("asked") and nxt["source"] in ("typed", "mid-turn", "card")
                 and minutes_between(a, nxt) <= 60 and nxt.get("state") != "open"):
             nxt.setdefault("follow_up_of", a["id"])
             set_state(a, nxt["state"], nxt.get("ref"), "added to before any reply; the next request carries it ("
@@ -3089,6 +3092,14 @@ def selftest():
             say("11:10", "Still running."),
             typed("11:20", "ok let me know when the planted runs finish"),
             say("11:21", "Still running, 3 of 5."),
+            typed("11:30", "fix the planted board layout so the sections sit side by side"),
+            tool("11:31", "q30", "AskUserQuestion", questions=[{
+                "question": "Which planted board shape?", "header": "Planted",
+                "options": [{"label": "Side by side (Recommended)", "description": ""},
+                            {"label": "Stacked", "description": ""}]}]),
+            result("11:31", "q30", "answered", {"answers": {"Which planted board shape?": "Side by side (Recommended)"}}),
+            typed("11:33", "and rename the planted titles"),
+            say("11:34", "Renamed the planted titles."),
         ]]
         with open(os.path.join(proj, "s2.jsonl"), "w", encoding="utf-8") as f:
             f.write("\n".join(lines2) + "\n")
@@ -3330,6 +3341,9 @@ def selftest():
         wraps = get("check why the planted banner") or {}
         check("a request added to before any reply takes the next request's state and is pointed back at",
               wraps.get("state") == "done" and (get("and fix the planted banner") or {}).get("follow_up_of") == wraps.get("id"))
+        board = get("fix the planted board layout") or {}
+        check("a request answered with a question card keeps its own state; the next request doesn't carry it",
+              board.get("state") == "open" and not (get("and rename the planted titles") or {}).get("follow_up_of"))
         twice = [e for e in entries.values() if (e.get("text") or "").startswith("ok let me know when the planted")]
         listed = [r for r in open_requests(led, "s2") if r["text"].startswith("ok let me know when the planted")]
         check("a request typed twice is open once, at its latest copy",

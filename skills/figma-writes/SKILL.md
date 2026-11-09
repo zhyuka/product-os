@@ -35,15 +35,17 @@ OS keychain (`figma_auth.py --source` says which), and file keys from their argu
   can edit; upload an image only for a picture of real UI, never a rendered PNG of text. Give each
   part the form its use in the room needs: a table for a lookup, stickies for a set the room will
   sort or add to, shapes and arrows for a flow, and a small picture beside any part the room should
-  get at a glance. The team works from a section live in the room, so each part reads at a glance
-  and lets the room check or overturn it: the answer the work proposes comes first, and beside it its
-  evidence, every option, value and item it rests on, named, with data measured on the real
-  population or taken from published research, never a sample picked to show the types or a
-  mock-up's placeholder. A count can measure a named thing; it never stands in for the set the room
-  has to judge, so a long set goes in that table or the evidence. A spec for Design gives the data
-  and what's agreed; layout and behaviour are Design's call. Build history stays
-  in the record and owners with the user, and it names no repos or local paths, which a reader on
-  the board cannot follow.
+  get at a glance. A section serves one meeting and fits its time: the answer the work proposes
+  first, then the data it rests on, named rather than counted, measured on the real population or
+  taken from published research, never a sample picked to show the types or a mock-up's
+  placeholder. Each label means what it says where it sits. An edit leaves the section no bigger
+  unless the user asked to add something; what reads unclear gets cut, renamed or moved, not
+  explained. A spec for Design gives the data and what's agreed; layout and behaviour are Design's
+  call. Build history stays in the record and owners with the user. Name each thing by what it is,
+  never by the work that made it (a pass, a round, a version), and name no repos or local paths,
+  which a reader on the board cannot follow.
+- When the user edits a section themselves, read what they changed before your next write there,
+  and carry the same change across the section.
 
 ## Reruns and deletes
 
