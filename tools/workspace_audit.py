@@ -36,6 +36,14 @@ CONFIG (product-os config, key `workspace`; --root overrides workspace.root):
   tools        the tools folder (default <root>/tools)
   memory       the memory folder (default ~/.claude/projects/<root as a slug>/memory)
   generated    file names a skill tells you to CREATE: a citation of one is not a miss
+  generated_paths  path starts a skill names inside a build it generates, e.g. "repo/": a citation
+               that starts with one is not a miss either (src/ and ./ always are)
+  index_roots  folders, relative to root, that the cites name index also walks though skip names
+               them or a folder above them, e.g. a checkout kept under a skipped folder
+  map_places   {word: folder}: a map entry right after the word resolves under that folder, e.g.
+               {"OneDrive": "~/OneDrive"} for a line reading "OneDrive `Backups/`" (default none)
+  managed_hooks_only  true when managed policy voids every user hook (allowManagedHooksOnly): the
+               config check then counts a hook registered in ~/.claude/settings.json as a miss
   ado_docs     files or folders, relative to root, whose .md files adostate also reads: docs others
                read, such as a repo's README, CLAUDE.md and rules (default none)
 
@@ -159,23 +167,53 @@ class Result:
 # archived and every reference to it silently keeps pointing at nothing.
 CITE = re.compile(r'`([^`\n]+?\.(?:md|py|astro|css|ts|js|json|html|txt|whl))`')
 _NAME_INDEX = None
+_FROM_CACHE = False
+CACHE_DIR = None    # where the index is saved; None: ~/.cache/product-os/workspace_audit
 
 
-def name_index():
+def name_cache():
+    """The saved index for this root: one file per root, so two projects never share one."""
+    slug = re.sub(r'[^A-Za-z0-9]', '-', str(ROOT))
+    folder = pathlib.Path(CACHE_DIR) if CACHE_DIR else pathlib.Path(kit_config.home_dir('.cache', 'workspace_audit'))
+    return folder / (slug + '.txt')
+
+
+def name_index(fresh=False):
     """Every filename under the working set, indexed ONCE: walking the tree per candidate turns a
     seconds-long check into minutes. _archive is excluded from most checks but not from this index:
-    a doc citing a retired file by its archive path is correct, not rot."""
-    global _NAME_INDEX
-    if _NAME_INDEX is None:
+    a doc citing a retired file by its archive path is correct, not rot. It walks the root, the
+    skills, the memory folder and each of index_roots. A walk saves the index (name_cache()); commit
+    mode reads that copy while it is under a day old, since a walk of a large root can take a minute
+    or more, and walks afresh (fresh=True) only when a citation misses it, so a file made since is
+    still found."""
+    global _NAME_INDEX, _FROM_CACHE
+    cache = name_cache()
+    if _NAME_INDEX is None and not fresh and ONLY is not None:
+        try:
+            if time.time() - cache.stat().st_mtime < 86400:
+                _NAME_INDEX = set(cache.read_text(encoding='utf-8').splitlines())
+                _FROM_CACHE = True
+        except OSError:
+            pass
+    if _NAME_INDEX is None or (fresh and _FROM_CACHE):
+        _FROM_CACHE = False
         idx = set()
         skip = SKIP_DIRS - {'_archive'}
-        for base in (ROOT, SKILLS, MEMORY):
+        extra = [ROOT / os.path.expanduser(r) for r in cfg('index_roots', [])]
+        for base in [ROOT, SKILLS, MEMORY] + extra:
             if not base or not base.exists():
                 continue
             for root, dirs, files in os.walk(base):
                 dirs[:] = [d for d in dirs if d not in skip]
                 idx.update(f.lower() for f in files)
         _NAME_INDEX = idx
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cache.with_suffix('.tmp')
+            tmp.write_text('\n'.join(sorted(idx)), encoding='utf-8')
+            os.replace(tmp, cache)
+        except OSError:
+            pass
     return _NAME_INDEX
 
 
@@ -184,7 +222,7 @@ def name_index():
 # so it cannot see one.
 _PROSE_OK = re.compile(r'(there is no|deliberately no|absent when|create on first|never create|'
                        r'no longer|do not create|does not exist|no such file|\bdead\b|\bstale\b|'
-                       r'hallucinat|attachment|\bbranch\b)', re.I)
+                       r'disagreed on whether|hallucinat|attachment|\bbranch\b)', re.I)
 
 
 def _told_gone(line, raw):
@@ -203,6 +241,7 @@ def check_cites(verbose):
     nothing, its last word stands in, so a missing `old plan.md` passes while some plan.md exists."""
     names = name_index()
     generated = {g.lower() for g in cfg('generated', [])}
+    prefixes = ('src/', './') + tuple(cfg('generated_paths', []))
     total = misses = 0
     bad = []
     for f in doc_files():
@@ -221,11 +260,14 @@ def check_cites(verbose):
             # `public.html` is Apple's pasteboard-type namespace, not a file.
             if any(ch in cand for ch in '<>*?|') or cand.startswith(('http', '$', '{', 'public.')):
                 continue
-            # A skill that tells you to CREATE a file is showing a template, not citing one.
+            # A skill that tells you to CREATE a file, or names a path inside a build it generates,
+            # is showing a template, not citing one.
             leaf = pathlib.Path(cand).name.lower()
-            if leaf in generated or cand.startswith(('src/', './')):
+            if leaf in generated or cand.startswith(prefixes):
                 continue
             total += 1
+            if leaf not in names and tleaf not in names and _FROM_CACHE:
+                names = name_index(fresh=True)    # the saved index may predate the file: walk once
             if leaf in names or tleaf in names:
                 continue
             # A doc citing a filename to say it should NOT exist, or is absent by design, is correct.
@@ -503,8 +545,10 @@ def _map_bullets(text):
     return out
 
 
-def map_check(doc, root, home, cover=('',)):
-    """(ok, total, misses) for the map at `doc` against the tree at `root`."""
+def map_check(doc, root, home, cover=('',), places=None):
+    """(ok, total, misses) for the map at `doc` against the tree at `root`. places, {word: folder}:
+    an entry right after one of the words resolves under its folder (map_places)."""
+    places = {w: pathlib.Path(os.path.expanduser(f)) for w, f in (places or {}).items()}
     text = doc.read_text(encoding='utf-8', errors='replace')
     total, bad, stack = 0, [], []          # stack: (depth, folder the bullet opens with)
 
@@ -544,7 +588,8 @@ def map_check(doc, root, home, cover=('',)):
             before, after = body[:s], body[e:]
             if re.search(r'\bthe old\s*$', before, re.I):
                 continue
-            here = resolve(tok, bases)
+            place = next((f for w, f in places.items() if re.search(re.escape(w) + r'\s*$', before)), None)
+            here = [place / tok] if place else resolve(tok, bases)
             total += 1
             found = next((p for p in here if p.exists()), None)
             if re.match(r'\s*(is gone|does not exist|no longer exists)', after):
@@ -588,7 +633,7 @@ def check_map(verbose):
     doc = ROOT / cfg('map', 'WORKSPACE.md')
     if not doc.exists():
         return Result('map', 0, 0, [], f'no {doc.name}')
-    ok, total, bad = map_check(doc, ROOT, HOME, tuple(cfg('map_cover', [''])))
+    ok, total, bad = map_check(doc, ROOT, HOME, tuple(cfg('map_cover', [''])), cfg('map_places', {}))
     return Result('map', ok, total, bad, f'{doc.name} folders that exist, and covered entries the map names')
 
 
@@ -636,6 +681,16 @@ def selftest_map():
             'view@wt1.html has no line')
         (root / 'proj' / 'view@wt1.html').unlink()
         run('known-good map passes again', good, None)
+        synced = t / 'Synced'
+        (synced / 'Backups').mkdir(parents=True)
+        doc.write_text(good + '- A copy is kept in Synced `Backups/`.\n')
+        for label, places, expect in (
+                ('an entry right after a map_places word resolves under its folder', {'Synced': str(synced)}, None),
+                ('without map_places the same entry is looked for in the tree, and fails', None,
+                 '`Backups/` does not exist')):
+            ok, total, bad = map_check(doc, root, home, cover, places)
+            fired = any(expect in b for b in bad) if expect else not bad
+            results.append((fired, label, f'{ok} of {total}', bad[:2]))
     for fired, label, frac, bad in results:
         print(('PASS ' if fired else 'FAIL ') + f'{label} ({frac}) {bad}')
     ok = all(r[0] for r in results)
@@ -690,7 +745,7 @@ def allow_rule_flags(home, root):
     return lists, flags
 
 
-def config_check(home, root, now=None):
+def config_check(home, root, now=None, managed_hooks=None):
     import time
     now = now or time.time()
     claude = home / '.claude'
@@ -698,6 +753,19 @@ def config_check(home, root, now=None):
     total = sum(1 if rules is None else len(rules) for rules in lists.values())
     bad = [f'{label} settings file is not valid JSON' for label, rules in lists.items() if rules is None]
     bad += [f'{label}: {why}' for label, _, why in flags]
+    # Where managed policy voids every user hook (allowManagedHooksOnly), a hook registered in the
+    # user settings never fires, so it is dead weight that reads as a gate. Only the hooks key is
+    # read, never env.
+    user = claude / 'settings.json'
+    if (cfg('managed_hooks_only', False) if managed_hooks is None else managed_hooks) and user.exists():
+        total += 1
+        try:
+            hooks = json.loads(user.read_text(encoding='utf-8')).get('hooks')
+        except ValueError:
+            hooks = None
+            bad.append('settings.json is not valid JSON, so its hooks were not checked')
+        if hooks:
+            bad.append(f'settings.json registers {len(hooks)} hook event(s) that allowManagedHooksOnly voids')
     cutoff = now - STALE_DAYS * 86400
     projects, senv = claude / 'projects', claude / 'session-env'
     for d in (sorted(projects.glob('-private-tmp-*')) + sorted(projects.glob('-tmp-*')) if projects.exists() else []):
@@ -717,7 +785,8 @@ def config_check(home, root, now=None):
 
 def check_config(verbose):
     ok, total, bad = config_check(HOME, ROOT)
-    return Result('config', ok, total, bad, 'allow rules and scratch folders under ~/.claude')
+    hooks = ', hook registrations' if cfg('managed_hooks_only', False) else ''
+    return Result('config', ok, total, bad, f'allow rules{hooks} and scratch folders under ~/.claude')
 
 
 def selftest_config():
@@ -765,6 +834,17 @@ def selftest_config():
         empty.rmdir()
         (claude / 'projects' / '-private-tmp-fresh').mkdir()
         run('a fresh scratch folder passes', None)
+        (claude / 'settings.json').write_text(json.dumps({'permissions': {'allow': good_user},
+                                                          'hooks': {'SessionStart': []}}))
+        for label, managed, expect in (
+                ('with managed_hooks_only, a registered hook fails', True, 'allowManagedHooksOnly voids'),
+                ('without it, a registered hook is not judged', False, None)):
+            ok, total, bad = config_check(home, root, managed_hooks=managed)
+            fired = any(expect in b for b in bad) if expect else not bad
+            results.append((fired, label, f'{ok} of {total}', bad[:2]))
+        write(good_user, good_local)
+        ok, total, bad = config_check(home, root, managed_hooks=True)
+        results.append((not bad, 'with managed_hooks_only and no hook registered, it passes', f'{ok} of {total}', bad[:2]))
     for fired, label, frac, bad in results:
         print(('PASS ' if fired else 'FAIL ') + f'{label} ({frac}) {bad}')
     ok = all(r[0] for r in results)
@@ -894,6 +974,74 @@ def selftest_adostate():
     return 0 if all(r[1] for r in results) else 1
 
 
+def selftest_cites_index():
+    """index_roots: a cite of a file in a checkout kept under a skipped folder resolves once the
+    checkout is an index root, and the rest of that folder stays out of the index. generated_paths:
+    a path inside a generated build is not a miss. The saved index: commit mode reads it while it is
+    under a day old, walks once when a cite misses it, and doesn't read one a day old."""
+    import tempfile as _t
+    global ONLY, _NAME_INDEX, _FROM_CACHE, ROOT, SKILLS, MEMORY, SKIP_DIRS, CACHE_DIR, cfg
+    keep = (ONLY, _NAME_INDEX, _FROM_CACHE, ROOT, SKILLS, MEMORY, SKIP_DIRS, CACHE_DIR, cfg)
+    settings, results = {}, []
+    try:
+        with _t.TemporaryDirectory() as d:
+            ROOT = pathlib.Path(d, 'work')
+            SKILLS, MEMORY = pathlib.Path(d, 'no-skills'), pathlib.Path(d, 'no-memory')
+            SKIP_DIRS, CACHE_DIR = BASE_SKIP | {'_personal'}, pathlib.Path(d, 'cache')
+            cfg = lambda key, default=None: settings.get(key, default)  # noqa: E731
+            (ROOT / '_personal' / 'kit' / 'docs').mkdir(parents=True)
+            (ROOT / '_personal' / 'kit' / 'docs' / 'config.md').write_text('x', encoding='utf-8')
+            (ROOT / '_personal' / 'diary.md').write_text('x', encoding='utf-8')
+            notes = ROOT / 'tools' / 'notes'
+            notes.mkdir(parents=True)
+
+            def cites(text):
+                global ONLY, _NAME_INDEX, _FROM_CACHE
+                doc = notes / 'PORTING.md'
+                doc.write_text(text, encoding='utf-8')
+                ONLY, _NAME_INDEX, _FROM_CACHE = {str(doc)}, None, False
+                return check_cites(False).misses
+
+            three = ('Every key is listed in `docs/config.md`; add a row there.\n'
+                     'A cite to `docs/not-there.md` is rot.\nThe build writes `site-build/sync_qq.py`.\n')
+            before = cites(three)
+            name_cache().unlink()
+            settings.update(index_roots=['_personal/kit'], generated_paths=['site-build/'])
+            after = cites(three)
+            indexed = set(_NAME_INDEX)
+            results += [
+                ('the refused case: without index_roots, `docs/config.md` fails',
+                 any('`docs/config.md`' in m for m in before)),
+                ('with the checkout as an index root, `docs/config.md` passes',
+                 not any('`docs/config.md`' in m for m in after)),
+                ('a cite to a file that is nowhere still fails', any('`docs/not-there.md`' in m for m in after)),
+                ('the rest of the skipped folder stays out of the index', 'diary.md' not in indexed),
+                ('without generated_paths, a path in a generated build fails, and with it, passes',
+                 any('`site-build/sync_qq.py`' in m for m in before)
+                 and not any('`site-build/sync_qq.py`' in m for m in after)),
+                ('a walk saves the index', name_cache().exists())]
+            with open(name_cache(), 'a', encoding='utf-8') as f:
+                f.write('\nonly-in-cache.md')
+            got = cites('See `only-in-cache.md`.\n')
+            results.append(('commit mode reads the saved index while it is fresh', not got and _FROM_CACHE))
+            (notes / 'late.md').write_text('x', encoding='utf-8')
+            got = cites('See `late.md`.\n')
+            results.append(('a file made after the save is found by one fresh walk', not got and not _FROM_CACHE))
+            with open(name_cache(), 'a', encoding='utf-8') as f:
+                f.write('\nonly-in-cache.md')
+            old = time.time() - 2 * 86400
+            os.utime(name_cache(), (old, old))
+            got = cites('See `only-in-cache.md`.\n')
+            results.append(('a saved index a day old is not read', any('`only-in-cache.md`' in m for m in got)))
+    finally:
+        ONLY, _NAME_INDEX, _FROM_CACHE, ROOT, SKILLS, MEMORY, SKIP_DIRS, CACHE_DIR, cfg = keep
+    for name, ok in results:
+        print(('PASS ' if ok else 'FAIL ') + 'cites: ' + name)
+    ok = all(r[1] for r in results)
+    print('cites index selftest', 'PASSED' if ok else 'FAILED')
+    return 0 if ok else 1
+
+
 def selftest_cites_command():
     """A command in backticks resolves to its last word: `python build.py` passes when build.py exists
     (refused before, as a file named "python build.py"), and so do the usual command shapes
@@ -901,13 +1049,13 @@ def selftest_cites_command():
     A command naming a script that is nowhere still fails, and so does a missing file whose name has a
     space and whose last word names no file."""
     import tempfile as _t
-    global ONLY, _NAME_INDEX, ROOT, SKILLS, MEMORY
-    keep = (ONLY, _NAME_INDEX, ROOT, SKILLS, MEMORY)
+    global ONLY, _NAME_INDEX, ROOT, SKILLS, MEMORY, CACHE_DIR
+    keep = (ONLY, _NAME_INDEX, ROOT, SKILLS, MEMORY, CACHE_DIR)
     passing = ['python build.py', 'python3 build.py', 'python -I build.py', 'FOO=1 python build.py',
                '~/.venvs/tools/bin/python build.py']
     try:
         with _t.TemporaryDirectory() as d:
-            ROOT = pathlib.Path(d, 'work')
+            ROOT, CACHE_DIR = pathlib.Path(d, 'work'), pathlib.Path(d, 'cache')
             SKILLS, MEMORY = pathlib.Path(d, 'no-skills'), pathlib.Path(d, 'no-memory')
             doc = ROOT / 'evals' / 'files' / 'explorer' / 'README.md'
             doc.parent.mkdir(parents=True)
@@ -920,7 +1068,7 @@ def selftest_cites_command():
             _NAME_INDEX = set()                    # nothing indexed: only the doc's own folder can resolve it
             folder_misses = check_cites(False).misses
     finally:
-        ONLY, _NAME_INDEX, ROOT, SKILLS, MEMORY = keep
+        ONLY, _NAME_INDEX, ROOT, SKILLS, MEMORY, CACHE_DIR = keep
     results = [(f'cites: `{c}` passes' + (' (the refused case)' if c == 'python build.py' else ''),
                 not any(f'`{c}`' in m for m in misses)) for c in passing]
     results += [
@@ -956,7 +1104,7 @@ def main():
         global SKIP_DIRS
         SKIP_DIRS = set(BASE_SKIP)
         return kit_config.run_isolated(lambda: max(selftest_map(), selftest_config(), selftest_archive(), selftest_secrets(), selftest_adostate(),
-                                                       selftest_cites_command()))
+                                                       selftest_cites_index(), selftest_cites_command()))
     try:
         configure(a.root)
     except kit_config.NotConfigured as e:
