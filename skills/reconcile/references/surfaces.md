@@ -24,8 +24,8 @@ logs and the working folder. Anything else a project checks on each pass is a su
 - A surface behind a sign-in, such as a chat app: start one signed-in browser for the pass with
   `signed_in_browser.py serve <url>` in the background. It prints `SERVING <address>` once single
   sign-on finishes on its own; read it with `chromium.connect_over_cdp("<address>")`, never
-  `browser.close()`, and run `signed_in_browser.py stop` when the pass is done. If it waits for a
-  sign-in, ask once: finish it, or skip. A skipped surface is "did not run", never skipped silently.
+  `browser.close()`, and run `signed_in_browser.py stop --port <its port>` when the pass is done. If
+  it ends with NEEDS SIGN-IN, ask once: sign in through one `--headed` run, or skip. A skipped surface is "did not run", never skipped silently.
 
 The whole list is one command setting. From the project's file it counts only once the person has
 read it there and run `product-os kit_config accept rebase.surfaces` on this machine, and again after

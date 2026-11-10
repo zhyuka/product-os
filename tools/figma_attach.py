@@ -71,16 +71,18 @@ only, so the picture goes in through the web app. figma_post.py new and reply ru
 they post a FIX note with --picture, and print the manual step only when it did not attach.
 
 HOW. Reads the comment over REST and refuses (below) before any browser opens. Then launches one
-browser for the batch (signed_in_browser.session: Playwright, Edge or Chrome per its config, a
-visible window, a fresh profile in the system temp dir) and opens the first comment's link. On
+browser for the batch (signed_in_browser.session: Playwright, Edge or Chrome per its config,
+headless, a fresh profile in the system temp dir) and opens the first comment's link. On
 Figma's own login page it types the token owner's email (GET /v1/me) into the email field and
 presses the button; single sign-on, if your account has it, then finishes from the browser's saved
 identity-provider session. It types nothing else anywhere: never a password and never into an
-identity provider's page. A password field, a code, an account picker, or a sign-in still
-unfinished a minute after the email, means you finish it in that window, which waits --wait-user
-seconds (default 180) and then gives up. Figma's "desktop app or installed fonts" prompt is closed
-with Escape, never Continue. Then: Comment actions -> Edit on that comment, a check that the editor
-holds the comment's text and ends "Before and after:", the pictures through the editor's file input,
+identity provider's page. A password field, a code or an account picker stops the batch with
+"needs sign-in", and so does a sign-in still unfinished a minute after the email; nothing more is
+typed and no window opens. With SIGNED_IN_BROWSER_HEADED=1 the browser has a window instead, and
+you finish the sign-in there, which waits --wait-user seconds (default 180) and then gives up.
+Figma's "desktop app or installed fonts" prompt is closed with Escape, never Continue. Then:
+Comment actions -> Edit on that comment, a check that the editor holds the comment's text and ends
+"Before and after:", the pictures through the editor's file input,
 Save, and a check that the thread shows that many more attached images. A screenshot of the result
 goes to ~/.cache/product-os/figma_attach/. The next comment opens in the same window. The browser
 closes and the profile is deleted at the end of the batch, since it held the session cookies; a
@@ -381,9 +383,22 @@ def lost_comment(url, target):
     return bool(frag) and u.netloc.endswith("figma.com") and "/design/" in u.path and u.fragment != frag
 
 
-def sign_in(pg, email, wait_user, now=time.time, sleep=time.sleep, target=None):
+def _has_window():
+    """Whether signed_in_browser's browser has a window a person can act in (an older copy, with no
+    headed(), always had one)."""
+    try:
+        import signed_in_browser
+        return signed_in_browser.headed()
+    except (ImportError, AttributeError):
+        return True
+
+
+def sign_in(pg, email, wait_user, now=time.time, sleep=time.sleep, target=None, window=None):
     """Wait for the comment to be on screen, typing the email once on Figma's login page and opening
-    the comment's link again once if the sign-in redirect dropped its #id. 'ready', or why not."""
+    the comment's link again once if the sign-in redirect dropped its #id. 'ready', or why not.
+    With no window (headless, the default), a page that needs a person ends it at once with
+    'needs sign-in', and so does a sign-on that never lands, instead of waiting on nobody."""
+    window = _has_window() if window is None else window
     typed_at, user_since, start, reopened = None, None, now(), False
     while True:
         info = _probe(pg)
@@ -404,6 +419,10 @@ def sign_in(pg, email, wait_user, now=time.time, sleep=time.sleep, target=None):
             print("  signing in: typed the account's email on Figma's login page; single sign-on does the rest")
         stuck = (state == "needs-user" or (typed_at is not None and now() - typed_at > EMAIL_WAIT)
                  or (typed_at is None and now() - start > EDIT_WAIT))
+        if stuck and not window:     # signed_in_browser.NEEDS_SIGN_IN starts the first reason
+            where = info.get('url', '')[:80]
+            return (f"needs sign-in: Figma's sign-in at {where} asks for a person; no window opened"
+                    if state == "needs-user" else f"single sign-on did not finish (last page {where})")
         if stuck and user_since is None:
             user_since = now()
             print(f"  SIGN-IN NEEDS YOU: finish it in the browser window that opened ({info.get('url', '')[:60]}). "
@@ -1445,9 +1464,14 @@ def _selftest():
          sign_in(pg, "a@b.c", 5, tick, step) == "ready" and pg.typed == ["a@b.c"] and pg.clicked == 1)
     clock[0] = 0.0
     pg = Page([login, login, redirect])
-    got = sign_in(pg, "a@b.c", 5, tick, step)
-    case("a sign-in that never finishes gives up after the user's wait, having typed the email once",
+    got = sign_in(pg, "a@b.c", 5, tick, step, window=True)
+    case("with a window, a sign-in that never finishes gives up after the user's wait, having typed the email once",
          got != "ready" and "not finished" in got and pg.typed == ["a@b.c"])
+    clock[0] = 0.0
+    pg = Page([login, {"url": "https://idp.example.com/x", "password": True}])
+    got = sign_in(pg, "a@b.c", 600, tick, step, window=False)
+    case("headless, a password page ends it at once with 'needs sign-in', typed into never",
+         got.startswith("needs sign-in") and pg.typed == ["a@b.c"] and clock[0] < 5)
     clock[0] = 0.0
     dropped = {"url": "https://www.figma.com/design/K/f?node-id=1-2", "actions": 0}
     pg = Page([login, redirect, dropped, loaded])

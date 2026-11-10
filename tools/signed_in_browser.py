@@ -2,15 +2,24 @@
 """signed_in_browser.py - one browser (Edge or Chrome) for a whole batch of steps on a signed-in site,
 then gone.
 
-    serve <url> [--minutes N] [--port P] [--channel C]
+    serve <url> [--minutes N] [--port P] [--channel C] [--headed]
                                            keep one signed-in browser up for several short scripts.
                                            Prints the address to connect_over_cdp to. Closes and
                                            deletes its profile after N minutes (default 90, at most
                                            240), on Ctrl-C or kill, when the window is closed, or on
-                                           `stop`.
-    stop                                   close the browser `serve` started, and check its profile is gone
-    status                                 is a `serve` browser up, and until when
+                                           `stop`. Each port has its own browser and its own record.
+    stop --port P                          close the browser `serve` started on port P, and check its
+                                           profile is gone. No other port's browser is touched; with
+                                           no --port it refuses and lists the ports up.
+    status [--port P]                      which `serve` browsers are up, on which ports, until when
     selftest                               planted cases, no browser
+
+NO WINDOW. Every launch is headless: single sign-on finishes from the Mac's saved login with no
+window, measured on Outlook, Teams, SharePoint, MediaExchange and ADO. When a page needs a person (a
+password, code, account picker or consent screen), the run stops at once with NEEDS SIGN-IN and exit
+3, instead of opening a window mid-work; the calling session asks for the sign-in once, through its
+contact session, and only then runs `serve ... --headed` (or sets SIGNED_IN_BROWSER_HEADED=1 for a
+`session`), the one launch that shows a window.
 
 In Python, for a batch that runs in one process:
 
@@ -24,6 +33,8 @@ browser here instead, once per batch, and the profile goes when the batch ends.
 
 CONFIG (product-os config, all optional):
     signed_in_browser.channel            "msedge" (default) or "chrome": the installed browser to drive
+    signed_in_browser.sign_in_buttons    {"<host>": "<regex>"}: a site's own landing page in front of
+                                         single sign-on, and the name of its one sign-in button
     signed_in_browser.no_profile_under   folders a profile must never sit under, because they are
                                          synced to a cloud drive or backed up (default ~/Desktop and
                                          ~/Documents)
@@ -38,14 +49,25 @@ RULES IT KEEPS
     outlive the session that needed it.
   - The browser's temp files go inside the same folder (MAC_CHROMIUM_TMPDIR), so they go with it.
   - It types nothing into any page. Signing in is the caller's `ready` function. `sso_ready` here
-    only waits while single sign-on finishes on its own, and hands the window to the user on a
-    password, code, account picker or consent screen.
+    only waits while single sign-on finishes on its own. On a password, code, account picker or
+    consent screen a headless run stops with NEEDS SIGN-IN; a `--headed` run hands the window to the
+    user.
+  - No launch shows a window unless the run asked for one (`--headed`, headed=True or
+    SIGNED_IN_BROWSER_HEADED=1); `launch_refusal` checks the final launch options, so an edit that
+    turns the window back on fails there and in the selftest.
+  - `serve` keeps one record per port (signed_in_serve_<port>.json in the temp dir), taken before
+    the browser starts, so two `serve`s on one port can't both start and `stop` on one port leaves
+    the others alone. It refuses a port something else already listens on, naming a free one.
+  - On a site with a landing page of its own (config sign_in_buttons), `sso_ready` clicks that
+    page's one sign-in button so single sign-on starts; a click on a button, never a field.
 
-EXIT 0 done, 1 refused, 2 did not run (no Playwright or browser, the sign-in was not finished).
+EXIT 0 done, 1 refused, 2 did not run (no Playwright or browser, single sign-on did not finish),
+3 needs sign-in (a person has to act; nothing was typed and no window opened).
 
 BLIND TO what the steps do; it counts launches (LAUNCHES), it does not check them. A `serve` browser
 answers any local process on its port while it is up. A folder reaped by pid could in principle
-belong to a new process that reused the pid; it is then only reaped later.
+belong to a new process that reused the pid; it is then only reaped later. A headless window is
+not drawn, but macOS still lists it, off the bottom of the screen.
 """
 import os
 import sys
@@ -62,7 +84,17 @@ except ImportError:
 
 PREFIX = "signed_in_"          # folder name: signed_in_<pid>_<random>
 SERVE_DEFAULT, SERVE_MAX = 90, 240
+SERVE_PORT = 9333
 LAUNCHES = 0                   # browser launches in this process; the selftests and batch callers read it
+NEEDS_SIGN_IN = "needs sign-in"   # a reason that starts so is a person's step, not a failure
+HEADED_ENV = "SIGNED_IN_BROWSER_HEADED"
+_HEADED = False                # whether this process's last launch has a window
+# Sites whose sign-in lands on another host: Microsoft 365 moved its apps to cloud.microsoft
+# (measured 2026-11-10: outlook.office.com ends on outlook.cloud.microsoft, teams.microsoft.com on
+# teams.cloud.microsoft). Without these the page is signed in but never counts as on the site.
+MOVED = {"outlook.office.com": ("outlook.cloud.microsoft",),
+         "outlook.office365.com": ("outlook.cloud.microsoft",),
+         "teams.microsoft.com": ("teams.cloud.microsoft",)}
 
 
 def _cfg(key, default):
@@ -72,6 +104,14 @@ def _cfg(key, default):
 
 def channel():
     return _cfg("channel", "msedge")
+
+
+def sign_in_buttons():
+    """{host: regex} from config: sites with a landing page of their own in front of single
+    sign-on, and the one button that starts it. Without the click a signed-out landing counts as
+    ready."""
+    v = _cfg("sign_in_buttons", {})
+    return v if isinstance(v, dict) else {}
 
 
 def no_profile_under():
@@ -94,7 +134,25 @@ def temp_root():
     return os.path.realpath(tempfile.gettempdir())
 
 
-SERVE_STATE = os.path.join(temp_root(), "signed_in_serve.json")
+STATE_ROOT = temp_root()
+LEGACY_STATE = "signed_in_serve.json"   # the one record every port shared before 11-10; read, never written
+
+
+def state_path(port, root=None):
+    """The record of the `serve` on this port. One file per port, so ports never share a record."""
+    return os.path.join(root or STATE_ROOT, f"signed_in_serve_{int(port)}.json")
+
+
+def headed():
+    """Whether this process's last launch has a window a person can act in. A caller's own sign-in
+    loop reads it to stop with NEEDS_SIGN_IN instead of waiting on a window nobody can see."""
+    return _HEADED
+
+
+def asked_for_window(asked=False):
+    """A launch shows a window only when the run asked: headed=True, `--headed`, or HEADED_ENV=1,
+    each set for the one launch where a person signs in."""
+    return bool(asked) or os.environ.get(HEADED_ENV) == "1"
 
 
 def root_refusal(root, synced=None):
@@ -143,12 +201,13 @@ def reap(root=None, now=None, alive=_alive, dry=False):
         if not os.path.exists(path):
             gone.append(path)
     if not dry and root == temp_root():
-        st = _read_state()
-        if st and not _alive(st.get("pid", 0)) and not os.path.exists(st.get("folder", "")):
-            try:
-                os.remove(SERVE_STATE)   # a killed serve's record, its folder already reaped
-            except OSError:
-                pass
+        for path in _state_files(STATE_ROOT):
+            st = _read_state(path)
+            if st is not None and not _alive(st.get("pid", 0)) and not os.path.exists(st.get("folder") or ""):
+                try:
+                    os.remove(path)   # a killed serve's record, its folder already reaped
+                except OSError:
+                    pass
     return gone
 
 
@@ -170,20 +229,48 @@ def sso_ready(host):
       email: !!document.querySelector('input[type=email],input[name=loginfmt],input[name=identifier]'),
       text: document.body ? document.body.innerText.slice(0, 3000) : ''})"""
 
+    pattern, clicks = sign_in_buttons().get(host), {"n": 0}
+
     def ready(page):
         try:
             info = page.evaluate(js)
         except Exception:
             return "wait"
-        return classify(info, host)
+        state = classify(info, host)
+        if state == "ready" and pattern:
+            return press_sign_in(page, pattern, clicks)
+        return state
     return ready
+
+
+def press_sign_in(page, pattern, clicks, most=2):
+    """On a site's own landing page: 'ready' once its sign-in button is gone, else click the button
+    (a button, never a field; at most `most` times) and 'wait' while single sign-on starts."""
+    try:
+        rx = re.compile(pattern, re.I)
+        btn = page.get_by_role("button", name=rx)
+        if not btn.count():
+            btn = page.get_by_role("link", name=rx)
+        if not btn.count():
+            return "ready"
+        if clicks["n"] >= most:
+            return "wait"            # the landing stays; the settle time ends the run
+        btn.first.click(timeout=10000)
+        clicks["n"] += 1
+        return "wait"
+    except Exception:
+        return "wait"
 
 
 def classify(info, host):
     at = urllib.parse.urlparse(info.get("url") or "").netloc
-    on_site = at == host or at.endswith("." + host)
-    if info.get("password") or info.get("code") or re.search(
-            r"pick an account|choose an account|permissions requested|consent", info.get("text") or "", re.I):
+    on_site = any(at == h or at.endswith("." + h) for h in (host, *MOVED.get(host, ())))
+    if info.get("password") or info.get("code"):
+        return "needs-user"
+    # The picker and consent words count only off the site: on it they are a mail or a page that
+    # mentions them, and a headless run would stop for a sign-in nobody needs.
+    if not on_site and re.search(r"pick an account|choose an account|permissions requested|consent",
+                                 info.get("text") or "", re.I):
         return "needs-user"
     if not on_site and info.get("email"):
         return "needs-user"      # the identity provider asks who you are: the user's to answer
@@ -192,9 +279,20 @@ def classify(info, host):
     return "wait"
 
 
-def wait_ready(page, ready, wait_user, settle=90, now=time.time, sleep=time.sleep):
-    """Poll ready(page) until 'ready'. After `settle` seconds of waiting, or at once on 'needs-user',
-    the window is the user's for `wait_user` seconds. 'ready', or why not."""
+def _page_host(page):
+    try:
+        return urllib.parse.urlparse(page.url).netloc or "a blank page"
+    except Exception:
+        return "an unknown page"
+
+
+def wait_ready(page, ready, wait_user, settle=90, now=time.time, sleep=time.sleep, window=None):
+    """Poll ready(page) until 'ready'. 'ready', or why not.
+    With no window (the default; `window` None reads this process's launch): on 'needs-user' it
+    returns NEEDS_SIGN_IN at once, and after `settle` seconds of waiting it gives up, since nobody
+    can see the page. With a window, after `settle` seconds or at once on 'needs-user', the window is
+    the user's for `wait_user` seconds."""
+    window = headed() if window is None else window
     start, user_since = now(), None
     while True:
         state = ready(page)
@@ -202,6 +300,11 @@ def wait_ready(page, ready, wait_user, settle=90, now=time.time, sleep=time.slee
             return "ready"
         if state not in ("wait", "needs-user"):
             return state             # the caller's own reason
+        if not window and state == "needs-user":
+            return (f"{NEEDS_SIGN_IN}: {_page_host(page)} asks for a person (a password, code, account "
+                    "picker or consent screen). Nothing was typed and no window opened")
+        if not window and now() - start > settle:
+            return f"single sign-on did not finish within {settle}s (last at {_page_host(page)})"
         if user_since is None and (state == "needs-user" or now() - start > settle):
             user_since = now()
             print(f"  SIGN-IN NEEDS YOU: finish it in the browser window that opened. Waiting {wait_user}s.")
@@ -226,27 +329,56 @@ class Session:
                     raise
 
 
-def _launch(p, folder, args=(), chan=None):
-    """Start the browser on the folder's profile. The playwright handle `p` is the caller's."""
-    global LAUNCHES
-    env = dict(os.environ, MAC_CHROMIUM_TMPDIR=os.path.join(folder, "t"))
-    os.makedirs(env["MAC_CHROMIUM_TMPDIR"], exist_ok=True)
-    LAUNCHES += 1
-    return p.chromium.launch_persistent_context(
-        os.path.join(folder, "profile"), channel=chan or channel(), headless=False, env=env,
-        viewport={"width": 1280, "height": 900},
-        args=["--no-first-run", "--no-default-browser-check", *args])
-
-
 class NotReady(Exception):
     """The browser or the sign-in did not get far enough; str() says why."""
 
 
+class NeedsSignIn(NotReady):
+    """A person has to sign in. Nothing was typed and no window opened; ask once, then rerun headed."""
+
+
+def launch_options(folder, args=(), chan=None, window=False):
+    """The options the browser starts with. Headless unless the run asked for a window. A site's
+    permission request (notifications, camera, location) is denied, never shown: headless denies it
+    on its own (measured), and --deny-permission-prompts does the same for a --headed launch."""
+    env = dict(os.environ, MAC_CHROMIUM_TMPDIR=os.path.join(folder, "t"))
+    return dict(user_data_dir=os.path.join(folder, "profile"), channel=chan or channel(),
+                headless=not window, env=env, viewport={"width": 1280, "height": 900},
+                args=["--no-first-run", "--no-default-browser-check", "--deny-permission-prompts", *args])
+
+
+def launch_refusal(opts, window):
+    """Refusal text or None: a launch that would show a window the run did not ask for."""
+    shows = opts.get("headless") is False or any(
+        str(a).startswith("--headless=false") for a in opts.get("args") or ())
+    if shows and not window:
+        return ("REFUSED: this launch would open a browser window, and the run did not ask for one. "
+                "Launches are headless; only a person's sign-in (--headed, headed=True or "
+                f"{HEADED_ENV}=1) shows a window.")
+    return None
+
+
+def _launch(p, folder, args=(), chan=None, window=False):
+    """Start the browser on the folder's profile, headless unless `window`. The playwright handle
+    `p` is the caller's. Raises NotReady, before starting anything, on a window nobody asked for."""
+    global LAUNCHES, _HEADED
+    opts = launch_options(folder, args, chan, window)
+    why = launch_refusal(opts, window)
+    if why:
+        raise NotReady(why)
+    os.makedirs(opts["env"]["MAC_CHROMIUM_TMPDIR"], exist_ok=True)
+    LAUNCHES += 1
+    _HEADED = not opts["headless"]
+    return p.chromium.launch_persistent_context(opts.pop("user_data_dir"), **opts)
+
+
 @contextlib.contextmanager
-def session(url, ready=None, wait_user=180, chan=None):
+def session(url, ready=None, wait_user=180, chan=None, headed=False):
     """One browser for the whole `with` block: launched once, `url` opened, `ready(page)` waited for,
-    then closed and its profile deleted however the block ends. Raises NotReady when the browser did
+    then closed and its profile deleted however the block ends. Headless unless `headed` (or
+    HEADED_ENV=1). Raises NeedsSignIn when a person has to sign in, and NotReady when the browser did
     not start, `url` did not load, or the sign-in was not finished."""
+    window = asked_for_window(headed)
     try:
         from playwright.sync_api import Error as PlaywrightError
         from pw_temp import sync_playwright   # the driver's own temp folder goes with the run too
@@ -257,7 +389,7 @@ def session(url, ready=None, wait_user=180, chan=None):
     try:
         with sync_playwright() as p:
             try:
-                ctx = _launch(p, folder, chan=chan)
+                ctx = _launch(p, folder, chan=chan, window=window)
             except PlaywrightError as e:
                 raise NotReady(f"the browser did not start: {str(e).splitlines()[0]}")
             try:
@@ -268,9 +400,9 @@ def session(url, ready=None, wait_user=180, chan=None):
                 except PlaywrightError as e:
                     raise NotReady(f"{url[:60]} did not load: {str(e).splitlines()[0]}")
                 if ready is not None:
-                    state = wait_ready(pg, ready, wait_user)
+                    state = wait_ready(pg, ready, wait_user, window=window)
                     if state != "ready":
-                        raise NotReady(state)
+                        raise (NeedsSignIn if str(state).startswith(NEEDS_SIGN_IN) else NotReady)(state)
                 yield s
             finally:
                 try:
@@ -283,23 +415,115 @@ def session(url, ready=None, wait_user=180, chan=None):
 
 # --- serve: one browser for several scripts, with a hard limit ----------------------------------
 
-def _read_state():
+def _state_files(root=None):
+    """Every serve record in the temp dir: one per port, and the shared one older runs still write."""
+    root = root or STATE_ROOT
     try:
-        return json.load(open(SERVE_STATE, encoding="utf-8"))
+        names = sorted(os.listdir(root))
+    except OSError:
+        return []
+    return [os.path.join(root, n) for n in names
+            if n == LEGACY_STATE or re.fullmatch(r"signed_in_serve_\d+\.json", n)]
+
+
+def _read_state(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
     except (OSError, ValueError):
         return None
 
 
-def _write_state(d):
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(SERVE_STATE))
+def _write_state(path, d):
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".signed_in_serve_")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(d, f)
         f.flush()
         os.fsync(f.fileno())
-    os.replace(tmp, SERVE_STATE)
+    os.replace(tmp, path)
 
 
-def serve(url, minutes=SERVE_DEFAULT, port=9333, wait_user=600, chan=None):
+def record_for(port, root=None):
+    """(path, record) of the serve on this port, or (None, None). An older run's shared record
+    counts when it names this port, so `stop --port` reaches a browser started before the split."""
+    path = state_path(port, root)
+    st = _read_state(path)
+    if st is not None:
+        return path, st
+    legacy = os.path.join(root or STATE_ROOT, LEGACY_STATE)
+    st = _read_state(legacy)
+    if st is not None and int(st.get("port") or 0) == int(port):
+        return legacy, st
+    return None, None
+
+
+def claim(port, rec, root=None, alive=_alive, now=time.time):
+    """Take the port's record before the browser starts. None when this run took it, else the live
+    record that holds the port. The file is created exclusively, so of two serves racing for one port only one
+    gets it; a dead serve's record is taken over."""
+    path = state_path(port, root)
+    for _ in range(3):
+        _, old = record_for(port, root)
+        if old is not None and alive(old.get("pid", 0)):
+            return old
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            # Another serve may have taken the port since the check above: read it again.
+            cur = _read_state(path)
+            if cur is not None and alive(cur.get("pid", 0)):
+                return cur
+            if cur is None:
+                try:
+                    if now() - os.path.getmtime(path) < 30:
+                        return {"pid": "unknown (its record is being written)", "port": port}
+                except OSError:
+                    continue
+            try:
+                os.remove(path)          # a dead serve's record, or one left unreadable
+            except OSError:
+                pass
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(rec, f)
+            f.flush()
+            os.fsync(f.fileno())
+        return None
+    return {"pid": "unknown", "port": port}
+
+
+def release(port, pid=None, root=None):
+    """Remove the port's record if it is this process's (or pid's)."""
+    path = state_path(port, root)
+    st = _read_state(path)
+    if st is not None and st.get("pid") == (pid or os.getpid()):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def port_in_use(port):
+    import socket
+    with socket.socket() as s:
+        s.settimeout(1)
+        return s.connect_ex(("127.0.0.1", int(port))) == 0
+
+
+def free_port(start=SERVE_PORT, count=30, root=None, alive=_alive, in_use=port_in_use):
+    """The first port from `start` with no live serve record and nothing listening, or None."""
+    for p in range(start, start + count):
+        _, st = record_for(p, root)
+        if (st is None or not alive(st.get("pid", 0))) and not in_use(p):
+            return p
+    return None
+
+
+def _until(st):
+    return time.strftime('%H:%M', time.localtime(st.get("deadline") or 0))
+
+
+def serve(url, minutes=SERVE_DEFAULT, port=SERVE_PORT, wait_user=600, chan=None, headed=False):
     try:
         from playwright.sync_api import Error as PlaywrightError
         from pw_temp import sync_playwright
@@ -307,25 +531,39 @@ def serve(url, minutes=SERVE_DEFAULT, port=9333, wait_user=600, chan=None):
         print("DID NOT RUN: Playwright is not installed for this Python (pip install playwright).")
         return 2
     minutes = max(1, min(int(minutes), SERVE_MAX))
-    old = _read_state()
-    if old and _alive(old.get("pid", 0)):
-        print(f"REFUSED: a serve browser is already up (pid {old['pid']}, port {old['port']}, until "
-              f"{time.strftime('%H:%M', time.localtime(old['deadline']))}). Use it, or `stop` it first.")
+    window = asked_for_window(headed)
+    rec = {"pid": os.getpid(), "port": port, "folder": "", "url": url, "started": time.time(),
+           "deadline": time.time() + minutes * 60, "window": window}
+    held = claim(port, rec)
+    if held:
+        free = free_port()
+        print(f"REFUSED: a serve browser is already up on port {port} (pid {held.get('pid')}, until "
+              f"{_until(held)}), maybe another session's; leave it. Serve on a free port"
+              + (f": --port {free}." if free else "."))
         return 1
-    reap()
-    folder = new_folder()
-    stop = {"now": False}
-    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(sig, lambda *_: stop.update(now=True))
-    host = urllib.parse.urlparse(url).netloc
-    why = "did not start"
+    folder, why, code = "", "did not start", 0
     try:
+        if port_in_use(port):
+            free = free_port()
+            print(f"REFUSED: something other than a serve browser already listens on port {port}; "
+                  "serve on a free port" + (f": --port {free}." if free else "."))
+            return 1
+        reap()
+        folder = new_folder()
+        stop = {"now": False}
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            signal.signal(sig, lambda *_: stop.update(now=True))
+        host = urllib.parse.urlparse(url).netloc
+        _write_state(state_path(port), dict(rec, folder=folder))
         with sync_playwright() as p:
             try:
-                ctx = _launch(p, folder, [f"--remote-debugging-port={port}"], chan)
+                ctx = _launch(p, folder, [f"--remote-debugging-port={port}"], chan, window)
             except PlaywrightError as e:
                 print(f"DID NOT RUN: the browser did not start: {str(e).splitlines()[0]}")
                 return 2
+            except NotReady as e:
+                print(e)
+                return 1
             closed = {"yes": False}
             ctx.on("close", lambda *_: closed.update(yes=True))
             pg = ctx.pages[0] if ctx.pages else ctx.new_page()
@@ -336,61 +574,83 @@ def serve(url, minutes=SERVE_DEFAULT, port=9333, wait_user=600, chan=None):
                 ctx.close()
                 return 2
             deadline = time.time() + minutes * 60
-            _write_state({"pid": os.getpid(), "port": port, "folder": folder, "url": url,
-                          "started": time.time(), "deadline": deadline})
-            state = wait_ready(pg, sso_ready(host), wait_user)
-            print(f"SERVING http://127.0.0.1:{port} ({state}) until {time.strftime('%H:%M', time.localtime(deadline))}."
-                  " Connect with playwright chromium.connect_over_cdp; never call browser.close() there.",
-                  flush=True)
-            while not stop["now"] and not closed["yes"] and time.time() < deadline:
-                try:
-                    pg.wait_for_timeout(1000)
-                except PlaywrightError:
-                    break              # the window or the tab was closed
-            why = "stopped" if stop["now"] else "window closed" if closed["yes"] else f"{minutes} minutes up"
+            _write_state(state_path(port), dict(rec, folder=folder, deadline=deadline))
+            state = wait_ready(pg, sso_ready(host), wait_user, window=window)
+            if state != "ready" and not window:
+                code = 3 if state.startswith(NEEDS_SIGN_IN) else 2
+                detail = state[len(NEEDS_SIGN_IN) + 2:] if code == 3 else state
+                print(f"{'NEEDS SIGN-IN' if code == 3 else 'DID NOT RUN'}: {detail}.", flush=True)
+                if code == 3:
+                    print("  Ask for the sign-in once, through your contact session, then run "
+                          f"`serve {url} --port {port} --headed`: the one launch that shows a window.")
+                why = "needs sign-in" if code == 3 else "single sign-on did not finish"
+            else:
+                print(f"SERVING http://127.0.0.1:{port} ({state}, {'with a window' if window else 'headless'}) "
+                      f"until {time.strftime('%H:%M', time.localtime(deadline))}. Connect with playwright "
+                      "chromium.connect_over_cdp; never call browser.close() there. Close it with "
+                      f"`stop --port {port}`.", flush=True)
+                while not stop["now"] and not closed["yes"] and time.time() < deadline:
+                    try:
+                        pg.wait_for_timeout(1000)
+                    except PlaywrightError:
+                        break              # the window or the tab was closed
+                why = ("stopped" if stop["now"] else "the browser closed" if closed["yes"]
+                       else f"{minutes} minutes up")
             try:
                 ctx.close()
             except Exception:
                 pass
     finally:
-        shutil.rmtree(folder, ignore_errors=True)
-        st = _read_state()
-        if st and st.get("pid") == os.getpid():
-            os.remove(SERVE_STATE)
+        if folder:
+            shutil.rmtree(folder, ignore_errors=True)
+        release(port)
     print(f"CLOSED ({why}); profile deleted: {not os.path.exists(folder)}")
-    return 0
+    return code
 
 
-def stop_serve(wait=90):          # a loaded machine can take well over 30 s to close the browser
-    st = _read_state()
+def stop_serve(port=None, wait=90, root=None, alive=_alive):   # a loaded machine can take well over 30 s to close the browser
+    up = [f"{s.get('port')} (pid {s.get('pid')})" for s in map(_read_state, _state_files(root))
+          if s and alive(s.get("pid", 0)) and (port is None or int(s.get("port") or 0) != int(port))]
+    if port is None:
+        print("REFUSED: say which serve to stop, `stop --port P`, the port your own `serve` printed; "
+              "another session's browser may be on any of them." + (f" Up: {', '.join(up)}." if up else ""))
+        return 1
+    path, st = record_for(port, root)
     if not st:
-        print("Nothing to stop: no serve browser is recorded.")
+        print(f"Nothing to stop: no serve browser is recorded on port {port}."
+              + (f" Up on other ports, left alone: {', '.join(up)}." if up else ""))
         return 0
     pid, folder = st.get("pid", 0), st.get("folder", "")
-    if _alive(pid):
+    if alive(pid):
         os.kill(pid, signal.SIGTERM)
         for _ in range(wait):
-            if not _alive(pid):
+            if not alive(pid):
                 break
             time.sleep(1)
-    if _alive(pid):
+    if alive(pid):
         print(f"DID NOT RUN: pid {pid} is still up after {wait}s.")
         return 2
     if folder and os.path.exists(folder):
         shutil.rmtree(folder, ignore_errors=True)
-    if os.path.exists(SERVE_STATE):
-        os.remove(SERVE_STATE)
-    print(f"Stopped pid {pid}; profile folder gone: {not os.path.exists(folder)}")
+    st2 = _read_state(path)
+    if st2 is not None and st2.get("pid") == pid:
+        os.remove(path)
+    print(f"Stopped pid {pid} on port {port}; profile folder gone: {not os.path.exists(folder)}")
     return 0
 
 
-def status():
-    st = _read_state()
-    if not st or not _alive(st.get("pid", 0)):
-        print("No serve browser is up.")
-        return 0
-    print(f"Serve browser up: pid {st['pid']}, http://127.0.0.1:{st['port']}, {st['url'][:60]}, until "
-          f"{time.strftime('%H:%M', time.localtime(st['deadline']))}.")
+def status(port=None, root=None):
+    seen = []
+    for path in _state_files(root):
+        st = _read_state(path)
+        if not st or not _alive(st.get("pid", 0)) or (port is not None and int(st.get("port") or 0) != int(port)):
+            continue
+        seen.append(st)
+        mode = "with a window" if st.get("window", True) else "headless"
+        print(f"Serve browser up: pid {st['pid']}, http://127.0.0.1:{st['port']}, {mode}, {st['url'][:60]}, "
+              f"until {_until(st)}.")
+    if not seen:
+        print("No serve browser is up" + (f" on port {port}." if port is not None else "."))
     return 0
 
 
@@ -447,11 +707,140 @@ def selftest():
         case("wait_ready: waits out the redirect and reports ready",
              wait_ready(None, lambda _: next(states), 5, now=tick, sleep=sleep) == "ready")
         clock[0] = 0.0
-        got = wait_ready(None, lambda _: "needs-user", 3, now=tick, sleep=sleep)
-        case("wait_ready: a sign-in the user never finishes gives up after the user's wait", "not finished" in got)
+        got = wait_ready(None, lambda _: "needs-user", 3, now=tick, sleep=sleep, window=True)
+        case("wait_ready with a window: a sign-in the user never finishes gives up after the user's wait",
+             "not finished" in got)
         case("wait_ready: a caller's own reason comes back as is",
              wait_ready(None, lambda _: "the account is someone else's", 3, now=tick, sleep=sleep)
              == "the account is someone else's")
+        clock[0] = 0.0
+        got = wait_ready(None, lambda _: "needs-user", 600, now=tick, sleep=sleep, window=False)
+        case("headless: a sign-in screen stops at once with NEEDS SIGN-IN, waiting on nobody",
+             got.startswith(NEEDS_SIGN_IN) and clock[0] == 0)
+        clock[0] = 0.0
+        got = wait_ready(None, lambda _: "wait", 600, settle=5, now=tick, sleep=sleep, window=False)
+        case("headless: a sign-on that never lands gives up after the settle time, not the user's wait",
+             "did not finish" in got and not got.startswith(NEEDS_SIGN_IN) and clock[0] < 10)
+        case("Outlook signed in on its new host counts as the site", classify(
+            {"url": "https://outlook.cloud.microsoft/mail/", "text": "x" * 300}, "outlook.office.com") == "ready")
+        case("Teams signed in on its new host counts as the site", classify(
+            {"url": "https://teams.cloud.microsoft/v2/", "text": "x" * 300}, "teams.microsoft.com") == "ready")
+        case("a look-alike of the new host is not the site", classify(
+            {"url": "https://outlook.cloud.microsoft.evil.example/", "text": "x" * 300}, "outlook.office.com") == "wait")
+        case("a mail on the site that says 'consent' is not a consent screen", classify(
+            {"url": "https://app.example.com/mail", "text": "Please give consent. " + "x" * 300}, site) == "ready")
+
+        # A site's own landing page: its sign-in button is clicked, at most twice, never a field.
+        class Landing:
+            def __init__(self, shows):
+                self.shows, self.clicks = list(shows), 0
+
+            def get_by_role(self, role, name=None):
+                page, here = self, bool(self.shows and self.shows[0]) and role == "button"
+
+                class Loc:
+                    first = property(lambda s: s)
+
+                    def count(s):
+                        return int(here and bool(name.search("Sign in with Microsoft Entra")))
+
+                    def click(s, timeout=None):
+                        page.clicks += 1
+                return Loc()
+        pg = Landing([True])
+        n = {"n": 0}
+        first = press_sign_in(pg, r"Sign in with Microsoft Entra", n)
+        pg.shows = [False]
+        case("a site's landing: its sign-in button is clicked once, then the page counts once it is gone",
+             first == "wait" and pg.clicks == 1 and press_sign_in(pg, r"Sign in with Microsoft Entra", n) == "ready")
+        pg, n = Landing([True]), {"n": 0}
+        got = [press_sign_in(pg, r"Sign in with Microsoft Entra", n) for _ in range(4)]
+        case("... and a landing that stays is clicked at most twice", pg.clicks == 2 and got == ["wait"] * 4)
+        case("a button that is not the site's own sign-in button is not clicked",
+             press_sign_in(Landing([True]), r"^Log in$", {"n": 0}) == "ready")
+
+        # No window unless the run asked for one: a fake Playwright records what each launch asked for.
+        class FakePlaywright:
+            def __init__(self):
+                self.chromium, self.calls = self, []
+
+            def launch_persistent_context(self, profile, **kw):
+                self.calls.append(kw)
+                return "ctx"
+        fake, env_was = FakePlaywright(), os.environ.pop(HEADED_ENV, None)
+        real_options = globals()["launch_options"]
+        try:
+            try:
+                _launch(fake, f)
+            except NotReady:
+                pass
+            case("a launch is headless by default", fake.calls and fake.calls[-1]["headless"] is True)
+            case("... and says so to a caller's sign-in loop", headed() is False)
+            _launch(fake, f, window=True)
+            case("the one launch a person signs in through (--headed) may show a window",
+                 fake.calls[-1]["headless"] is False and headed() is True)
+            case("every launch denies a site's permission prompts instead of showing them",
+                 all("--deny-permission-prompts" in c["args"] for c in fake.calls))
+            globals()["launch_options"] = lambda *a, **k: dict(real_options(*a, **k), headless=False)
+            n, refused = len(fake.calls), ""
+            try:
+                _launch(fake, f)
+            except NotReady as e:
+                refused = str(e)
+            case("a planted visible launch is refused before any browser starts",
+                 refused.startswith("REFUSED") and len(fake.calls) == n)
+            case("... and so is one that passes --headless=false itself",
+                 launch_refusal({"headless": True, "args": ["--headless=false"]}, False) is not None)
+            os.environ[HEADED_ENV] = "1"
+            case(f"{HEADED_ENV}=1 asks for the window", asked_for_window() is True)
+            del os.environ[HEADED_ENV]
+            case("... and with nothing set, nothing does", asked_for_window() is False)
+        finally:
+            globals()["launch_options"], globals()["_HEADED"] = real_options, False
+            if env_was is not None:
+                os.environ[HEADED_ENV] = env_was
+
+        # Each port has its own record: two serves never share one, and stop on one leaves the rest.
+        import socket, subprocess
+        sd = os.path.join(td, "state")
+        os.makedirs(sd)
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+        me = {"pid": os.getpid(), "port": 9340, "folder": "", "deadline": 0}
+        case("two ports have two records", state_path(9340, sd) != state_path(9341, sd))
+        case("a free port is claimed", claim(9340, me, sd) is None)
+        case("a second serve on the same port is refused while the first is up",
+             claim(9340, dict(me, pid=dead.pid), sd) is not None)
+        case("another port is free while that one is held", claim(9341, dict(me, port=9341, pid=dead.pid), sd,
+                                                               alive=lambda pid: pid == os.getpid()) is None)
+        case("each port's record names its own port",
+             record_for(9340, sd)[1]["port"] == 9340 and record_for(9341, sd)[1]["port"] == 9341)
+        stop_serve(9341, wait=1, root=sd, alive=lambda pid: False)
+        case("stop on one port removes that record only",
+             record_for(9341, sd) == (None, None) and record_for(9340, sd)[1] is not None)
+        case("stop with no port refuses and leaves every record",
+             stop_serve(None, root=sd) == 1 and record_for(9340, sd)[1] is not None)
+        case("a refusal names the first free port, past the held one",
+             free_port(9340, 5, sd, in_use=lambda p: False) == 9341)
+        _write_state(state_path(9342, sd), {"pid": dead.pid, "port": 9342})
+        case("a dead serve's record is taken over", claim(9342, dict(me, port=9342), sd) is None)
+        # The race: the other serve's record lands between this run's check and its create.
+        _write_state(state_path(9345, sd), {"pid": os.getpid(), "port": 9345})
+        seen = []
+        late = lambda pid: bool(seen.append(pid)) or len(seen) > 1   # dead at the first look, up after
+        case("a serve that took the port between the check and the create keeps it",
+             claim(9345, dict(me, port=9345, pid=dead.pid), sd, alive=late) is not None
+             and record_for(9345, sd)[1]["pid"] == os.getpid())
+        _write_state(os.path.join(sd, LEGACY_STATE), {"pid": os.getpid(), "port": 9343})
+        case("a serve started before the split holds its own port", claim(9343, dict(me, port=9343), sd) is not None)
+        case("... and no other", claim(9344, dict(me, port=9344), sd) is None)
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        busy = srv.getsockname()[1]
+        case("a port something else listens on is seen as taken", port_in_use(busy))
+        srv.close()
+        case("... and free once it closes", not port_in_use(busy))
     finally:
         shutil.rmtree(td, ignore_errors=True)
     print(f"{sum(results)} of {len(results)} planted cases behave as expected.")
@@ -465,18 +854,21 @@ if __name__ == "__main__":
         sys.exit(0)
     if args[0] in ("selftest", "--selftest"):
         sys.exit(__import__("kit_config").run_isolated(selftest))
+    opts = {"--minutes": SERVE_DEFAULT, "--port": None, "--channel": None}
+    rest = list(args[1:])
+    headed_flag = "--headed" in rest
+    rest = [a for a in rest if a != "--headed"]
+    for flag in opts:
+        if flag in rest:
+            i = rest.index(flag)
+            opts[flag] = rest[i + 1] if flag == "--channel" else int(rest[i + 1])
+            del rest[i:i + 2]
     if args[0] == "stop":
-        sys.exit(stop_serve())
+        sys.exit(stop_serve(opts["--port"]))
     if args[0] == "status":
-        sys.exit(status())
-    if args[0] == "serve" and len(args) >= 2:
-        opts = {"--minutes": SERVE_DEFAULT, "--port": 9333, "--channel": None}
-        rest = list(args[1:])
-        for flag in opts:
-            if flag in rest:
-                i = rest.index(flag)
-                opts[flag] = rest[i + 1] if flag == "--channel" else int(rest[i + 1])
-                del rest[i:i + 2]
-        sys.exit(serve(rest[0], opts["--minutes"], opts["--port"], chan=opts["--channel"]))
+        sys.exit(status(opts["--port"]))
+    if args[0] == "serve" and rest:
+        sys.exit(serve(rest[0], opts["--minutes"], opts["--port"] or SERVE_PORT, chan=opts["--channel"],
+                       headed=headed_flag))
     print(__doc__)
     sys.exit(2)
