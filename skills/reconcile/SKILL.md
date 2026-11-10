@@ -95,7 +95,9 @@ drives an edit or a delete is checked against the source first.
 ## 5. Record
 
 Per item: status (CURRENT / SUPERSEDED / DUPLICATE / STALE / REFERENCE) and disposition (KEEP /
-COMBINE / RENAME / UPDATE / DELETE / ARCHIVE), each traced to the decision it came from.
+COMBINE / RENAME / UPDATE / DELETE / ARCHIVE), each traced to the decision it came from. When a
+surface's mark says how to record an item as done, such as a call's row in a calls record, do it as
+you file the item, so the surface stops listing it.
 
 ## 6. Bucket
 
