@@ -18,6 +18,8 @@ WHAT IS HERE
   walk(dirs, found, ...)          os.walk the folders, finding markers on the way; each folder comes with
                                   the innermost seal holding it
   find(dirs, ...)                 the markers alone
+  settings_check(lift)            raise Unknown when a settings file is there but did not load; walk and
+                                  find call it first, so no tool reads logs with the markers unknown
   parse(folder, today, lift)      one marker as a seal: active, expired, lifted or unreadable
   sealed_at(path, seals)          the innermost seal, in force or lifted, whose folder holds path
   hold_files(files, seals, what)  a tool's files less those a seal holds, with counts
@@ -53,10 +55,34 @@ import cc_logs  # noqa: E402
 HOME = os.path.expanduser("~")
 SEAL = ".recall-sealed"
 FIELDS = ("reason", "owner", "until", "logs")
+MUT = set()  # selftest only: the rule being broken on purpose
 
 
 def _why(e):
     return cc_logs.redact(f"{type(e).__name__}: {e}").splitlines()[0][:200]
+
+
+class Unknown(Exception):
+    """A settings file is there but could not be read, so the markers in the folders it names go unfound."""
+
+
+def settings_check(lift=False):
+    """Raise Unknown when a settings file kit_config reads is there but could not be read: bad JSON, or a
+    link to nothing. The folders markers are found in come from those settings, and the tools fall back to
+    defaults that name none, so they would read every sealed log, and recall_index would store them.
+    --include-sealed lifts every seal anyway, so it skips this."""
+    if lift or "no_settings_check" in MUT:
+        return
+    import kit_config
+    seen, bad = set(), []
+    for p in kit_config.load()["unread"]:   # a link to nothing in your home folder is both of its files
+        if os.path.realpath(p) not in seen:
+            seen.add(os.path.realpath(p))
+            bad.append("~" + p[len(HOME):] if p.startswith(HOME + os.sep) else p)
+    if bad:
+        raise Unknown(f"{' and '.join(bad)} could not be read, so the seal markers in the folders "
+                      f"{'they name are' if len(bad) > 1 else 'it names are'} unknown; fix "
+                      f"{'them' if len(bad) > 1 else 'it'}, or pass --include-sealed")
 
 
 def parse(d, today, lift):
@@ -113,7 +139,10 @@ def walk(dirs, found, prune=(), today=None, lift=False, markers=True, threads=1)
 
     threads > 1 lists each level's folders on that many threads, a level at a time, so a folder still comes
     after the one holding it: on a tree of several thousand folders, about 2.5 times faster on 4 than os.walk.
-    The same folders and files, in another order; links to folders are not followed, as by os.walk."""
+    The same folders and files, in another order; links to folders are not followed, as by os.walk.
+    Raises Unknown (settings_check) before the first folder when the settings that name the folders did
+    not load."""
+    settings_check(lift)
     today = today or datetime.date.today()
     if threads > 1:
         yield from _walk_levels(dirs, found, prune, today, lift, markers, threads)

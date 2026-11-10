@@ -2786,7 +2786,8 @@ def search(queries, opts):
     try:                                    # before any source runs, so none reads what a seal holds back
         opts.sealed = find_seals(opts)
     except Exception as e:                  # unknown seals: searching would read them, so nothing runs
-        why = f"the seal check crashed, so nothing was searched: {_why(e)}"
+        why = (f"nothing was searched: {e}" if isinstance(e, sealing.Unknown)
+               else f"the seal check crashed, so nothing was searched: {_why(e)}")
         if early:
             early.shutdown(wait=True)
         if kids:
@@ -3023,7 +3024,8 @@ def cmd_last(name, opts):
     try:                                   # a sealed session's title would print below, so seals come first
         seals = find_seals(opts)["seals"]
     except Exception as e:
-        print(f"--last /{name}: the seal check crashed, so no log was read: {_why(e)}")
+        print(f"--last /{name}: no log was read: {e}" if isinstance(e, sealing.Unknown)
+              else f"--last /{name}: the seal check crashed, so no log was read: {_why(e)}")
         return 2
     inv, copies, (held, nomatch) = _inventory(opts, seals)
     rs = _pool(json.dumps({"mode": "last", "name": name}), copies, getattr(opts, "serial", False))
@@ -3542,7 +3544,8 @@ def cmd_brief(labels, opts):
         seals = find_seals(opts)["seals"]
     except Exception as e:                  # unknown seals: listing live sessions could show a sealed one
         seals = None
-        hit, other, cov, l_bad = [], [], "", f"DID NOT RUN: the seal check crashed: {_why(e)}"
+        hit, other, cov, l_bad = [], [], "", (f"DID NOT RUN: {e}" if isinstance(e, sealing.Unknown)
+                                              else f"DID NOT RUN: the seal check crashed: {_why(e)}")
     if seals is not None:
         hit, other, cov, l_bad = _brief_live(q, ref, cut, seals)
     earlier, ne, e_bad = _brief_earlier(labels, cut, opts)
@@ -5230,6 +5233,22 @@ def selftest_settings():
             json.dump({}, open(cfg, "w"))
             kit_config.reset()
             unset_files, unset_mem = _note_files(), memory_globs()
+            open(cfg, "w").write('{"recall": {"notes": "x"')       # settings that will not load
+            kit_config.reset()
+            seal_runs = {}
+            for how, lift, mut in (("unread", False, set()), ("lifted", True, set()),
+                                   ("broken", False, {"no_settings_check"})):
+                sealing.MUT.clear()
+                sealing.MUT.update(mut)
+                try:
+                    find_seals(argparse.Namespace(include_sealed=lift))
+                    seal_runs[how] = "ran"
+                except sealing.Unknown as e:
+                    seal_runs[how] = str(e)
+                finally:
+                    sealing.MUT.clear()
+            idx = os.path.join(t, "idx", "index.db")
+            upd = recall_index.update(idx, 1, quiet=True), os.path.exists(os.path.dirname(idx))
         finally:
             CONFIG.update(saved)
             if env is None:
@@ -5244,7 +5263,14 @@ def selftest_settings():
                 ("recall.memory_globs replaces the memory list, so a memory folder it leaves out isn't read",
                  mem == [os.path.join(t, "skills", "*.md")]),
                 ("... and unset, every project's memory folder is read",
-                 any(os.sep + "memory" + os.sep in g for g in unset_mem) and unset_mem == saved["memory_globs"])):
+                 any(os.sep + "memory" + os.sep in g for g in unset_mem) and unset_mem == saved["memory_globs"]),
+                ("settings that will not load: the seal markers are unknown, so the seal walk refuses, naming the file",
+                 cfg.replace(sealing.HOME, "~") in seal_runs["unread"] and "could not be read" in seal_runs["unread"]),
+                ("... and with the rule broken, the walk runs on with no marker folder",
+                 seal_runs["broken"] == "ran"),
+                ("... --include-sealed lifts every seal anyway, so the walk runs", seal_runs["lifted"] == "ran"),
+                ("... and recall_index update writes nothing, exit 2, not even the index's folder",
+                 upd == (2, False))):
             ok &= good
             print(("pass " if good else "FAIL ") + "settings: " + name)
     return ok

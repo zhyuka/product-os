@@ -375,7 +375,8 @@ def main(argv=None, inv=None, seal_roots=None):
         dirs, prune = seal_roots if seal_roots is not None else seal_dirs()
         seals = sealing.find(dirs, prune, lift=a.include_sealed)
     except Exception as e:
-        print("  the seal check crashed, so no log was read: "
+        print(f"  no log was read: {e}" if isinstance(e, sealing.Unknown) else
+              "  the seal check crashed, so no log was read: "
               + cc_logs.redact(f"{type(e).__name__}: {e}").splitlines()[0][:200])
         return 2
     copies, held, nomatch = sealing.hold_logs(inv, copies, seals)

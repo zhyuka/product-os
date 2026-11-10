@@ -284,7 +284,12 @@ def main():
     if a.selftest:
         return __import__("kit_config").run_isolated(selftest)
     RULES, ALIASES = load_config()
-    found, held = sessions(a.days, project=a.project)
+    import seals as sealing
+    try:
+        found, held = sessions(a.days, project=a.project)
+    except sealing.Unknown as e:
+        print(f"no log was read: {e}")
+        return 2
     return report(found, a.verbose, held)
 
 

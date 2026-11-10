@@ -220,20 +220,25 @@ def project_path(start=None):
         d = up
 
 
-def _read(path, problems):
+def _read(path, problems, unread=None):
+    """The file's settings, or {} with the reason added to problems and, when the file is there (or a link
+    to nothing) but could not be read, its path added to unread."""
+    def bad(why):
+        problems.append(why)
+        if unread is not None:
+            unread.append(path)
+        return {}
     if not path or not os.path.exists(path):
         if path and os.path.islink(path) and "no_dangling" not in MUT:
-            problems.append(f"{path} links to {os.readlink(path)}, which is missing, so its settings were left out")
+            return bad(f"{path} links to {os.readlink(path)}, which is missing, so its settings were left out")
         return {}
     try:
         with open(path, encoding="utf-8") as f:
             d = json.load(f)
     except (OSError, ValueError) as e:
-        problems.append(f"{path} could not be read: {e}")
-        return {}
+        return bad(f"{path} could not be read: {e}")
     if not isinstance(d, dict):
-        problems.append(f"{path} holds {type(d).__name__}, not an object")
-        return {}
+        return bad(f"{path} holds {type(d).__name__}, not an object")
     return d
 
 
@@ -327,18 +332,19 @@ def _withhold(theirs, project, problems):
 
 def load(start=None):
     """{"settings": merged dict, "user": path, "project": path or None, "problems": [...],
-    "withheld": [(key, why)], "refused": its line or None}. Never raises: a file that will not parse is
-    left out and named under problems, which need() reports. A command setting the project's file has
+    "unread": [path], "withheld": [(key, why)], "refused": its line or None}. Never raises: a file that
+    will not parse is left out and named under problems, which need() reports, and under unread, for a
+    tool that must not run on settings with a file missing (seals.py). A command setting the project's file has
     and you haven't accepted is left out and named under withheld. Inside the plugin's own folder with
     no project named, no project file is read and refused says why; need() raises it."""
     d, refused = _resolve(start)
     key = (d or refused, os.environ.get(ENV), os.environ.get("CLAUDE_PROJECT_DIR"), user_path())
     if key not in _loaded:
         u, p = user_path(), project_path(d)
-        problems = []
+        problems, unread = [], []
         if refused:
             problems.append(refused)
-        mine, theirs = _read(u, problems), _read(p, problems)
+        mine, theirs = _read(u, problems, unread), _read(p, problems, unread)
         if isinstance(theirs.get("tokens"), dict) and "keychain" in theirs["tokens"] \
                 and "project_tokens" not in MUT:
             del theirs["tokens"]["keychain"]
@@ -346,7 +352,7 @@ def load(start=None):
                             f"from, so only your own {u} can set it; it was left out")
         withheld = _withhold(theirs, p, problems)
         merged = _merge(theirs, mine) if "user_wins" in MUT else _merge(mine, theirs)
-        _loaded[key] = {"settings": merged, "user": u, "project": p, "problems": problems,
+        _loaded[key] = {"settings": merged, "user": u, "project": p, "problems": problems, "unread": unread,
                         "withheld": withheld, "refused": refused}
     return _loaded[key]
 

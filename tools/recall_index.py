@@ -31,7 +31,9 @@ the index file.
 
 SEALS. A log a .recall-sealed marker holds (seals.py, its lifted state included) is never written
 here, and a log a newer seal holds is deleted at the next update, its records with it unless an
-unsealed copy holds them too.
+unsealed copy holds them too. When a settings file is there but did not load, update writes nothing
+and exits 2: the folders the markers sit in come from those settings, and so does the index folder.
+recall.py searches nothing then, so it neither writes here nor starts an update.
 
 WHAT IT IS NOT. It finds candidates, never hits: recall.py runs its own scan on each candidate record,
 so every rule there (forms, roles, typed, headless, the date window, metadata) decides as before. A
@@ -612,7 +614,15 @@ def size_on_disk(path):
 
 def update(path, workers, rebuild=False, quiet=False):
     import recall
+    import seals as sealing
     say = (lambda m: None) if quiet else (lambda m: print(m, flush=True))
+    # Before the lock, which makes the index's folder. Settings that did not load name no seal marker and no
+    # index folder, so the default folder would fill with every sealed log.
+    try:
+        sealing.settings_check()
+    except sealing.Unknown as e:
+        say(f"nothing indexed: {e}")
+        return 2
     lock = Lock(path)
     if not lock.try_acquire():
         say("another update holds the index; nothing done")
@@ -638,7 +648,6 @@ def update(path, workers, rebuild=False, quiet=False):
         inv, copies, (kept, _) = recall._inventory(opts, seals)
         held, held_keys = sealed_keys(inv, conn, seals)
         n, r = purge(conn, held_keys)
-        import seals as sealing
         indexable = sealing.hold_logs(inv, copies, held)[0]
         say(f"inventory and seals {time.time() - t0:.0f}s: {len(indexable)} copies to index, "
             f"{sum(h.get('log copies', 0) for h in kept.values())} sealed copies left out; a newer seal's log "
@@ -689,7 +698,12 @@ def check_cmd(path):
             first = first or rid
     print(f"records: {n - bad:,} of {n:,} unchanged by a second redact" + (f"; first not: record {first}" if bad else ""))
     opts = argparse.Namespace(include_sealed=False, refresh=False)
-    seals = recall.find_seals(opts)["seals"]
+    import seals as sealing
+    try:
+        seals = recall.find_seals(opts)["seals"]
+    except sealing.Unknown as e:
+        print(f"copies: check DID NOT RUN: {e}")
+        return 2
     inv = cc_logs.Inventory(recall.CONFIG["root"], cache=recall.CONFIG["cache"])
     _, held_keys = sealed_keys(inv, conn, seals)
     stored = [k for (k,) in conn.execute("select key from copy")]
