@@ -10,11 +10,12 @@ inside the plugin's own folder: there it refuses in one line, exit 2 (kit_config
 The lists are triage's: the tracker (`ado_rest.py decisions` when `ado.project` is set, or
 `ado_rest.py decisions --from FILE` for a tracker file someone handed over; with neither, its line
 says it isn't set up and names `--from`, so the card never leaves it out unsaid), the ledger file
-`.claude/open-questions.md` in this folder, the request ledger (`ledger.py --questions`), and each
-`triage.sources` command once it is accepted. A list ran when its tool exits 0 (the ledger file: when
-it reads), and its line gives the count. Otherwise it did not run, and its line quotes what the tool
-printed: its REFUSED line, else its error line, else its last line. A closing line says to paste
-these lines first.
+(`triage.ledger_file`, a path from the project folder, by default `.claude/open-questions.md`; `false`
+for a project that keeps none, whose line says so), the request ledger (`ledger.py --questions`), and
+each `triage.sources` command once it is accepted. A list ran when its tool exits 0 (the ledger file:
+when it reads, so a missing one did not run), and its line gives the count. Otherwise it did not
+run, and its line quotes what the tool printed: its REFUSED line, else its error line, else its last
+line. A closing line says to paste these lines first.
 
 WHY. The reply that holds a triage card opens with each list that did not run. Written by hand, that
 opening was dropped; printed by a tool, it is pasted. Since a session may run it before its recall
@@ -68,29 +69,37 @@ def run_list(label, argv, shown, cwd, timeout=180):
                           f'{quoted((p.stdout or "") + chr(10) + (p.stderr or ""))}'), 1
 
 
-def ledger_file(cwd):
-    path = os.path.join(cwd, LEDGER_FILE)
+def ledger_file(cwd, setting=None):
+    """The ledger file's row. setting: triage.ledger_file, None for the default path, False for a project
+    that keeps no ledger file (said, never left out, as the tracker's line is when it isn't set up)."""
+    if setting is False:
+        return ('Ledger file', None, 'Ledger file: not kept here (`triage.ledger_file` is false).'), 0
+    if setting is not None and not (isinstance(setting, str) and setting.strip()):
+        return ('Ledger file', False, f'Ledger file: did not run. `triage.ledger_file` is {setting!r}; it takes a '
+                                      'path from the project folder, or false.'), 1
+    shown = setting.strip() if setting is not None else LEDGER_FILE
+    path = os.path.join(cwd, os.path.expanduser(shown))
     try:
         text = open(path, encoding='utf-8').read()
     except OSError as e:
-        return ('Ledger file', False, f'Ledger file: did not run. {LEDGER_FILE} could not be read '
+        return ('Ledger file', False, f'Ledger file: did not run. {shown} could not be read '
                                       f'({type(e).__name__}).'), 1
     n = len(re.findall(r'(?im)^\s*-?\s*Status:\s*open\b', text))
-    return ('Ledger file', True, f'Ledger file: ran. {LEDGER_FILE} holds {n} open question(s).'), 0
+    return ('Ledger file', True, f'Ledger file: ran. {shown} holds {n} open question(s).'), 0
 
 
 def config(tools, cwd):
-    """(ado.project, triage.sources, why sources are withheld or None), read through kit_config for
-    the project at or above cwd."""
+    """(ado.project, triage.sources, why sources are withheld or None, triage.ledger_file), read through
+    kit_config for the project at or above cwd."""
     sys.path.insert(0, tools)
     try:
         import kit_config
         c = kit_config.load(cwd)
         withheld = next((why for k, why in c.get('withheld', []) if k == 'triage.sources'), None)
         return (kit_config.get('ado', 'project', start=cwd), kit_config.get('triage', 'sources', start=cwd),
-                withheld)
+                withheld, kit_config.get('triage', 'ledger_file', start=cwd))
     except Exception:                       # no kit_config beside it: the tracker and sources aren't set up
-        return None, None, None
+        return None, None, None, None
     finally:
         sys.path.remove(tools)
 
@@ -106,7 +115,8 @@ def project(explicit=None):
 
 def read(tools=HERE, cwd=None, from_file=None, cfg=None):
     cwd = cwd or project()
-    project, sources, withheld = cfg if cfg is not None else config(tools, cwd)
+    project, sources, withheld, *rest = cfg if cfg is not None else config(tools, cwd)
+    ledger = rest[0] if rest else None
     py = sys.executable
     rows, code = [], 0
 
@@ -124,7 +134,7 @@ def read(tools=HERE, cwd=None, from_file=None, cfg=None):
     else:                                   # said, never left out: a handed-over file run without --from showed nothing
         add((('Tracker', None, 'Tracker: not set up here (no `ado.project`), and no `--from` file was given. '
                                'For a tracker file someone handed you, run this again with `--from <file>`.'), 0))
-    add(ledger_file(cwd))
+    add(ledger_file(cwd, ledger))
     add(run_list('Request ledger', [py, os.path.join(tools, 'ledger.py'), '--questions'], 'ledger.py --questions', cwd))
     if withheld:
         add((('Project sources', False, 'Project sources: did not run. triage.sources is NOT ACCEPTED on this '
@@ -208,9 +218,26 @@ def selftest():
             check("--project naming the plugin's own folder: one REFUSED line, exit 2, naming a --project to use",
                   runs[2][0] == 2 and len(runs[2][1]) == 1 and runs[2][1][0].startswith('REFUSED: --project ')
                   and 'Run it again with --project ' in runs[2][1][0], runs[2])
+        os.makedirs(os.path.join(proj, 'notes'))
+        open(os.path.join(proj, 'notes', 'questions.md'), 'w').write('- Status: open\n- Status: open\n')
+        rows, code = read(tools, proj, None, cfg=(None, None, None, 'notes/questions.md'))
+        check('triage.ledger_file names another path: that file is counted, and its line names it',
+              code == 0 and rows[1] == ('Ledger file', True, 'Ledger file: ran. notes/questions.md holds 2 open '
+                                        'question(s).'), rows)
         os.remove(os.path.join(proj, LEDGER_FILE))
         rows, code = read(tools, proj, None, cfg=(None, None, None))
         check('a missing ledger file did not run', code == 1 and rows[1][0] == 'Ledger file' and rows[1][1] is False,
+              rows)
+        rows, code = read(tools, proj, None, cfg=(None, None, None, 'notes/gone.md'))
+        check('a missing file at the path triage.ledger_file names did not run, naming it',
+              code == 1 and rows[1][1] is False and 'notes/gone.md could not be read' in rows[1][2], rows)
+        rows, code = read(tools, proj, None, cfg=(None, None, None, False))
+        check('triage.ledger_file false: the line says the project keeps none, exit 0, and nothing is read',
+              code == 0 and rows[1] == ('Ledger file', None, 'Ledger file: not kept here (`triage.ledger_file` is '
+                                        'false).'), rows)
+        rows, code = read(tools, proj, None, cfg=(None, None, None, True))
+        check('triage.ledger_file neither a path nor false did not run, saying what it takes',
+              code == 1 and rows[1][1] is False and 'it takes a path from the project folder, or false' in rows[1][2],
               rows)
     print('ALL PASS' if ok else 'FAILED')
     return 0 if ok else 1

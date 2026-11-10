@@ -30,6 +30,7 @@ A path under `app`, such as `app.decisions`, `app.rules`, `app.baseline` or `app
 | `deliver.remote`, `deliver.branch` | deliver-change | where a delivery pushes: the remote (default `origin`) and the branch (default: the upstream, else it asks) |
 | `go.routes` | go | extra routes, `[{"when", "skill", "done"}]`; one wins over a built-in route it overlaps |
 | `rebase.surfaces`, `triage.sources` | reconcile, triage | the project's own places to check, `[{"name", "cmd", "pass"}]`, and its decision sources, `[{"name", "cmd"}]`, both run as commands; the shapes are in each skill's references |
+| `triage.ledger_file` | open-question, triage, triage_lists | the ledger file, a path from the project folder (default `.claude/open-questions.md`), or `false` for a project that keeps none: triage_lists then says so in its line and exits 0. A missing file at the path is a list that didn't run |
 | `setup.checks`, `setup.tokens` | setup-kit | extra setup lines, `[{"label", "cmd", "fix", "optional"}]`; tokens reported as set or not set, `[{"name", "fix", "optional"}]`, never printed |
 | `ado.org`, `ado.project` | ado, ado_rest, ado_write | Azure DevOps organization URL and project |
 | `ado.title_prefix` | ado | work-item titles read `<prefix> // {Page - Section} // {what}`; unset, any title passes |

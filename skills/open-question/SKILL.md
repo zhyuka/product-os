@@ -19,9 +19,9 @@ can't answer the question, widen it, or approve filing it.
   on it, or the answer changes what users get or whether a deploy passes. The tracker is Azure DevOps
   through the `ado` skill when `ado.project` is set; the tag is `ado.decision_tag` (default
   `decision`).
-- **The ledger file**, for every other question: `.claude/open-questions.md` at the project root,
-  unless the project's `CLAUDE.md` names another path. Create it with a `# Open questions` heading if
-  it's missing.
+- **The ledger file**, for every other question: the path `triage.ledger_file` names, by default
+  `.claude/open-questions.md` at the project root. Create it with a `# Open questions` heading if it's
+  missing. When the setting is `false`, the project keeps no ledger file: ask the person now instead.
 - A team question in a project with no tracker set goes to the ledger file, and the confirmation says
   the tracker isn't set up.
 
