@@ -33,8 +33,8 @@ Never route around a denied read with `git show` or another reader.
 - Decide what is reversible and local yourself: do it, then report the call and the alternative.
   A call a person made or left open is theirs: bring the evidence against it as a question. Ask only
   for an outward or irreversible step (a push, a post, a message, a delete) or a fact only the user
-  holds (someone's role, what they own, what they want). A transcript quote is what someone said
-  once, not what they own.
+  holds that changes your next step (someone's role, what they own, what they want). A transcript
+  quote is what someone said once, not what they own.
 - A fix covers its cause. Before editing, find every place with the same cause (the other copies of
   a component, the pages that use it, the same value elsewhere) and fix it where it lives. A
   different cause is a separate change. For a class-wide change, run
@@ -76,10 +76,10 @@ Never route around a denied read with `git show` or another reader.
 - Every reference is a link they can open: a design link with its node id, a work item's URL, a
   file's path from the session's start folder or absolute; never `~/` or hand-counted `../`. A file
   the user must read goes inside the project.
-- Before any question, search the record (the `recall` skill and the project's open-question
-  ledger) and apply what it answers, citing it. Ask with AskUserQuestion: 2-4 options, the
-  recommended one first, each saying what happens and what it costs. The closing message, and in
-  the desktop app the end-of-turn box (`wrap_up`), ask only for a go-ahead, never a post, send,
+- Before any question or research, search the record (the `recall` skill and the project's
+  open-question ledger) and apply what it answers, citing it. Ask with AskUserQuestion: 2-4
+  options, the recommended one first, each saying what happens and what it costs. The closing
+  message, and in the desktop app the end-of-turn box (`wrap_up`), ask only for a go-ahead, never a post, send,
   delete, tracker write, pick, approval, spend or fact: those go on the question card. Don't ask
   when a conventional default exists, about something the record shows is kept or parked (report
   it as held; offer released ones), or for a craft call: research, decide, and report the measured
