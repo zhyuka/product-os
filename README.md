@@ -114,6 +114,8 @@ Two files per project, each committed with it:
 
 Tokens come from environment variables or the OS keychain, never from these files.
 
+[docs/make-it-yours.md](docs/make-it-yours.md) says which settings, templates and routes fit the stages to your own workflow, and what each change does.
+
 The Figma and Azure DevOps tools that write take a reason in plain words on any flag that lifts one of their refusals, so you read why in the permission prompt. For that prompt to fire, give each write command an ask rule in your settings, in the form `Bash(*figma_post* new *)`. `python tools/ask_rules.py <settings.json>` checks that every write prompts and no read does.
 
 ## Templates
@@ -121,6 +123,7 @@ The Figma and Azure DevOps tools that write take a reason in plain words on any 
 - [`templates/CLAUDE.md`](templates/CLAUDE.md) holds working agreements to copy into `~/.claude/CLAUDE.md`. Edit them to fit how you work.
 - [`templates/machine.md`](templates/machine.md) starts the notes on your machine that a session reads on demand: file traps and a proxy's block page.
 - [`templates/REVIEW.md`](templates/REVIEW.md) is a project's review rules for the reviewer: what it checks, what blocks and what is POLISH.
+- [`templates/plan.md`](templates/plan.md) is the shape of a change's plan: the files that change, the order of work, the risks and the proof. The build step writes a plan from it in plan mode.
 - [`templates/writing-instructions.md`](templates/writing-instructions.md) is how to write a skill, an agent or a rule so a model follows it.
 - [`templates/launchd/`](templates/launchd) has a macOS example that runs the daily audits at login and at 08:00.
 

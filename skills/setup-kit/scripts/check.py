@@ -10,7 +10,8 @@ Run it from anywhere in the project. It checks:
     ci/shim/, which run the installed plugin's, or full copies with scan_keys.py beside them;
   - the runner: `product-os` on PATH, the plugin's own launcher, which the push check needs;
   - the settings (.claude/product-os.json through the plugin's kit_config): app.build_cmd and
-    app.check_cmd accepted on this machine when the project's file sets them, the plugin's version
+    app.check_cmd accepted on this machine when the project's file sets them, a note for each setting
+    a stage reads that is unset (STAGES) with what the stage does without it, the plugin's version
     against setup.min_version when it's set, and every setup.checks line, each run in app.dir and
     passing on exit 0;
   - at least one check listed in .claude/product-os-checks.json, since the push check refuses a
@@ -39,6 +40,19 @@ COMMIT_MARK = "# product-os: commit check"
 # scanner beside it.
 SHIM_MARK = "# product-os: runs the installed plugin's hook"
 PLUGIN_ID = "product-os@product-os"
+# The settings the stages read, with what a stage does while one is unset. Notes, never misses: the setup skill
+# asks the person for each unset one in one message and writes only what they answer. ado.* is noted only when
+# the tracker is unset or Azure DevOps.
+STAGES = (
+    ("tracker.server", "deliver-change goes through the ado skill when ado.org and ado.project are set, "
+                       "and otherwise writes the tracker comment for you to paste"),
+    ("ado.org", "deliver-change and the ado tools can't reach Azure DevOps"),
+    ("ado.project", "deliver-change and the ado tools can't reach Azure DevOps"),
+    ("figma.files", "the Figma tools search a file only when it's named, and setup-kit checks no Figma sign-in"),
+    ("intent.dir", "intent and spec write each change's files under intent/"),
+    ("deliver.remote", "deliver-change pushes to origin"),
+    ("deliver.branch", "deliver-change pushes to the current branch's upstream, or asks which branch"),
+)
 MANAGED = {"darwin": "/Library/Application Support/ClaudeCode/managed-settings.json",
            "linux": "/etc/claude-code/managed-settings.json",
            "win32": r"C:\Program Files\ClaudeCode\managed-settings.json"}
@@ -196,6 +210,14 @@ def claude_hooks(add, root, managed):
     add(False, True, "Claude Code hooks", f"on ({where}): {', '.join(names)}")
 
 
+def setting(settings, key):
+    """The value at a dotted key in the merged settings, else None."""
+    v = settings
+    for part in key.split("."):
+        v = v.get(part) if isinstance(v, dict) else None
+    return v
+
+
 def run(argv, cwd=None, env=None):
     cwd = cwd or os.getcwd()
     rows = []
@@ -254,6 +276,17 @@ def run(argv, cwd=None, env=None):
         elif loaded is not None:
             add(False, False, key, "not set, so the push check runs only product-os check",
                 "set it in .claude/product-os.json if the project has one")
+    if loaded is not None:
+        tracker = setting(settings, "tracker.server")
+        for key, while_unset in STAGES:
+            if key.startswith("ado.") and isinstance(tracker, str) and tracker.strip() and tracker != "azure-devops":
+                continue
+            v = setting(settings, key)
+            if v is None or (isinstance(v, (str, dict, list)) and not (v.strip() if isinstance(v, str) else v)):
+                add(False, False, key, f"not set, so {while_unset}",
+                    "the setup skill asks for it; the answer goes in .claude/product-os.json")
+            else:
+                add(False, True, key, f"{len(v)} file(s)" if isinstance(v, dict) else str(v))
 
     try:
         checks = json.loads((top / ".claude" / "product-os-checks.json").read_text(encoding="utf-8")).get("checks", [])
@@ -406,6 +439,19 @@ def selftest():
         expect("an unset token is a miss", not by("token PLANTED_TOKEN")["ok"])
         expect("hooks with no policy file are on, and named", by("Claude Code hooks")["ok"]
                and "qa_before_done" in by("Claude Code hooks")["detail"])
+        expect("each unset stage setting is a note saying what its stage does without it, never a miss",
+               all(by(k) and not by(k)["ok"] and not by(k)["need"] and by(k)["detail"].startswith("not set, so ")
+                   for k, _ in STAGES))
+        for planted, noted in (({"tracker": {"server": "jira"}}, False), ({"tracker": {"server": "azure-devops"}}, True)):
+            stage = dict(settings, settings=dict(settings["settings"], **planted, intent={"dir": "  "},
+                                                 figma={"files": {"K1": {"kind": "design"}}}))
+            write(proj / "planted-settings.json", json.dumps(stage))
+            rows = run(base, str(proj), env)
+            expect(f"tracker {planted['tracker']['server']}: the ado notes are {'shown' if noted else 'left out'}, "
+                   "and a set tracker passes", (by("ado.org") is not None) == noted and by("tracker.server")["ok"])
+        expect("a blank intent.dir reads as unset, and figma.files counts its files",
+               not by("intent.dir")["ok"] and by("figma.files")["ok"] and by("figma.files")["detail"] == "1 file(s)")
+        write(proj / "planted-settings.json", json.dumps(settings))
 
         # Now plant the good case: hooks on, runner on PATH, a check listed, the token set.
         write(proj / ".githooks" / "pre-push", f"#!/bin/sh\n{PUSH_MARK}\n", 0o755)

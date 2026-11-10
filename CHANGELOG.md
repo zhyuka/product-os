@@ -4,6 +4,8 @@ Each version here matches `version` in `.claude-plugin/plugin.json`, the marketp
 
 ## Unreleased
 
+- `docs/make-it-yours.md` is one page on fitting the stages to your own workflow: which settings, templates and `go.routes` a person or a team changes, where each change goes, and what it does. The README links it, and lists `templates/plan.md`, which it had left out.
+- `setup-kit` notes each setting a stage needs that isn't set: `tracker.server`, `ado.org` and `ado.project` (only for Azure DevOps or no tracker named), `figma.files`, `intent.dir`, `deliver.remote` and `deliver.branch`, each with what the stage does without it. A note is never a miss, so N of M is unchanged. The skill asks for them in its one message and writes only the answers, since a blank in the project's file would override the person's own value.
 <!-- github-only -->
 - The release zip installs from its own folder, and nothing in it points at this repo. `scripts/make_zip.py` leaves out `.github/`, `tests/`, `evals/`, `scripts/`, the marketplace entry and the two CI templates. In Markdown it drops each github-only block and shows each zip-only one. It refuses a zip in which a file still names the repo, its marketplace or a path under `.github/`, or links into what it left out. Both plugin manifests drop their repo URLs, which the marketplace entry keeps, and `pyproject.toml` drops `[project.urls]`.
 <!-- /github-only -->
