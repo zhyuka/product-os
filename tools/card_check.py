@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """card_check.py - check a question card before the user sees it: bare ids, paths they can't open, the
-card's shape, questions the record may already answer, and questions about work that is ours to do.
+card's shape and questions about work that is ours to do; and, as leads, what the record says on each
+question's topic.
 
     python tools/card_check.py <card.json>              the AskUserQuestion input ({"questions": [...]}), or - for stdin
     python tools/card_check.py <card.json> --session ID the Claude Code session asking (default $CLAUDE_CODE_SESSION_ID)
@@ -19,10 +20,6 @@ have to look up, a path they can't open. Claude Code can't refuse a question car
 on each card before it asks, and --share reports how often that happened.
 
 FLAGS, each with the question it sits in:
-  may answer     RECORD MAY ANSWER: <citation>. A ruling row, the user's own typed words or the doc of a
-                 system the question names speaks to the question (TOPIC below): open the citation and act on
-                 it before asking. Not raised when a passage that speaks to it leaves the call to the user
-                 ("is the user's choice"); that passage prints as a `yours` line instead
   ours to do     OURS TO DO: the question asks whether to ask someone whether we may do work that is ours
                  ("ask X whether we may build Y"), or it asks to send a drafted message (an option's preview, or
                  a quoted message) that asks that ("could we show you ...", "would you like us to ..."): build it
@@ -69,11 +66,16 @@ sqrt(TOPIC_LEN / its length) when longer):
   doc          the README of each folder the workspace map (workspace.root, workspace.map) names, and each
                knowledge body's page and canonical files (kb index.md), for the TOPIC_SYSTEMS systems whose
                names the question shares most; a file named for drafts is never a doc
-A passage speaks to the question at TOPIC_BAR or more with TOPIC_SHARED or more shared words (typed words:
-WORDS_BAR, WORDS_SHARED). A question whose step leaves the machine (send, post, add to someone's board,
-everyone sees a banner: OUTWARD, in the question or its first option) needs a ruling row at OUTWARD_BAR or
-typed words: what a system's doc says doesn't decide an outward step. The best passage of each kind prints
-under the question with its score, link and excerpt, flagged or not: the leads to read before asking.
+The best passage of each kind prints under the question with its score, link and excerpt: the leads to
+read before asking. None of them is a flag: replayed on the record as it stood at each card's ask time, a
+passage over the old bar sat under about the same share of the cards the user accepted as of the ones they
+pushed back on as already known, and no bar, kind or match on the card's own options ranked the pushbacks
+higher (the README row has the numbers). topic_lookup still names a lead, the passage at TOPIC_BAR or more
+with TOPIC_SHARED or more shared words (typed words: WORDS_BAR, WORDS_SHARED); a question whose step leaves
+the machine (send, post, add to someone's board, everyone sees a banner: OUTWARD, in the question or its
+first option) takes a ruling row at OUTWARD_BAR or typed words, and a passage over the bar that leaves the
+call to the user ("is the user's choice") prints as a `yours` line instead. The runs log keeps each lead,
+so a new rule can be replayed against the old.
 
 LEADS (--leads only). Each question also runs through recall's --brief search, in a child with a deadline
 (RECORD_SECONDS): one concept, OR'd: its ids, quoted and capitalised names, its header as one phrase, then
@@ -88,7 +90,7 @@ partial, not configured or did not run. recall's first 10 places go to `check(..
 reader yet, so the leads flag nothing; that is why they are opt-in: a run without them takes about 1 s
 instead of about 100 s, and a slow check is one sessions skip. Without --leads one line says they weren't
 asked for. With it, a lookup over RECORD_SECONDS, or one that fails, prints "recall leads did not run" and
-exits 2 when nothing else flagged; the topic lookup still runs and flags.
+exits 2 when nothing else flagged; the topic lookup still runs and prints its leads.
 Other tools call run_record() and record_lookup() directly; their default is recall's full search on 4 rare
 terms (RECORD_SOURCES: logs, ADO, transcripts, git, notes, memory and Figma), as before the topic lookup.
 --leads passes sources=BRIEF_SOURCES and brief=True (the notes filter and the live sessions).
@@ -96,15 +98,15 @@ terms (RECORD_SOURCES: logs, ADO, transcripts, git, notes, memory and Figma), as
 RUNS. Every run appends one line to `card_check.runs` in the product-os config (default
 ~/.local/share/product-os/card-checks.jsonl): time, the questions, the flag count, whether the leads ran,
 didn't or weren't asked for, per question what was shown (source, id, link, the record printed for a log
-place) beside recall's first 3 places, and the topic lookup's flag and best citation of each kind, so a
-later replay can score them. --share reads it, leaving out replays (a run with --before carries its cut,
-and checks nothing).
+place) beside recall's first 3 places, and the topic lookup's lead and best citation of each kind, so a
+later replay can score them (rows from before the lead stopped flagging call it `flag`). --share reads
+it, leaving out replays (a run with --before carries its cut, and checks nothing).
 
 BEFORE. --before T reads the record as it stood then: the ledger's rows before T (for answered?, your
 words? and the topic lookup's typed words and weights), and with --leads recall's search and live
 sessions as of T. Files (docs, ruling rows, notes) have no history, so they are read as they are now, as
-recall reads notes: a doc or ruling row written after the card was asked can make a replay flag what
-the record at ask time could not have.
+recall reads notes: a doc or ruling row written after the card was asked can lead a replay with what
+the record at ask time could not have held.
 
 SESSION. The asking session is --session (a Claude Code session id, as the request ledger keeps it),
 else $CLAUDE_CODE_SESSION_ID. When one session checks a card another drafted, name the other.
@@ -114,8 +116,8 @@ the ledger, under ledger.dir), or, with nothing else flagged, a topic source did
 asked for with --leads did not run. Leads not asked for are no reason for 2.
 
 BLIND. Word overlap is a lead, not a match: a reworded question that was answered slips past, and a
-new question on an old subject can flag. may answer reads words, not meaning: a passage on the same
-subject that settles nothing can flag, and one that settles it in other words can't; an answer that
+new question on an old subject can flag. The topic lookup reads words, not meaning: a passage on the same
+subject that settles nothing can lead, and one that settles it in other words can't; an answer that
 lives only in a session log, a Figma thread, ADO's state or the built site isn't among its three kinds,
 and session logs aren't searched (the user's own words come from the ledger instead; --leads adds only
 the live sessions, and flags nothing). A system the question doesn't name, by a word of the folder's or
@@ -123,12 +125,6 @@ body's name, isn't read. OUTWARD and ours to do read only their phrasings: an ou
 way is held to the lower bar, and a drafted ask the card neither previews nor quotes isn't read. With
 --leads, what prints is one hit per source, the strongest by recall's match strength, which need not be
 the one that settles the question. It doesn't judge whether a question is a craft call.
-Its known-bad cases were mostly settled in the record after they were asked. Against the record as it
-stood at ask time, the topic lookup catches the test-call question, just over its bar, with the paragraph
-that had proposed the call as the next lead; it catches neither question about the builds for a set
-date, whose ruling row was written after both (the row in force then said the plan was proposed, not
-agreed). ours to do, written from that incident, catches the send. So of the 3 questions the record now
-settles, the record as it stood catches 1 and ours to do 1 more.
 An id in a form bare_ids doesn't count (an ADO id without #, a node id in its dashed form) passes as
 linked. your work? reads only the phrasings TASKS lists, in the question and its first option; a task
 put another way passes. Words inside a link don't count toward any overlap.
@@ -630,11 +626,11 @@ def shown_log(found):
 
 
 def topic_log(topics):
-    """Per question, for the runs log: the topic lookup's flag, the passage that left it to the user, and the best
-    citation of each kind with its score."""
+    """Per question, for the runs log: the topic lookup's lead over its bar, the passage that left it to the user,
+    and the best citation of each kind with its score."""
     def brief(h):
         return h and {"kind": h["kind"], "cite": h["cite"], "score": h["score"], "shared": len(h["shared"])}
-    return [{"flag": brief(t["flag"]), "yours": brief(t["yours"]), "outward": t["outward"],
+    return [{"lead": brief(t["lead"]), "yours": brief(t["yours"]), "outward": t["outward"],
              "best": [brief(t[k][0]) for k in ("your words", "ruling", "doc") if t[k]]} for t in topics or []]
 
 
@@ -695,17 +691,13 @@ def recent_words(question, cards, now=None, limit=2):
 # main source because sharing stops the captions; and two cards asked about builds for a set date (whether to ask
 # two leads, then whether to send them a message asking if they'd like them) that a ruling row says are ours to
 # build, nobody asked first. The rare-word lookup that ran then printed a port-default commit, a scroll bug and an
-# old standup. Known good, which must not flag: an outward write to a teammate's board, starting a meeting
+# old standup. Known good, which must have no lead: an outward write to a teammate's board, starting a meeting
 # transcript everyone sees, a note to the person who runs planning, and when to edit the user's own board.
-# What the record held at ask time is less than it holds now. The README passages that settle the test call were
-# edited in after that card; minutes before it, a session had added a paragraph proposing the call. Rebuilt as of
-# the card, the test-call question still flags (0.37), but its next lead (0.35) is that proposing paragraph. The
-# ruling row that settles the builds was written after both cards; the row in force then said the plan was
-# proposed, not agreed, and without the later row neither question flags. So against the record as it stood, the
-# topic lookup caught 1 of the 3 questions the record now settles; ours to do, written from this incident, caught
-# the send. Calibrated on the cards asked over two weeks, with the ledger cut at each card's time and files as they
-# are now: TOPIC_BAR 0.30 flagged one known-good card, 0.40 missed the test-call card (0.37); a 60-word length
-# allowance flagged long tool catalogue rows, so a passage scores by its best TOPIC_WINDOW-sentence window instead.
+# The bars below pick the lead; they gate nothing. They were set when the lead was a flag (TOPIC_BAR 0.30 led one
+# known-good card, 0.40 missed the test-call card at 0.37; a 60-word length allowance led with long tool catalogue
+# rows, so a passage scores by its best TOPIC_WINDOW-sentence window instead). Replayed on the record as it stood at
+# each card's ask time, no bar separated the cards the user pushed back on from the ones they accepted, so the lead
+# flags nothing.
 TOPIC_BAR, TOPIC_SHARED = 0.35, 5
 OUTWARD_BAR = 0.5
 WORDS_BAR, WORDS_SHARED = 0.45, 6
@@ -1086,9 +1078,9 @@ def outward(q):
 
 def topic_lookup(card, rows, before=None, src=None, idf=None):
     """Per question: {"terms": its heaviest stems, "your words", "ruling", "doc": the best passages of each kind,
-    "systems": the names read, "outward": the phrase or None, "flag": the passage that speaks to it or None, "yours":
-    a passage that speaks to it and leaves the call to the user, or None}. src: topic_sources(rows, before) or a
-    stand-in; idf: topic_idf(rows, before) or a stand-in."""
+    "systems": the names read, "outward": the phrase or None, "lead": the passage over its bar or None, "yours":
+    a passage over the bar that leaves the call to the user, or None}. Nothing here is a flag (TOPIC). src:
+    topic_sources(rows, before) or a stand-in; idf: topic_idf(rows, before) or a stand-in."""
     src = src if src is not None else topic_sources(rows, before)
     idf = idf or topic_idf(rows, before)
     out = []
@@ -1096,7 +1088,7 @@ def topic_lookup(card, rows, before=None, src=None, idf=None):
         qw = question_weights(q, idf)
         if not qw:
             out.append({"terms": [], "order": [], "your words": [], "ruling": [], "doc": [], "systems": [],
-                        "outward": None, "flag": None, "yours": None})
+                        "outward": None, "lead": None, "yours": None})
             continue
         systems = systems_for(qw, src["systems"])
         docs = list(dict.fromkeys(p for s in systems for p in s["docs"] if "draft" not in os.path.basename(p).lower()))
@@ -1115,7 +1107,7 @@ def topic_lookup(card, rows, before=None, src=None, idf=None):
                     speaks.append(h)
         order = sorted(qw, key=lambda s: (-qw[s], s))
         out.append({"terms": order[:8], "order": order, **got, "systems": [s.get("label") or s["name"] for s in systems],
-                    "outward": out_, "flag": None if yours else (speaks[0] if speaks else None), "yours": yours})
+                    "outward": out_, "lead": None if yours else (speaks[0] if speaks else None), "yours": yours})
     return out
 
 
@@ -1222,23 +1214,16 @@ def draft_title(head):
 
 
 # ------------------------------------------------------------------------------------- the check
-def check(card, cards, drafts=None, found=None, reader=None, now=None, topics=None):
+def check(card, cards, drafts=None, found=None, reader=None, now=None):
     """[(question number, flag, detail)]. drafts: settled_drafts or a stand-in; without one the settled-draft
     flag isn't checked. found: run_record()'s lookups, one per question. reader(question, top) -> [(flag,
     detail)] reads a question's top RECORD_TOP for what the record settles; without one (today) nothing is
     flagged from them. now: the time your words? counts the last RECENT_HOURS back from (default the clock).
-    topics: topic_lookup()'s results, one per question, whose flag is may answer; ours to do needs no lookup."""
+    The topic lookup flags nothing (TOPIC): its passages print as leads; ours to do needs no lookup."""
     flags, seen, failing = [], set(), {}
     for n, (q, f) in enumerate(zip(card.get("questions", []), found or []), 1):
         if reader and f.get("terms"):
             flags += [(n, flag, detail) for flag, detail in reader(q, f["top"])]
-    for n, t in enumerate(topics or [], 1):
-        h = t.get("flag")
-        if h:
-            what = {"ruling": "a ruling row", "your words": "what the user typed", "doc": "the system's own doc"}[h["kind"]]
-            flags.append((n, "may answer", f"RECORD MAY ANSWER: {h['cite']} ({what}; {h['score']:.2f} of the question's "
-                                           f"weight, {len(h['shared'])} words shared): \"{_clip(h['excerpt'], 240)}\"; "
-                                           f"open it and act on it before asking"))
     for n, q in enumerate(card.get("questions", []), 1):
         m = ours_to_do(q)
         if m:
@@ -1344,7 +1329,7 @@ def checked(card, cards, rows, sid, no_record=False, runs=None, runner=None, dra
         ts = [topic_terms(q, t, vocab) for q, t in zip(card.get("questions", []), topics)]
         found, why = (runner or run_record)(card, sid, since, vocab=vocab, before=before, ts=ts,
                                             sources=BRIEF_SOURCES, brief=True)
-    flags = check(card, cards, drafts, (found or {}).get("found"), now=now, topics=topics)
+    flags = check(card, cards, drafts, (found or {}).get("found"), now=now)
     log_run(card, flags, runs or runs_path(),
             record=("ran" if found else f"did not run: {why}") if leads else "not asked",
             found=(found or {}).get("found"), topics=topics, before=before)
@@ -1369,13 +1354,11 @@ def checked(card, cards, rows, sid, no_record=False, runs=None, runner=None, dra
                           else " (ado.org and ado.project are not set, so no work item links)"))
     no_drafts = drafts is settled_drafts and not drafts_file()
     nq = len(card.get("questions", []))
-    may = [f"Q{n}" for n, k, _ in flags if k == "may answer"]
     ours = [f"Q{n}" for n, k, _ in flags if k == "ours to do"]
     st = src.get("status") or {}
-    out.append(f"card_check: {len(flags)} flag(s) in {nq} question(s); record may answer {len(may)} of {nq}"
-               + (f" ({', '.join(may)})" if may else "") + f", ours to do {len(ours)} of {nq}"
+    out.append(f"card_check: {len(flags)} flag(s) in {nq} question(s); ours to do {len(ours)} of {nq}"
                + (f" ({', '.join(ours)})" if ours else "")
-               + f"; topic lookup: {'; '.join(f'{k} {v}' for k, v in st.items())}"
+               + f"; topic lookup (leads, flags nothing): {'; '.join(f'{k} {v}' for k, v in st.items())}"
                + f"; {len(cards)} past card answers read; recall leads "
                + ("ran" if found else "did not run" if leads else "not asked for (--leads)")
                + (f"; the record as it stood before {before}" if before else "")
@@ -2076,8 +2059,8 @@ audio fills those stretches.
             "3-minute solo test call before 3:15?"),
             "options": [{"label": "I'll run it by 3:15 (Recommended)"}, {"label": "Skip it today"}]}
         t = look(test_call)
-        res.append(("known-bad: a test call the capture tool's README settles is RECORD MAY ANSWER, citing the README",
-                    bool(t["flag"]) and t["flag"]["kind"] == "doc" and "MeetingCapture/README.md" in t["flag"]["cite"]
+        res.append(("known-bad: a test call the capture tool's README settles leads with the README",
+                    bool(t["lead"]) and t["lead"]["kind"] == "doc" and "MeetingCapture/README.md" in t["lead"]["cite"]
                     and not t["outward"]))
         transcript = {"header": "Transcript", "question": (
             "The vendor saves its own transcript of the call only if someone turns on transcription, and then everyone "
@@ -2086,7 +2069,7 @@ audio fills those stretches.
         t = look(transcript)
         res.append(("known-good: starting a transcript everyone sees is outward, the README alone doesn't decide it, "
                     "and its user's-choice bullet prints as yours",
-                    not t["flag"] and t["outward"] and t["yours"] and "user's choice" in t["yours"]["excerpt"]))
+                    not t["lead"] and t["outward"] and t["yours"] and "user's choice" in t["yours"]["excerpt"]))
         ask = {"header": "11/24 ask", "question": (
             "The 11/24 ask to the two leads is drafted: builds from 5 to 8 briefs, each built by the builder with the "
             "kit and by the plain agent. Send it?"),
@@ -2094,22 +2077,26 @@ audio fills those stretches.
                 "Hi both! For 11/24, could we show you builds from 5 to 8 briefs? Does 11/24 still work for you?")},
                 {"label": "Hold", "description": "Nothing goes out."}]}
         t = look(ask)
-        res.append(("known-bad: a send the ruling row J4 settles is RECORD MAY ANSWER citing J4 at the outward bar, "
-                    "and the row J4 supersedes (J1) is never cited",
-                    bool(t["flag"]) and t["flag"]["kind"] == "ruling" and "(row J4)" in t["flag"]["cite"]
-                    and t["flag"]["score"] >= OUTWARD_BAR and not any("J1" in h["cite"] for h in t["ruling"])))
-        flags = check({"questions": [ask]}, [], topics=[t])
-        res.append(("the flags read RECORD MAY ANSWER and OURS TO DO on that question, the drafted preview named",
-                    [k for _, k, _ in flags] == ["may answer", "ours to do"]
-                    and flags[0][2].startswith("RECORD MAY ANSWER: ") and "could we show" in flags[1][2]
-                    and "preview" in flags[1][2]))
+        res.append(("known-bad: a send the ruling row J4 settles leads with J4 at the outward bar, and the row J4 "
+                    "supersedes (J1) is never cited",
+                    bool(t["lead"]) and t["lead"]["kind"] == "ruling" and "(row J4)" in t["lead"]["cite"]
+                    and t["lead"]["score"] >= OUTWARD_BAR and not any("J1" in h["cite"] for h in t["ruling"])))
+        with tempfile.TemporaryDirectory() as ltmp:
+            out, code = checked({"questions": [ask]}, [], rows, None, runs=os.path.join(ltmp, "runs.jsonl"),
+                                drafts=None, topic_src=src)
+        flags = check({"questions": [ask]}, [])
+        res.append(("a lead over its bar is no flag: that question flags OURS TO DO alone, the drafted preview named, "
+                    "and J4 still prints under it",
+                    [k for _, k, _ in flags] == ["ours to do"] and "could we show" in flags[0][2]
+                    and "preview" in flags[0][2] and code == 1 and not any("MAY ANSWER" in ln for ln in out)
+                    and any("(row J4)" in ln and ln.split()[1] == "ruling" for ln in out)))
         tell = {"header": "Vendor post", "question": (
             "When you share your screen the meeting app minimizes its window and stops drawing captions, while its "
             "pop-out captions window keeps drawing. Post this to the vendor's forum?"),
             "options": [{"label": "Post it (Recommended)"}, {"label": "Hold"}]}
         t = look(tell)
         res.append(("known-good: an outward post on a subject the README covers isn't decided by the README",
-                    not t["flag"] and t["outward"] and t["doc"] and t["doc"][0]["score"] >= TOPIC_BAR))
+                    not t["lead"] and t["outward"] and t["doc"] and t["doc"][0]["score"] >= TOPIC_BAR))
         board = {"header": "Board cards", "question": (
             "Her six cards miss three platform questions the timeline needs: unattended builds, the approved model and "
             "who pays, and the staging environment. Add those to her open questions board?"),
@@ -2117,32 +2104,32 @@ audio fills those stretches.
                 "Can the builder run builds on a server with nobody at the keyboard? Who owns that policy?")},
                 {"label": "Don't add any"}]}
         t = look(board)
-        res.append(("known-good: an outward write to a teammate's board flags neither, though a ruling row on the "
-                    "platform questions speaks to it under the outward bar and its preview asks a platform team "
-                    "whether it can build",
-                    not t["flag"] and t["outward"] and not check({"questions": [board]}, [], topics=[t])
+        res.append(("known-good: an outward write to a teammate's board has no lead and no flag, though a ruling row "
+                    "on the platform questions speaks to it under the outward bar and its preview asks a platform "
+                    "team whether it can build",
+                    not t["lead"] and t["outward"] and not check({"questions": [board]}, [])
                     and t["ruling"] and TOPIC_SHARED <= len(t["ruling"][0]["shared"]) and t["ruling"][0]["score"] < OUTWARD_BAR))
         icon = {"header": "Icon", "question": "Which colour should the meeting capture tool's menu bar icon use?",
                 "options": [{"label": "Grey"}, {"label": "Red"}]}
         t = look(icon)
-        res.append(("known-good: a question on a named system that its README only touches flags nothing",
-                    not t["flag"] and t["systems"] == ["Meeting Capture"] and t["doc"]))
+        res.append(("known-good: a question on a named system that its README only touches has no lead",
+                    not t["lead"] and t["systems"] == ["Meeting Capture"] and t["doc"]))
         thumbs = {"header": "Thumbnails", "question": "Where should the gallery thumbnails come from: the source repo "
                                                       "screenshots or the design file crops?",
                   "options": [{"label": "Repo screenshots"}, {"label": "Design crops"}]}
         t = look(thumbs)
-        res.append(("known-bad: what the user typed settles it: RECORD MAY ANSWER citing their ledger row",
-                    bool(t["flag"]) and t["flag"]["kind"] == "your words" and "r-said" in t["flag"]["cite"]))
+        res.append(("known-bad: what the user typed settles it: it leads with their ledger row",
+                    bool(t["lead"]) and t["lead"]["kind"] == "your words" and "r-said" in t["lead"]["cite"]))
         tour = {"header": "Tour", "question": "How many steps should the onboarding tour keep, and should every "
                                               "single step show the skip button?",
                 "options": [{"label": "Three, skip on each"}, {"label": "Five"}]}
-        res.append(("--before: a message typed after the cut is not read; the same message before it flags",
+        res.append(("--before: a message typed after the cut is not read; the same message before it leads",
                     not look(tour, "2026-11-01T00:00:00.000Z",
-                             dict(src, words=words_passages(rows, "2026-11-01T00:00:00.000Z")))["flag"]
-                    and bool(look(tour)["flag"])))
+                             dict(src, words=words_passages(rows, "2026-11-01T00:00:00.000Z")))["lead"]
+                    and bool(look(tour)["lead"])))
         footer = {"header": "Footer", "question": "Which footer should the pricing page use?",
                   "options": [{"label": "A"}, {"label": "B"}]}
-        res.append(("known-good: a question no record speaks to flags nothing", not look(footer)["flag"]))
+        res.append(("known-good: a question no record speaks to has no lead", not look(footer)["lead"]))
         tt = topic_terms(test_call, look(test_call))
         res.append(("the recall terms: the header as one phrase, then the words the best passage shares, a long stem "
                     "as its stem", tt[0] == "test call" and "call" not in tt and "minimiz" in tt and len(tt) <= RECORD_TERMS))
