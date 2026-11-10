@@ -98,5 +98,6 @@ jobs:
           unzip -q "$RUNNER_TEMP"/a/product-os-*.zip -d "$RUNNER_TEMP/unzipped"
           dir=$(echo "$RUNNER_TEMP"/unzipped/product-os-*)
           claude plugin validate --strict "$dir"
-          # doctor, the last step, needs claude plugin list to show product-os@inline from $dir
-          PATH="$HOME/.local/bin:$PATH" PRODUCT_OS_DIR="$dir" python3 "$dir/.github/run_install_doc.py" --skip 2 "$dir/INSTALL.md"
+          # doctor, the last step, needs claude plugin list to show product-os@inline from $dir. The zip
+          # leaves .github/ out, so the runner comes from the checkout and reads the zip's INSTALL.md.
+          PATH="$HOME/.local/bin:$PATH" PRODUCT_OS_DIR="$dir" python3 .github/run_install_doc.py --skip 2 "$dir/INSTALL.md"

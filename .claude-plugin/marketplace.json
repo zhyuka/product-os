@@ -20,7 +20,8 @@
         "hooks",
         "figma"
       ],
-      "homepage": "https://github.com/zhyuka/product-os"
+      "homepage": "https://github.com/zhyuka/product-os",
+      "repository": "https://github.com/zhyuka/product-os"
     }
   ]
 }

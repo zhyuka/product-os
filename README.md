@@ -1,6 +1,9 @@
 # Product OS
 
+<!-- github-only -->
 [![tests](https://github.com/zhyuka/product-os/actions/workflows/tests.yml/badge.svg)](https://github.com/zhyuka/product-os/actions/workflows/tests.yml)
+
+<!-- /github-only -->
 
 Product OS is a Claude Code plugin for building a product with agents, from the first ask to keeping it running. Nothing an agent built counts until something other than that agent has checked it. That means a reviewer that can't edit files, a check proven on a planted bad case, and a builder that can't stop until QA passes. Each stage of the work leaves a file the next stage reads, so you review files instead of watching edits.
 
@@ -9,6 +12,7 @@ It holds 21 skills, 6 agents, 54 Python tools (`product-os --list` names them), 
 ## Install
 
 <!-- install:start -->
+<!-- github-only -->
 There are three ways in. The first updates itself; the other two need no plugin marketplace. All
 three load the same plugin, with its hooks and its `product-os:` skills and agents.
 
@@ -24,6 +28,12 @@ three load the same plugin, with its hooks and its `product-os:` skills and agen
    [latest release](https://github.com/zhyuka/product-os/releases/latest) and unzip it. Have your
    agent follow `INSTALL.md` inside it from step 3, or start Claude Code with `--plugin-dir` set to
    the unzipped folder for one session.
+<!-- /github-only -->
+<!-- zip-only: the zip shows this instead; skip it here
+This folder is the plugin, with its hooks and its `product-os:` skills and agents. Have your agent
+follow `INSTALL.md` in it, or start Claude Code with `--plugin-dir` set to this folder for one
+session.
+-->
 
 The tools and checks need Python 3.9 or later. The commands that drive a browser also need
 Playwright: `pip install playwright`, then `playwright install chromium`.
@@ -90,7 +100,10 @@ While the plugin is enabled, Claude Code puts its [`bin/`](bin) folder on the Ba
     product-os class_check 'SiteFooter' --glob '**/*.astro' --expect all
     product-os --list
 
-`product-os check`, `prove`, `accept`, `gates`, `design` and `demo` run the checks. `product-os <tool> [args...]` runs `tools/<tool>.py` with `python3`, or `python` if there's no `python3`, and exits with the tool's own code. An unknown tool exits 2 with a one-line message. In CI, `pip install "product-os @ git+https://github.com/zhyuka/product-os@v0.1.4"` installs the checks command alone.
+`product-os check`, `prove`, `accept`, `gates`, `design` and `demo` run the checks. `product-os <tool> [args...]` runs `tools/<tool>.py` with `python3`, or `python` if there's no `python3`, and exits with the tool's own code. An unknown tool exits 2 with a one-line message.
+<!-- github-only -->
+In CI, `pip install "product-os @ git+https://github.com/zhyuka/product-os@v0.1.4"` installs the checks command alone.
+<!-- /github-only -->
 
 ## Settings
 
@@ -113,8 +126,15 @@ The Figma and Azure DevOps tools that write take a reason in plain words on any 
 
 ## Maintenance
 
+<!-- github-only -->
 Product OS is the source of these skills and tools. The setup it came from adds only its own settings and private parts on top. [`scripts/leak_scan.py`](scripts/leak_scan.py) runs before every commit and refuses token shapes and a private list of names, hosts and file ids, kept outside the repo. The same hook refuses a commit whose author isn't a GitHub noreply address.
 
+<!-- /github-only -->
 [PRIVACY.md](PRIVACY.md) says what the plugin reads, writes and sends. [CHANGELOG.md](CHANGELOG.md) lists each release.
 
+<!-- github-only -->
 Product OS has one maintainer, [@zhyuka](https://github.com/zhyuka). Nobody else can merge or release. Issues are welcome. MIT licensed.
+<!-- /github-only -->
+<!-- zip-only: the zip shows this instead; skip it here
+MIT licensed.
+-->

@@ -32,13 +32,18 @@ class InstallDocsTest(unittest.TestCase):
             import run_install_doc
         finally:
             sys.path.remove(str(ROOT / ".github"))
-        steps = run_install_doc.blocks((ROOT / "INSTALL.md").read_text(encoding="utf-8"))
-        self.assertEqual(sorted({s for s, _ in steps}), [1, 2, 3, 4, 6])
-        step3 = [b for s, b in steps if s == 3]
-        self.assertEqual(len(step3), 2, "step 3 shows the change, then makes it on the person's yes")
-        self.assertTrue(step3[0].rstrip().endswith("product-os\" enable"))
-        self.assertTrue(step3[1].rstrip().endswith("product-os\" enable --yes"))
-        self.assertIn("product-os\" doctor", steps[-1][1])
+        text = (ROOT / "INSTALL.md").read_text(encoding="utf-8")
+        # The repo's steps, and the zip's: the zip has no step 2 to run, since its folder is the plugin.
+        import make_zip  # run_install_doc put scripts/ on the path
+        for where, doc, want in (("repo", text, [1, 2, 3, 4, 6]), ("zip", make_zip.for_zip(text), [1, 3, 4, 6])):
+            with self.subTest(where=where):
+                steps = run_install_doc.blocks(doc)
+                self.assertEqual(sorted({s for s, _ in steps}), want)
+                step3 = [b for s, b in steps if s == 3]
+                self.assertEqual(len(step3), 2, "step 3 shows the change, then makes it on the person's yes")
+                self.assertTrue(step3[0].rstrip().endswith("product-os\" enable"))
+                self.assertTrue(step3[1].rstrip().endswith("product-os\" enable --yes"))
+                self.assertIn("product-os\" doctor", steps[-1][1])
 
 
 if __name__ == "__main__":

@@ -1,10 +1,18 @@
+<!-- github-only -->
 # The install block
 
 This is the one copy of how to install Product OS. `README.md` and `INSTALL.md` carry the block
 between the two markers word for word, and `tests/test_install_docs.py` fails when either says it
-differently. Change it here first, then paste it into both.
+differently. Change it here first, then paste it into both. The zip `scripts/make_zip.py` builds
+leaves out each github-only block and shows each zip-only one, so a person who installs from the zip
+reads only how to install from its folder.
+<!-- /github-only -->
+<!-- zip-only: the zip shows this instead; skip it here
+# Install
+-->
 
 <!-- install:start -->
+<!-- github-only -->
 There are three ways in. The first updates itself; the other two need no plugin marketplace. All
 three load the same plugin, with its hooks and its `product-os:` skills and agents.
 
@@ -20,6 +28,12 @@ three load the same plugin, with its hooks and its `product-os:` skills and agen
    [latest release](https://github.com/zhyuka/product-os/releases/latest) and unzip it. Have your
    agent follow `INSTALL.md` inside it from step 3, or start Claude Code with `--plugin-dir` set to
    the unzipped folder for one session.
+<!-- /github-only -->
+<!-- zip-only: the zip shows this instead; skip it here
+This folder is the plugin, with its hooks and its `product-os:` skills and agents. Have your agent
+follow `INSTALL.md` in it, or start Claude Code with `--plugin-dir` set to this folder for one
+session.
+-->
 
 The tools and checks need Python 3.9 or later. The commands that drive a browser also need
 Playwright: `pip install playwright`, then `playwright install chromium`.

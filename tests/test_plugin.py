@@ -44,8 +44,12 @@ class PluginFilesTest(unittest.TestCase):
         self.assertLessEqual(set(portable["author"]), {"name", "email", "url"})
         self.assertRegex(portable["name"], r"^[a-z0-9]([a-z0-9.-]{0,62}[a-z0-9])?$")
         self.assertNotRegex(portable["name"], r"--|\.\.")
-        for key in ("name", "version", "homepage", "repository", "license", "author"):
+        for key in ("name", "version", "license", "author"):
             self.assertEqual(portable[key], claude[key], key)
+        # The zip carries both manifests, and nothing in it points at the repo: the repo's address is in
+        # the marketplace entry, which the zip leaves out.
+        for manifest in (portable, claude):
+            self.assertNotIn("github.com", json.dumps(manifest))
         self.assertFalse((ROOT / "mcp.json").exists(), "the plugin starts no MCP server")
 
     def test_marketplace_lists_this_plugin_from_the_repo_root(self):
@@ -55,6 +59,7 @@ class PluginFilesTest(unittest.TestCase):
         [entry] = market["plugins"]
         self.assertEqual(entry["name"], plugin["name"])
         self.assertEqual(entry["version"], plugin["version"])
+        self.assertTrue(entry["homepage"].startswith("https://github.com/") and entry["repository"] == entry["homepage"])
         self.assertTrue(entry["source"].startswith("./") and ".." not in entry["source"])
 
     def test_the_module_runs_and_the_command_is_registered(self):

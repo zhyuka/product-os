@@ -17,9 +17,6 @@ classifiers = [
     "Topic :: Software Development :: Testing",
 ]
 
-[project.urls]
-Homepage = "https://github.com/zhyuka/product-os"
-
 [project.scripts]
 product-os = "product_os.cli:main"
 

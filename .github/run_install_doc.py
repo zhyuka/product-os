@@ -7,16 +7,25 @@ Stop at the first block that fails and exit with its code.
 HOME, PATH and PRODUCT_OS_DIR come from the environment, so CI points them at an empty home and
 the checkout under test. --skip 2 leaves out step 2, which clones the newest release from GitHub
 instead of the commit under test; --only 2 runs that step alone.
+
+A zip-only block is a comment in the repo, so an agent following the repo's INSTALL.md skips it:
+blocks() drops each one first, with scripts/make_zip.py's for_repo(). The zip's INSTALL.md has none
+left, so the same call reads it as the zip holds it. Run this from a checkout, since the zip leaves
+.github/ and scripts/ out.
 """
 import argparse, os, re, subprocess, sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+from make_zip import for_repo  # noqa: E402
 
 STEP = re.compile(r"^### (\d+)\. ")
 
 
 def blocks(text):
-    """(step number, block text) for each ```sh block under a numbered step."""
+    """(step number, block text) for each ```sh block under a numbered step, zip-only blocks left out."""
     out, step, buf = [], None, None
-    for line in text.splitlines():
+    for line in for_repo(text).splitlines():
         if buf is not None:
             if line.startswith("```"):
                 out.append((step, "\n".join(buf) + "\n"))

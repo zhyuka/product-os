@@ -37,8 +37,17 @@ The `product-os design` commands don't call Figma. `design import` and `design d
 
 `product-os gates` opens a connection the same way, and only when you run it: Chromium through Playwright, to the URL you give it, or to the folder `--serve` serves on 127.0.0.1. Before the page's own scripts, it adds one that notes which events each element listens for. It presses keys, clicks, drags, turns the mouse wheel and types single letters into up to 5 text fields, each time on a fresh load, so point it at a build, not at a live site where those do something. It stops a click or a key from loading another site in the page's own window. A link that opens a new window or tab isn't stopped yet, so that window can load another site. A file picker a click opens is given no file, and a browser dialog is dismissed and a download cancelled before it's saved. `--json` writes its findings to the file you name.
 
+<!-- github-only -->
 The files under `.github/` are this repository's CI on GitHub. They don't run on your machine. The templates under `ci/` run only where you copy them, and install product-os from GitHub there.
 
 ## Questions
 
 Open an issue at https://github.com/zhyuka/product-os/issues.
+<!-- /github-only -->
+<!-- zip-only: the zip shows this instead; skip it here
+The git hooks under `ci/` run only in a project whose `.githooks` you copy them into.
+
+## Questions
+
+Ask whoever shared this folder with you.
+-->

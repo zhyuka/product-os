@@ -8,6 +8,7 @@ These are the parts of Product OS that check an agent built what a Figma design 
 - A project's checks count only once proven. `product-os check` runs the checks a project lists, from a skill, a git hook or CI. `product-os prove` records that each one failed a planted bad case and passed a good one, and a check without that record doesn't count. A project can add checks but can't remove one or change its cases. See [A project's own checks](#a-projects-own-checks).
 - `/product-os:review` has the change reviewed by a fresh reviewer that didn't write it and can't edit files. `/product-os:miss-to-check` turns a defect that got through into a check, proven both ways.
 
+<!-- github-only -->
 Install from a Claude Code session:
 
 ```
@@ -15,10 +16,16 @@ Install from a Claude Code session:
 /plugin install product-os@product-os
 ```
 
+<!-- /github-only -->
+<!-- zip-only: the zip shows this instead; skip it here
+Install it by having your agent follow `INSTALL.md` in this folder.
+
+-->
 Then run `/product-os:setup-kit` to choose your QA command. The hooks and checks need Python 3.9 or later and nothing else, and make no network calls. The rest of Product OS is in the [README](../README.md). `product-os design exercise` also needs Playwright and Chromium: `pip install playwright`, then `playwright install chromium`.
 
 ## Install
 
+<!-- github-only -->
 Each of these adds the `product-os` marketplace and installs the plugin for your user:
 
 | Where | Command | Claude Code |
@@ -26,12 +33,24 @@ Each of these adds the `product-os` marketplace and installs the plugin for your
 | In a session | `/plugin install product-os --marketplace zhyuka/product-os` | 2.1.275 or later |
 | In a shell | `claude plugin install product-os --marketplace zhyuka/product-os` | 2.1.292 or later |
 | Either, on an older version | `/plugin marketplace add zhyuka/product-os`, then `/plugin install product-os@product-os` | |
+<!-- /github-only -->
+<!-- zip-only: the zip shows this instead; skip it here
+`INSTALL.md` in this folder has the steps. For one session only, start Claude Code with
+`--plugin-dir` set to this folder.
+-->
 
 The hooks need Claude Code 2.1.69 or later, the first version that tells hooks which subagent is acting. They also need Python 3.9 or later as `python3` or `python`, or as `py -3` on Windows. Git Bash is optional on Windows.
 
 ### Other agent tools
 
-The repo root also holds an [Agent Plugins](https://agent-plugins.org) 1.0 `plugin.json`, the manifest that VS Code, GitHub Copilot, Cursor and Codex read. Through it they load the skills. The skills run the plugin's copy of product-os by its path, `${CLAUDE_PLUGIN_ROOT}/bin/product-os`, which Claude Code fills in when a skill loads. Those tools may leave that path unfilled. The skills then call the `bin/product-os` in the plugin's folder, above the skill's own, so nothing more needs installing. Where that file isn't there, install the command with `pip install git+https://github.com/zhyuka/product-os`, and the skills run `product-os` instead. Hooks and agents aren't part of that format. So in those tools the review skill falls back to a new chat, and a check holds only where `product-os check` runs in a git hook or CI.
+The repo root also holds an [Agent Plugins](https://agent-plugins.org) 1.0 `plugin.json`, the manifest that VS Code, GitHub Copilot, Cursor and Codex read. Through it they load the skills. The skills run the plugin's copy of product-os by its path, `${CLAUDE_PLUGIN_ROOT}/bin/product-os`, which Claude Code fills in when a skill loads. Those tools may leave that path unfilled. The skills then call the `bin/product-os` in the plugin's folder, above the skill's own, so nothing more needs installing.
+<!-- github-only -->
+Where that file isn't there, install the command with `pip install git+https://github.com/zhyuka/product-os`, and the skills run `product-os` instead.
+<!-- /github-only -->
+<!-- zip-only: the zip shows this instead; skip it here
+Where that file isn't there, install the command with `pip install` on this folder, and the skills run `product-os` instead.
+-->
+Hooks and agents aren't part of that format. So in those tools the review skill falls back to a new chat, and a check holds only where `product-os check` runs in a git hook or CI.
 
 ### What happens on first run
 
@@ -45,7 +64,7 @@ An install in a session can show the plugin's options with their defaults filled
 
 1. Keep a reviewer read-only. Ask: "Use the code-reviewer agent to review build/app.js and list what to fix." If the reviewer tries `sed -i` on the file, Claude Code cancels the call and tells it to put the change in its review instead.
 2. Make "done" mean QA passed. Run `/product-os:setup-kit` and pick the main session as the builder and `npm run check` as the QA command. Then ask: "Fix the failing test in src/cart.js and tell me when it's done." If Claude edits, runs `npm run check | tail -5` and tries to stop, the hook sends it back to run `npm run check` on its own. It can stop once that passes after its last edit.
-3. Check a finished build. In a clone of this repo, run `/product-os:check examples/runs/cheap-builder`. It prints pass, fail or skip for each check. Here "step ran" fails because `npm run check` never ran, and the command exits 1.
+3. Check a finished build. From the plugin's folder, run `/product-os:check examples/runs/cheap-builder`. It prints pass, fail or skip for each check. Here "step ran" fails because `npm run check` never ran, and the command exits 1.
 4. Make a missed bug a check. Ask: "A debug print got into the release in src/cart.py. Make sure that can't get through again." `/product-os:miss-to-check` writes a check with a bad case that has the print and a good case without it, and `product-os prove` has to see the check fail the first and pass the second before it counts.
 
 ## Configure it
@@ -172,7 +191,9 @@ To remove a check, a maintainer merges the change past the failing job, which a 
 
 - **Through a skill.** `/product-os:check` runs `product-os check` and reports the table. A skill leaves the call to the agent: it decides whether to run it, and it can stop without running it.
 - **In a git hook.** `ci/pre-push` runs the project's `app.build_cmd` and `app.check_cmd`, refuses a DID NOT RUN line, and runs `product-os check --base` before each push. It refuses the push when `product-os` isn't on PATH. `ci/pre-commit` refuses a commit that stages a key or a token. `/product-os:setup-kit` puts two short files from `ci/shim/` in `.githooks/`, which run the installed plugin's hooks, so the project keeps no copy. `git push --no-verify` skips them.
+<!-- github-only -->
 - **In CI on a protected branch.** This is where a check can't be skipped. `ci/github-actions.yml` and `ci/azure-pipelines.yml` install a fixed product-os release from outside the repository and run `product-os check --prove --run-listed --base` on each pull request. A pull request runs its own copy of the workflow, so also require a code owner's or a required reviewer's approval for the workflow file and for `.claude/`, and require the job to pass before merging. The comments at the top of each template say where to set this.
+<!-- /github-only -->
 
 ### When a check can't pass
 
@@ -324,7 +345,14 @@ A skill runs when you type its name, or when the agent decides the task calls fo
 
 **"product-os is off: it needs Python 3.9 or later, and none ran."** The hooks found no Python that could run them, so they let every call through and say so once per session. They try `python3` and then `python`, and on Windows `py -3`, `python` and `python3`. Install Python 3.9 or later, or set `PRODUCT_OS_PYTHON` to its full path in the `env` block of your Claude Code settings. A path inside the project is skipped, so a repo can't choose the program that runs its own checks. On Windows, a `python` or `python3` that opens the Microsoft Store is an app execution alias, not Python, and the hooks move past it. On macOS without the command line tools, `/usr/bin/python3` only offers to install them, and the hooks skip it.
 
-**Nothing happens, and `/hooks` says "Only hooks from managed settings run here".** Your organization set `allowManagedHooksOnly` in its managed settings. Claude Code then runs no plugin hooks, these included, unless the managed settings force-enable the plugin. To run these hooks, an admin has to register the `zhyuka` marketplace under `extraKnownMarketplaces` and set `"product-os@product-os": true` under `enabledPlugins`, both in the managed settings. The skills and the `product-os check` command work either way.
+**Nothing happens, and `/hooks` says "Only hooks from managed settings run here".** Your organization set `allowManagedHooksOnly` in its managed settings. Claude Code then runs no plugin hooks, these included, unless the managed settings force-enable the plugin.
+<!-- github-only -->
+To run these hooks, an admin has to register the `zhyuka` marketplace under `extraKnownMarketplaces` and set `"product-os@product-os": true` under `enabledPlugins`, both in the managed settings.
+<!-- /github-only -->
+<!-- zip-only: the zip shows this instead; skip it here
+To run these hooks, ask whoever manages your Claude Code settings to enable the plugin there.
+-->
+The skills and the `product-os check` command work either way.
 
 **Windows without Git Bash.** Claude Code runs hook commands in PowerShell there. Each command in `hooks/hooks.json` has two lines. sh runs the first and never reads the second. PowerShell skips the first, since `exec` isn't a PowerShell command, and runs the second, which starts `hooks/run.ps1` in Windows PowerShell to find Python the same way. It passes `-ExecutionPolicy Bypass` for that one script, but an execution policy your organization sets through Group Policy still wins, and then the hooks don't run. Since Claude Code 2.1.299, a PreToolUse hook that fails there blocks the call, so the hooks exit 0 in every case and set `"onFailure": "continue"`.
 
@@ -412,12 +440,24 @@ Claude Code keeps the agent working and hands it the reason as its next instruct
 
 ## Use the checks without Claude Code
 
+<!-- github-only -->
 ```
 pip install git+https://github.com/zhyuka/product-os
 product-os accept
 product-os check
 product-os check path/to/folder
 ```
+<!-- /github-only -->
+<!-- zip-only: the zip shows this instead; skip it here
+From this folder:
+
+```
+pip install .
+product-os accept
+product-os check
+product-os check path/to/folder
+```
+-->
 
 With no folder, `product-os check` runs the project's own checks you accepted, as in [A project's own checks](#a-projects-own-checks). With a folder, it runs three built-in checks on it. The folder is a build folder or a run folder. A run folder holds a `run.json` that records one agent run, and can hold an `artifacts/qa_report.json` in the format `product_os/step_ran.py` writes:
 
@@ -466,13 +506,22 @@ Each check here answers a way coding agents fail when they build from a design:
 
 ## The three failures, as a demo
 
+<!-- github-only -->
 ```
 git clone https://github.com/zhyuka/product-os
 cd product-os
 python -m product_os demo
 ```
+<!-- /github-only -->
+<!-- zip-only: the zip shows this instead; skip it here
+From this folder:
 
-The demo runs each check with stub agents: small deterministic Python functions that stand in for a model, with no LLM calls and no network. It reads the example builds in the clone, and exits non-zero if any check fails calibration. Every number it prints comes from the stubs and the four example builds. Its 2 of 91 comes from a seeded edit rate, not from a model.
+```
+python -m product_os demo
+```
+-->
+
+The demo runs each check with stub agents: small deterministic Python functions that stand in for a model, with no LLM calls and no network. It reads the example builds in the plugin's folder, and exits non-zero if any check fails calibration. Every number it prints comes from the stubs and the four example builds. Its 2 of 91 comes from a seeded edit rate, not from a model.
 
 1. **An empty build passes most rules.** `product_os/vacuous.py` scores a static web build against eight rules, such as hex colors, image alt text and heading order. Seven of them only look for problems, so the empty build passes them and scores 0.88, above the mediocre build at 0.62 and the broken one at 0.25. `guarded_score()` refuses to score a build with no visible HTML text, and says why.
 2. **A read-only reviewer edits code.** `product_os/readonly.py` runs a stub reviewer on fresh copies of a workspace and hashes every file before and after. Its prompt says not to write, and in a small seeded share of runs it writes anyway. Giving the same reviewer a tool layer whose write raises an error stops it. An instruction is not a permission, and the plugin's PreToolUse hook applies the same idea in Claude Code.
@@ -509,6 +558,7 @@ The demo runs each check with stub agents: small deterministic Python functions 
   3 of 3 checks passed calibration.
 ```
 
+<!-- github-only -->
 ## Testing
 
 A check counts only after it catches a planted bad case and passes a known-good one. Each one reports counts, not a verdict. Run the tests with `python .github/run_tests.py`, which runs them in one process per CPU, up to eight. On your machine it skips a test that passed before when nothing its module's tests read has changed since, and says so on its line. From Python 3.12, an edit to a function those tests never ran doesn't count, except in a file a browser test runs through, which counts whole. A test that starts a program always runs. Playwright's driver, which runs the browser, doesn't count. Pass `--no-cache` to run every test, as CI does.
@@ -550,6 +600,7 @@ GitHub gives the second format to repositories created since mid-2026, and an ol
 
 Where federation isn't available, as in a fork, an API key works instead. Store it as a repository secret named `ANTHROPIC_API_KEY`, and set `ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}` in the env of the step that runs `claude`. This repository doesn't, and its workflow test refuses it. An API key, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` or an `apiKeyHelper` each outranks federation, so a job that sets one isn't federated. `claude --bare` doesn't read the federation variables either.
 
+<!-- /github-only -->
 ## License
 
 MIT. See `LICENSE`.

@@ -4,6 +4,7 @@ This file is for an agent installing Product OS for the person it works with. A 
 too.
 
 <!-- install:start -->
+<!-- github-only -->
 There are three ways in. The first updates itself; the other two need no plugin marketplace. All
 three load the same plugin, with its hooks and its `product-os:` skills and agents.
 
@@ -19,18 +20,35 @@ three load the same plugin, with its hooks and its `product-os:` skills and agen
    [latest release](https://github.com/zhyuka/product-os/releases/latest) and unzip it. Have your
    agent follow `INSTALL.md` inside it from step 3, or start Claude Code with `--plugin-dir` set to
    the unzipped folder for one session.
+<!-- /github-only -->
+<!-- zip-only: the zip shows this instead; skip it here
+This folder is the plugin, with its hooks and its `product-os:` skills and agents. Have your agent
+follow `INSTALL.md` in it, or start Claude Code with `--plugin-dir` set to this folder for one
+session.
+-->
 
 The tools and checks need Python 3.9 or later. The commands that drive a browser also need
 Playwright: `pip install playwright`, then `playwright install chromium`.
 <!-- install:end -->
 
+<!-- github-only -->
 ## Steps for ways 2 and 3
+<!-- /github-only -->
+<!-- zip-only: the zip shows this instead; skip it here
+## Steps
+-->
 
 Run each block below in a shell, in order. Each one starts by naming the folder, because a variable
-set in one command is gone by the next. The folder is `~/product-os` unless the person wants it
-elsewhere, or is installing from an unzipped release: then set `PRODUCT_OS_DIR` to that folder at
-the top of every block. If a command fails, stop and show the person its output. Don't work around
-it, and never move, overwrite or delete their files yourself.
+set in one command is gone by the next.
+<!-- github-only -->
+The folder is `~/product-os` unless the person wants it elsewhere, or is installing from an unzipped
+release: then set `PRODUCT_OS_DIR` to that folder at the top of every block.
+<!-- /github-only -->
+<!-- zip-only: the zip shows this instead; skip it here
+Set `PRODUCT_OS_DIR` to this folder, the one this file is in, at the top of every block.
+-->
+If a command fails, stop and show the person its output. Don't work around it, and never move,
+overwrite or delete their files yourself.
 
 ### 1. Check git and Python
 
@@ -41,6 +59,7 @@ python3 -c 'import sys; assert sys.version_info >= (3, 9), "Python 3.9 or later 
 
 From an unzipped release, git isn't needed: skip the first line.
 
+<!-- github-only -->
 ### 2. Get the latest release
 
 Skip this step when installing from an unzipped release.
@@ -60,6 +79,12 @@ git -C "$PRODUCT_OS_DIR" log -1 --format='%h%d'
 
 It checks out the newest release tag, or stays on the default branch when there's none yet. If the
 folder already exists and isn't Product OS, it stops: ask the person which folder to use.
+<!-- /github-only -->
+<!-- zip-only: the zip shows this instead; skip it here
+### 2. Nothing to fetch
+
+This folder already holds every file, so go on to step 3.
+-->
 
 ### 3. Load it as the plugin
 
@@ -118,5 +143,12 @@ and every `MISS` line word for word.
 
 ## Upgrading
 
+<!-- github-only -->
 Run step 2 again to move the clone to the newest tag, restart Claude Code, then run step 6. The
 setting from step 3 keeps naming the same folder, so it needs nothing.
+<!-- /github-only -->
+<!-- zip-only: the zip shows this instead; skip it here
+The person unzips the new zip and puts its folder where this one is, under this folder's name, so
+the setting from step 3 and the link from step 4 still name it. Then they restart Claude Code, and
+you run step 6.
+-->
