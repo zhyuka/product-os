@@ -54,7 +54,10 @@ WHAT IT DOES
   or versions (its URL is reused for RENDER_TTL). GET files/KEY (?ids=, ?depth=), any other Tier 1
   read of the file, and any answer the mirror cannot build exactly go to Figma once per edit and
   are kept until the next. ?version= reads keep the versioned cache above. `mirror sync` fills the
-  mirror (expect hundreds of MB and dozens of calls for a few large pages).
+  mirror (expect hundreds of MB and dozens of calls for a few large pages), and refuses a file
+  figma.mirror doesn't name: a sync would write an empty page list over the outline another client
+  sharing this state folder keeps for it. Two clients that share a state folder should name the
+  same pages, since the outline lists the pages of whichever client wrote it last.
 
   Lineage. Tools often read GET files/KEY?ids= (plus nodes?ids=<ancestors>&depth=1 for siblings)
   or a whole-file files/KEY?depth=N only to learn where a node sits: its ancestors, their
@@ -122,7 +125,8 @@ USE
             python figma_client.py --selftest [--break NAME]  offline, against a local mock; --break
                                    plants one fault (off, never-current, version-only, nolock, dead,
                                    render-stamp, meta-fallback, no-429-headers, no-hot, trust-pointers,
-                                   no-fallback, stale-outline, comment-open) to show a check fail
+                                   no-fallback, stale-outline, comment-open, sync-any-key) to show a
+                                   check fail
   A path may be "files/...", "/v1/files/..." or a full api.figma.com URL (a next_page link).
 
   Environment, for a parent job to set what its children inherit:
@@ -1586,10 +1590,25 @@ def _mirror_key(key):
     return next(iter(files))
 
 
+def _unmirrored(key):
+    """Why a sync of key is refused, or None when figma.mirror names it. With no pages named, a sync
+    would write an empty page list over the outline that another client sharing this state folder
+    keeps for the file, and that client would read it as current until the next edit."""
+    if key in mirror_files():
+        return None
+    return (f"figma_client: {key} is not in figma.mirror, so this client mirrors no pages of it. A sync would "
+            "write an empty page list over the outline another client sharing this state may keep for it. "
+            "Name the file and its pages in figma.mirror first.")
+
+
 def mirror_sync(key=None, lane="batch", tool="figma-mirror-sync", deadline=None):
     """Fill the mirror: the outline, then every chunk older than the last edit, read section by
-    section (a section whole when it fits CHUNK_BATCH_BYTES, else its chunks). Returns a summary."""
+    section (a section whole when it fits CHUNK_BATCH_BYTES, else its chunks). Returns a summary.
+    A file figma.mirror doesn't name is refused (_unmirrored)."""
     key = _mirror_key(key)
+    why = _unmirrored(key)
+    if why:
+        raise SystemExit(why)
     lane = resolve_lane(lane)
     deadline_at = _deadline_at(lane, deadline)
     stamp = _file_stamp(key, lane, tool, deadline_at)
@@ -2432,6 +2451,8 @@ def _apply_break(name):
         _Mirror.current_shells = lambda self, sids, ol: {
             s: {"props": dict(ol["shells"][s]["props"]), "kids": [_outline_props(x, ol) for x in ol["shells"][s]["kids"]]}
             for s in sids}
+    elif name == "sync-any-key":            # a sync of a file figma.mirror doesn't name goes ahead
+        g["_unmirrored"] = lambda key: None
     else:
         raise SystemExit(f"figma_client: unknown --break {name}")
 
@@ -3042,6 +3063,34 @@ def selftest(brk=None):
         chk("mirror: sync finds the named page in the depth=1 tree, reads a section cut at OUTLINE_DEPTH again, "
             "and fills all 5 chunks", summ.get("page_ids") == ["1:1"] and summ.get("chunks") == 5
             and summ.get("current") == 5, summ)
+
+        # Another client sharing this state mirrors a file this one's figma.mirror doesn't name.
+        mock.files["OTH"] = _MockFile("OTH")
+        oth = os.path.join(mirror_root(), "OTH")
+        planted = {"outline.json": b'{"stamp": ["v9", "t9"], "mirrored": ["1:1"], "pages": [{"id": "1:1", "name": "V3"}]}',
+                   "index.json": b'{"4:1": {"stamp": ["v9", "t9"], "bytes": 9, "nodes": {}}}',
+                   os.path.join("chunks", "4-1.json"): b'{"theirs": 1}'}
+        for rel, data in planted.items():
+            os.makedirs(os.path.dirname(os.path.join(oth, rel)), exist_ok=True)
+            with open(os.path.join(oth, rel), "wb") as f:
+                f.write(data)
+        try:
+            mirror_sync("OTH", lane="gate", tool="selftest-mirror")
+            refused = "went ahead"
+        except SystemExit as e:
+            refused = "not in figma.mirror" in str(e) or str(e)
+        except Exception as e:  # noqa: BLE001
+            refused = f"{type(e).__name__}: {e}"
+
+        def _same(rel, data):
+            try:
+                with open(os.path.join(oth, rel), "rb") as f:
+                    return f.read() == data
+            except OSError:
+                return False
+        kept = [rel for rel, data in planted.items() if _same(rel, data)]
+        chk("mirror: a sync of a file figma.mirror doesn't name is refused, and leaves the mirror another client "
+            "keeps of it byte-identical", refused is True and len(kept) == len(planted), (refused, kept))
 
         cases = ["files/MIR/nodes?ids=4:1", "files/MIR/nodes?ids=3:1&depth=1", "files/MIR/nodes?ids=3:1&geometry=paths",
                  "files/MIR/nodes?ids=2:1&depth=2", "files/MIR/nodes?ids=1:1", "files/MIR/nodes?ids=4:2,3:3,L:2",
