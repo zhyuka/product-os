@@ -79,8 +79,8 @@ Never route around a denied read with `git show` or another reader.
 - Before any question or research, search the record (the `recall` skill and the project's
   open-question ledger) and apply what it answers, citing it. Ask with AskUserQuestion: 2-4
   options, the recommended one first, each saying what happens and what it costs. The closing
-  message, and in the desktop app the end-of-turn box (`wrap_up`), ask only for a go-ahead, never a post, send,
-  delete, tracker write, pick, approval, spend or fact: those go on the question card. Don't ask
+  message, and in the desktop app the end-of-turn box (`wrap_up`), ask only for a go-ahead, never a
+  post, send, delete, tracker write, pick, approval, spend or fact: those go on the question card. Don't ask
   when a conventional default exists, about something the record shows is kept or parked (report
   it as held; offer released ones), or for a craft call: research, decide, and report the measured
   alternatives. When one option patches an instance and another fixes the cause, do the root fix.
