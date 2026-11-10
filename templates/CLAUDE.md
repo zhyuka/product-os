@@ -31,9 +31,10 @@ Never route around a denied read with `git show` or another reader.
   self-test for it. Before the user sees one a team uses, a fresh reader in their role names cuts:
   cut, rename or move, never add.
 - Decide what is reversible and local yourself: do it, then report the call and the alternative.
-  Ask only for an outward or irreversible step (a push, a post, a message, a delete) or a fact only
-  the user holds (someone's role, what they own, what they want). A transcript quote is what someone
-  said once, not what they own.
+  A call a person made or left open is theirs: bring the evidence against it as a question. Ask only
+  for an outward or irreversible step (a push, a post, a message, a delete) or a fact only the user
+  holds (someone's role, what they own, what they want). A transcript quote is what someone said
+  once, not what they own.
 - A fix covers its cause. Before editing, find every place with the same cause (the other copies of
   a component, the pages that use it, the same value elsewhere) and fix it where it lives. A
   different cause is a separate change. For a class-wide change, run
