@@ -15,10 +15,13 @@ module reads the copy that already exists and never writes one.
 
 RESOLUTION ORDER, first hit wins:
     1. FIGMA_TOKEN / FIGMA_PAT / FIGMA_ACCESS_TOKEN in the process environment
-    2. the OS keychain, the same convention kit_config.token() uses: service $FIGMA_KEYCHAIN_SERVICE
+    2. the OS keychain, the same items kit_config.token() reads: service $FIGMA_KEYCHAIN_SERVICE
        (default "product-os"), account "FIGMA_TOKEN".
          macOS:  security add-generic-password -s product-os -a FIGMA_TOKEN -w
          Linux:  secret-tool store --label=figma service product-os account FIGMA_TOKEN
+       Then, when your own ~/.claude/product-os.json sets tokens.keychain, the item it names for
+       each of the names in 1, such as service env/FIGMA_TOKEN, account <your login>: a keychain
+       that already keeps the token is read where it is, not copied.
        The value is read into this process and never written anywhere else.
        FIGMA_AUTH_NO_KEYCHAIN=1 (or PRODUCT_OS_NO_KEYCHAIN=1) turns this source off, for a test of
        the no-token path.
@@ -75,6 +78,22 @@ def _keychain_cmd(svc, account):
     return None, None
 
 
+def _items():
+    """[(service, account)] to read, in order: $FIGMA_KEYCHAIN_SERVICE (default product-os) with
+    FIGMA_TOKEN, then kit_config's tokens.keychain item for each of ENV_KEYS. kit_config holds the
+    rule, so every tool reads a token from the same items; without it, only the first is read."""
+    out = [(_service(), ACCOUNT)]
+    try:
+        if HERE not in sys.path:
+            sys.path.append(HERE)
+        import kit_config
+    except ImportError:
+        return out
+    for k in ENV_KEYS:
+        out += [i for i in kit_config.keychain_items(k)[1:] if i not in out]
+    return out
+
+
 def _from_keychain():
     """(token, source_name) out of the OS keychain, or (None, None).
 
@@ -86,24 +105,24 @@ def _from_keychain():
     if os.environ.get("FIGMA_AUTH_NO_KEYCHAIN") == "1" or os.environ.get("PRODUCT_OS_NO_KEYCHAIN"):
         _keychain_note = "off"
         return None, None
-    services = [_service()]
-    for svc in services:
-        cmd, why = _keychain_cmd(svc, ACCOUNT)
+    items = _items()
+    for svc, account in items:
+        cmd, why = _keychain_cmd(svc, account)
         if not cmd:
             _keychain_note = why
             return None, None
         try:
             r = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, timeout=KEYCHAIN_TIMEOUT)
         except subprocess.TimeoutExpired:
-            _keychain_note = "the read of %s/%s took over %ds (a prompt nobody answered?)" % (svc, ACCOUNT, KEYCHAIN_TIMEOUT)
+            _keychain_note = "the read of %s/%s took over %ds (a prompt nobody answered?)" % (svc, account, KEYCHAIN_TIMEOUT)
             return None, None
         except OSError as e:
             _keychain_note = "could not run %s (%s)" % (cmd[0], e.__class__.__name__)
             return None, None
         v = r.stdout.decode("utf-8", "replace").strip() if r.returncode == 0 else ""
         if v:
-            return v, "keychain:%s/%s" % (svc, ACCOUNT)
-    _keychain_note = "no %s item" % " or ".join("%s/%s" % (s, ACCOUNT) for s in services)
+            return v, "keychain:%s/%s" % (svc, account)
+    _keychain_note = "no %s item" % " or ".join("%s/%s" % i for i in items)
     return None, None
 
 
@@ -125,7 +144,7 @@ def keychain_where():
     """Where source 2 looks, in words, with why it missed when it did."""
     if sys.platform != "darwin" and not shutil.which("secret-tool"):
         return "the OS keychain (no macOS `security` or `secret-tool` here)"
-    where = "the keychain item %s/%s" % (_service(), ACCOUNT)
+    where = "the keychain item%s %s" % ("s" if len(_items()) > 1 else "", " and ".join("%s/%s" % i for i in _items()))
     return where + (" (%s)" % _keychain_note if _keychain_note else "")
 
 

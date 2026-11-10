@@ -11,7 +11,7 @@ Every key is optional, and a tool reads only the keys it uses. A tool that needs
 
 A project's file can't choose what runs on your machine. A setting that runs a command or sends a request counts from the project's file only after you accept it, and again after it changes. That covers every key ending in `_cmd`, plus `triage.sources`, `rebase.surfaces`, `scheduled_audits.extra`, `setup.checks` and the retro keys `footprint`, `insights`, `records`, `loop_outcome`, `measures_dir` and `reader_proxy`. Until you accept it, the setting is left out, as if unset, and `python tools/kit_config.py` lists it as NOT ACCEPTED. Read it in the project's file, then run `product-os kit_config accept <key>`, or `accept --all`. The digests of the accepted values are kept in `~/.claude/product-os-commands-accepted.json`. The same commands in your own file always count. Where Claude Code hooks run, the plugin asks before an agent accepts a command or edits either file. Where they don't, add an ask rule such as `Bash(*kit_config* accept*)`.
 
-Tokens never go in these files. `FIGMA_TOKEN`, `ADO_PAT` and the like come from the environment, or from the OS keychain under the service `product-os` (see `kit_config.py --help`).
+Tokens never go in these files. `FIGMA_TOKEN`, `ADO_PAT` and the like come from the environment, or from the OS keychain under the service `product-os` (see `kit_config.py --help`). If your keychain already keeps them under other names, `tokens.keychain` in your own file says where, and the tools read them there without a copy. A project's file can't set it.
 
 ## Keys, by the tool that reads them
 
@@ -31,6 +31,7 @@ A path under `app`, such as `app.decisions`, `app.rules`, `app.baseline` or `app
 | `go.routes` | go | extra routes, `[{"when", "skill", "done"}]`; one wins over a built-in route it overlaps |
 | `rebase.surfaces`, `triage.sources` | reconcile, triage | the project's own places to check, `[{"name", "cmd", "pass"}]`, and its decision sources, `[{"name", "cmd"}]`, both run as commands; the shapes are in each skill's references |
 | `triage.ledger_file` | open-question, triage, triage_lists | the ledger file, a path from the project folder (default `.claude/open-questions.md`), or `false` for a project that keeps none: triage_lists then says so in its line and exits 0. A missing file at the path is a list that didn't run |
+| `tokens.keychain` | kit_config.token, figma_auth | your own file only: the keychain item a token is also read from, when the `product-os` one is missing, as `{"service": "env/{name}", "account": "{user}"}`. `{name}` becomes each variable name the tool asks for, such as `ADO_PAT`, and `{user}` becomes your login. A project's file that sets it has it left out and named as a problem, since it would choose which of your secrets a tool reads. `PRODUCT_OS_NO_KEYCHAIN=1` turns the keychain off |
 | `setup.checks`, `setup.tokens` | setup-kit | extra setup lines, `[{"label", "cmd", "fix", "optional"}]`; tokens reported as set or not set, `[{"name", "fix", "optional"}]`, never printed |
 | `ado.org`, `ado.project` | ado, ado_rest, ado_write | Azure DevOps organization URL and project |
 | `ado.title_prefix` | ado | work-item titles read `<prefix> // {Page - Section} // {what}`; unset, any title passes |

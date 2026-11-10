@@ -62,8 +62,16 @@ The accepted ones are kept as digests in ~/.claude/product-os-commands-accepted.
 
 TOKENS are never in this file. token("ADO_PAT", ...) reads the first environment variable that is set,
 and otherwise, optionally, the OS keychain: on macOS the generic password with service "product-os"
-and account "<the variable name>" (security add-generic-password -s product-os -a ADO_PAT -w), on
+and account "<the first variable name>" (security add-generic-password -s product-os -a ADO_PAT -w), on
 Linux `secret-tool lookup service product-os account ADO_PAT`. The value is returned, never printed.
+  tokens.keychain        token(); figma_auth.py           also read, when the product-os item is missing: the
+                                                          item this names, such as {"service": "env/{name}",
+                                                          "account": "{user}"}, which reads service
+                                                          env/ADO_PAT, account <your login>, for each name
+                                                          asked for in turn
+Only your own file's tokens.keychain counts: a project's is left out and named as a problem, since it
+would choose which of your secrets a tool reads. Each item found is kept in memory for the run, and
+PRODUCT_OS_NO_KEYCHAIN=1 turns the keychain off.
 
   python kit_config.py [--project DIR]    where it looked, what each file holds, and the merged settings
   python kit_config.py --selftest         plant both files and break each rule once
@@ -76,7 +84,7 @@ import sys
 # Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
 if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
     sys.path[0] = os.path.dirname(os.path.realpath(__file__))
-import hashlib, json, os, shutil, subprocess, sys, urllib.parse
+import getpass, hashlib, json, os, re, shutil, subprocess, sys, urllib.parse
 
 NAME = "product-os"
 FILE = os.path.join(".claude", NAME + ".json")
@@ -331,6 +339,11 @@ def load(start=None):
         if refused:
             problems.append(refused)
         mine, theirs = _read(u, problems), _read(p, problems)
+        if isinstance(theirs.get("tokens"), dict) and "keychain" in theirs["tokens"] \
+                and "project_tokens" not in MUT:
+            del theirs["tokens"]["keychain"]
+            problems.append(f"{p} sets tokens.keychain, which picks the keychain item a token is read "
+                            f"from, so only your own {u} can set it; it was left out")
         withheld = _withhold(theirs, p, problems)
         merged = _merge(theirs, mine) if "user_wins" in MUT else _merge(mine, theirs)
         _loaded[key] = {"settings": merged, "user": u, "project": p, "problems": problems,
@@ -340,6 +353,7 @@ def load(start=None):
 
 def reset():
     _loaded.clear()
+    _kept.clear()
 
 
 # Where ~ comes from: HOME on POSIX, USERPROFILE on Windows, where Python 3.8+ ignores HOME.
@@ -455,25 +469,86 @@ def figma_files():
     return out
 
 
+TOKEN_NAME = re.compile(r"[A-Z][A-Z0-9_]*")   # an environment variable's name, the only kind looked up
+KEYCHAIN_RUN = None   # selftest only: stands in for subprocess.run on the keychain command
+_kept = {}   # (service, account): the value or None, for this process; never printed or written
+
+
+def keychain_pattern(problems=None):
+    """(service, account) from tokens.keychain in your own file, each holding {name} or {user} where
+    they go, or None when it's unset or malformed (named under problems). Read from your file alone,
+    so a project's file can't choose which keychain item a tool reads."""
+    if "project_tokens" in MUT:
+        p = get("tokens", "keychain")
+    else:
+        t = _read(user_path(), [] if problems is None else problems).get("tokens")
+        p = t.get("keychain") if isinstance(t, dict) else None
+    if p is None:
+        return None
+    if not (isinstance(p, dict) and set(p) == {"service", "account"}
+            and all(isinstance(v, str) and v for v in p.values()) and "{name}" in p["service"] + p["account"]):
+        if problems is not None:
+            problems.append(f'{user_path()}: tokens.keychain must be {{"service": "...", "account": "..."}}, '
+                            f"both strings and one holding {{name}}, so it was left out")
+        return None
+    return p["service"], p["account"]
+
+
+def keychain_items(name):
+    """[(service, account)] looked up for one variable name, in order: the product-os item, then
+    tokens.keychain's when it is set. [] for a name that isn't an environment variable's."""
+    if not isinstance(name, str) or (not TOKEN_NAME.fullmatch(name) and "no_name_check" not in MUT):
+        return []
+    out = [(NAME, name)]
+    p = keychain_pattern()
+    if p:
+        try:
+            user = getpass.getuser()
+        except (OSError, KeyError, ImportError):
+            user = ""
+        # {name} first: a name can't hold "{user}", and a login could in principle hold "{name}".
+        item = tuple(t.replace("{name}", name).replace("{user}", user) for t in p)
+        if user or "{user}" not in "".join(p):
+            out.append(item)
+    return out
+
+
+def keychain_read(service, account):
+    """The OS keychain item's value, or None: the fixed `security` or `secret-tool` lookup, no shell.
+    A value or a miss is kept for the rest of the run; a read that fails or times out is not, so the
+    next call tries again. Never printed, logged or written."""
+    key = (service, account)
+    if key in _kept and "no_cache" not in MUT:
+        return _kept[key]
+    run = KEYCHAIN_RUN
+    if run or (sys.platform == "darwin" and shutil.which("security")):
+        cmd = ["security", "find-generic-password", "-s", service, "-a", account, "-w"]
+    elif shutil.which("secret-tool"):
+        cmd = ["secret-tool", "lookup", "service", service, "account", account]
+    else:
+        return None
+    try:
+        r = (run or subprocess.run)(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    _kept[key] = r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+    return _kept[key]
+
+
 def token(*names):
-    """The first of the named environment variables that is set, else the OS keychain entry for the
-    first name (service NAME, account <name>), else None. Never printed, logged or written."""
+    """The first of the named environment variables that is set, else the OS keychain: the
+    product-os item for the first name, then tokens.keychain's item for each name in turn (see the
+    docstring); else None. Never printed, logged or written."""
     for n in names:
         if os.environ.get(n):
             return os.environ[n]
     if not names or any(os.environ.get(n) for n in NO_KEYCHAIN):
         return None
-    if sys.platform == "darwin" and shutil.which("security"):
-        cmd = ["security", "find-generic-password", "-s", NAME, "-a", names[0], "-w"]
-    elif shutil.which("secret-tool"):
-        cmd = ["secret-tool", "lookup", "service", NAME, "account", names[0]]
-    else:
-        return None
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+    for svc, acct in keychain_items(names[0])[:1] + [i for n in names for i in keychain_items(n)[1:]]:
+        v = keychain_read(svc, acct)
+        if v:
+            return v
+    return None
 
 
 def accept_line(key):
@@ -498,7 +573,9 @@ def show(start=None):
     d = _resolve(start)[0]
     print(f"user file:    {c['user']}{'' if os.path.exists(c['user']) else ' (none)'}")
     print(f"project file: {c['project'] or ('(none at or above ' + d + ')' if d else '(not looked for)')}")
-    for p in c["problems"]:
+    bad = []
+    keychain_pattern(bad)
+    for p in c["problems"] + bad:
         print(f"PROBLEM: {p}")
     for k, why in c["withheld"]:
         print(f"NOT ACCEPTED: {k} is set in the project file but {why}, so it is left out below and "
@@ -707,6 +784,7 @@ def selftest():
                 check("an accept counts in a worktree of its repository, not in a separate clone",
                       get("retro", "propose_cmd", start=os.path.join(root, "shop-fix")) == "echo shop"
                       and get("retro", "propose_cmd", start=os.path.join(root, "shop-clone")) is None)
+            token_checks(root)
         finally:
             for k, v in old[0].items():
                 if v is None:
@@ -766,6 +844,81 @@ def selftest():
         check("token() reads the first variable that is set", r.stdout.strip() == "from-env",
               (r.stdout + r.stderr).strip()[-300:])
         plugin_checks(root)
+
+    def token_checks(root):
+        """Which keychain items token() reads, through a stand-in keychain that records each lookup."""
+        global KEYCHAIN_RUN
+        asked = []
+        vault = {(NAME, "KC_ONE"): "pos-value", ("env/KC_TWO", "kc-user"): "env-value",
+                 ("theirs/KC_TWO", "kc-user"): "their-value"}
+
+        def fake(cmd, **kw):
+            item = cmd[cmd.index("-s") + 1], cmd[cmd.index("-a") + 1]
+            asked.append(item)
+            v = vault.get(item)
+            return subprocess.CompletedProcess(cmd, 0 if v else 44, (v or "") + "\n", "")
+
+        names = (*NO_KEYCHAIN, ENV, "KC_ONE", "KC_TWO", "LOGNAME", "USER", "LNAME", "USERNAME",
+                 "FIGMA_KEYCHAIN_SERVICE")
+        saved = KEYCHAIN_RUN, {k: os.environ.pop(k, None) for k in names}
+        KEYCHAIN_RUN, os.environ["LOGNAME"] = fake, "kc-user"
+        with open(user_path(), encoding="utf-8") as f:
+            planted = f.read()
+
+        def again(*args):
+            asked.clear()
+            reset()
+            return token(*args)
+        try:
+            write(user_path(), {"tokens": {"keychain": {"service": "env/{name}", "account": "{user}"}}})
+            got = again("KC_ONE", "KC_TWO")
+            check("token() tries the product-os item first and stops at the first item it finds",
+                  got == "pos-value" and asked == [(NAME, "KC_ONE")], str(asked))
+            del vault[(NAME, "KC_ONE")]
+            got = again("KC_ONE", "KC_TWO")
+            check("then your own tokens.keychain item for each name in turn, with {name} and {user} "
+                  "filled in", got == "env-value" and asked == [(NAME, "KC_ONE"), ("env/KC_ONE", "kc-user"),
+                                                                 ("env/KC_TWO", "kc-user")], str(asked))
+            if os.path.exists(os.path.join(here, "figma_auth.py")):
+                import figma_auth
+                items = [(NAME, "FIGMA_TOKEN")] + [(f"env/{k}", "kc-user") for k in figma_auth.ENV_KEYS]
+                check("figma_auth.py reads the same items, for each of its names",
+                      figma_auth._items() == items, str(figma_auth._items()))
+            asked.clear()
+            check("what a run has read once, found or missing, it doesn't ask the keychain for again",
+                  token("KC_ONE", "KC_TWO") == "env-value" and asked == [], str(asked))
+            os.environ[NO_KEYCHAIN[0]] = "1"
+            check(f"{NO_KEYCHAIN[0]}=1 turns the keychain off",
+                  again("KC_ONE", "KC_TWO") is None and asked == [], str(asked))
+            os.environ.pop(NO_KEYCHAIN[0])
+            got = again("kc two; x", "KC_TWO")
+            check("a name that isn't an environment variable's is never looked up",
+                  got == "env-value" and asked == [("env/KC_TWO", "kc-user")], str(asked))
+            write(user_path(), {})
+            write(os.path.join(root, "theirs.json"),
+                  {"tokens": {"keychain": {"service": "theirs/{name}", "account": "{user}"}}})
+            os.environ[ENV] = os.path.join(root, "theirs.json")
+            got = again("KC_TWO")
+            c = load()
+            check("a project's tokens.keychain is left out and named, and its item is never read",
+                  got is None and asked == [(NAME, "KC_TWO")] and get("tokens", "keychain") is None
+                  and any("sets tokens.keychain" in p for p in c["problems"]), str(asked))
+            os.environ.pop(ENV)
+            write(user_path(), {"tokens": {"keychain": {"service": "env", "account": "{user}"}}})
+            bad = []
+            got = again("KC_TWO")
+            check("a tokens.keychain with no {name} in it is left out and named",
+                  got is None and asked == [(NAME, "KC_TWO")] and keychain_pattern(bad) is None
+                  and any("must be" in p for p in bad), str(asked))
+        finally:
+            write(user_path(), planted)
+            KEYCHAIN_RUN = saved[0]
+            for k, v in saved[1].items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+            reset()
 
     def plugin_checks(root):
         """A run started inside the plugin's own folder reads the project only when it is named."""
@@ -867,7 +1020,8 @@ def selftest():
         print("  (figma_comments.py is not installed beside this file, so its check did not run)")
     print("mutations: each rule broken on purpose must fail a check above")
     for m in ("no_walk", "user_wins", "no_env", "no_withhold", "no_cmd_suffix",
-              "no_plugin_guard", "no_repo_key", "no_dangling", "no_isolate"):
+              "no_plugin_guard", "no_repo_key", "no_dangling", "no_isolate", "project_tokens",
+              "no_name_check", "no_cache"):
         MUT.clear()
         MUT.add(m)
         n = len(base)
