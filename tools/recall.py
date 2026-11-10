@@ -20,12 +20,14 @@ SOURCES (all by default; --source logs,git narrows)
                redaction rewrites (the index holds redacted text only). --scan reads every copy whole.
   git          commit messages on every branch of each clone, and `git log -S` on the diffs. The
                clones are recall.repos in kit_config; unset, the git repo you run in.
-  notes        md/txt/json under the notes folders (recall.notes, else seen_before.notes), and the
-               request ledger ledger.py writes (<ledger.dir>/requests.jsonl), one paragraph per request:
-               your words, its state, why and the session's title; the reply it was settled on is left
-               to the logs source
+  notes        md/txt/json under the notes folders (recall.notes, else seen_before.notes), the single
+               files recall.notes_files names (paths or globs; a file with the same bytes as one already
+               taken is read once), and the request ledger ledger.py writes
+               (<ledger.dir>/requests.jsonl), one paragraph per request: your words, its state, why and
+               the session's title; the reply it was settled on is left to the logs source
   memory       memory cards (~/.claude*/projects/*/memory, or --memory DIR), skills, agent definitions
-               (~/.claude*/agents) and CLAUDE.md files
+               (~/.claude*/agents) and CLAUDE.md files; recall.memory_globs replaces that list, for a
+               setup whose memory cards are history and shouldn't be served as current
   transcripts  meeting transcripts in recall.transcripts (else seen_before.transcripts): the cleaned
                .md by paragraph, a .txt only when it has no .md, with close spellings
   figma        OPTIONAL: every comment on the files in kit_config figma.files, resolved included,
@@ -234,10 +236,31 @@ def ledger_path():
 
 
 def _note_files():
-    """The single files searched as notes: CONFIG notes_files, and the request ledger when there is one.
-    A .jsonl, so the walk's extensions never take it."""
+    """The single files searched as notes: CONFIG notes_files; each path or glob in recall.notes_files, where a
+    file holding the same bytes as one already taken is left out (a test-run folder can hold hundreds of copies
+    of one write-up); and the request ledger when there is one. A .jsonl, so the walk's extensions never take
+    it."""
+    out, seen = list(CONFIG["notes_files"]), set()
+    for pat in _folders(kit_config.get("recall", "notes_files")):
+        for p in sorted(glob.glob(pat, recursive=True)) if glob.has_magic(pat) else [pat]:
+            if p in out or not os.path.isfile(p):
+                continue
+            try:
+                with open(p, "rb") as fh:
+                    h = hashlib.sha1(fh.read()).hexdigest()
+            except OSError:
+                continue
+            if h not in seen:
+                seen.add(h)
+                out.append(p)
     led = ledger_path()
-    return list(CONFIG["notes_files"]) + ([led] if os.path.isfile(led) and led not in CONFIG["notes_files"] else [])
+    return out + ([led] if os.path.isfile(led) and led not in out else [])
+
+
+def memory_globs():
+    """recall.memory_globs (globs, ~ expanded) when set, in place of CONFIG memory_globs: a setup whose memory
+    cards are history leaves ~/.claude*/projects/*/memory out, so a card isn't served as current."""
+    return _folders(kit_config.get("recall", "memory_globs")) or CONFIG["memory_globs"]
 
 
 def transcript_dirs():
@@ -2690,7 +2713,7 @@ def src_notes(queries, opts):
 
 
 def src_memory(queries, opts):
-    globs = CONFIG["memory_globs"]
+    globs = memory_globs()
     if getattr(opts, "memory", None):        # one project's memory folder in place of every project's
         globs = [os.path.join(opts.memory, "*.md")] + [g for g in globs if os.sep + "memory" + os.sep not in g]
     files = sorted({p for g in globs for p in glob.glob(g, recursive=True)})
@@ -5178,8 +5201,53 @@ def selftest():
         print(("pass " if good else "FAIL ") + "parse: " + name)
     ok &= selftest_brief()
     ok &= selftest_rank()
+    ok &= selftest_settings()
     print("ALL PASS" if ok else "SOME FAILED")
     return 0 if ok else 1
+
+
+def selftest_settings():
+    """recall.notes_files and recall.memory_globs, from a planted config."""
+    ok, saved, env = True, dict(CONFIG), os.environ.get(kit_config.ENV)
+    with tempfile.TemporaryDirectory() as t:
+        def put(rel, text):
+            p = os.path.join(t, rel)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            open(p, "w", encoding="utf-8").write(text)
+            return p
+        one = put("runs/a/README.md", "same write-up")
+        put("runs/b/README.md", "same write-up")
+        other, top = put("runs/c/README.md", "another write-up"), put("WORKSPACE.md", "the map")
+        cfg = os.path.join(t, "cfg.json")
+        CONFIG.update(notes_files=[], ledger=os.path.join(t, "no-ledger.jsonl"))
+        try:
+            os.environ[kit_config.ENV] = cfg
+            json.dump({"recall": {"notes_files": [top, os.path.join(t, "runs", "*", "README.md"),
+                                                  os.path.join(t, "missing.md")],
+                                  "memory_globs": [os.path.join(t, "skills", "*.md")]}}, open(cfg, "w"))
+            kit_config.reset()
+            got, mem = _note_files(), memory_globs()
+            json.dump({}, open(cfg, "w"))
+            kit_config.reset()
+            unset_files, unset_mem = _note_files(), memory_globs()
+        finally:
+            CONFIG.update(saved)
+            if env is None:
+                os.environ.pop(kit_config.ENV, None)
+            else:
+                os.environ[kit_config.ENV] = env
+            kit_config.reset()
+        for name, good in (
+                ("recall.notes_files: a path and a glob are read, a byte-identical copy once and a missing file not",
+                 got == [top, one, other]),
+                ("... and unset, no single files", unset_files == []),
+                ("recall.memory_globs replaces the memory list, so a memory folder it leaves out isn't read",
+                 mem == [os.path.join(t, "skills", "*.md")]),
+                ("... and unset, every project's memory folder is read",
+                 any(os.sep + "memory" + os.sep in g for g in unset_mem) and unset_mem == saved["memory_globs"])):
+            ok &= good
+            print(("pass " if good else "FAIL ") + "settings: " + name)
+    return ok
 
 
 # ------------------------------------------------------------------------------------------------- main

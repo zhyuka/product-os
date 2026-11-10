@@ -84,9 +84,11 @@ the pool owner"): a question too.
 
 STATE, with the evidence it rests on in `ref` and the rule that set it in `why`:
   done      a commit (sha) the session made after it, before its next request, or files it edited; a
-            reply that leads with a result, answers a check or a question, or says there is nothing
-            to do; a reply that handed the next step to the user, when the user's next message took
-            it from there; a task chip offered for work sent to another session; or a commit message
+            Figma edit it logged in the `figma_edits` file in that window, on its words (ref
+            "figma-edit <at> <file> <node>"; see FIGMA below); a reply that leads with a result,
+            answers a check or a question, or says there is nothing to do; a reply that handed the
+            next step to the user, when the user's next message took it from there; a task chip
+            offered for work sent to another session; or a commit message or a logged Figma edit
             elsewhere that quotes its words
   filed     a work item (id) the session created after it with ado.py, or one whose text quotes it
   ruled     a rulings file entry (id) the session wrote after it, or one whose source quotes it
@@ -137,10 +139,23 @@ THE STORES it links against, each optional (product-os config, key `ledger`):
   rulings    a JSON rulings file: {"rulings": [{"id", "topic", "ruling", "source", "date", "match",
              "reversed", "supersedes"}]}; an Edit or Write to a file of that name records a ruling
   ado_cache  the work-item cache ado_rest.py writes (default: its path for ado.org/ado.project)
+  figma_edits a JSON log of the Figma and FigJam writes sessions made (FIGMA below); unset, none
   role       the label each entry carries in decided_by_role (default "user")
   user_names names that mark a diff line as possibly quoting the user (with quote marks)
 A configured store that cannot be read is named and the run exits 2; an unconfigured one is skipped.
 Two more keys: other_roots (OTHER MACHINES above) and told_routes (TOLD below).
+
+FIGMA. Figma and FigJam work leaves no commit, so sessions log each write in the `figma_edits` file:
+{"file_key", "edits": [{"at", "file", "section", "what", "nodes", "by"}]}. Unset, there are no Figma rows
+and nothing else changes. A row counts for a request when the session logged it after the request and
+before the user's next one, and what it changed (what and section) shares two of the request's words and
+a quarter of them; checked when the thread made no commit, work item, ruling, card or file edit, which
+keep their own ref. Logged by the session: a tool call in its own log carries the start of the row's what
+in its input (not a tool result, which a session that merely reads the log also holds), dated by that
+call, since `at` is typed by hand and, measured on one log, was off by more than 15 minutes for over a
+quarter of its rows; or, where no call of its own wrote it (a subagent's row), its `by` names the desktop
+session (local_<id>, which also covers the CLI ids it ran under before), dated by `at`. A row whose `by`
+or `what` quotes 7 words in a row of an open request settles it from any session, like a commit.
 
 TOLD (--told). What you already said in one session, for the step that sends something out (a card,
 a comment draft, a work-item comment): an instruction given in a session loses to a nearer frame or to
@@ -287,6 +302,13 @@ def default_ado_cache():
     return os.path.join(HOME, ".cache", kit_config.NAME, "ado", f"{slug(org.rsplit('/', 1)[-1])}--{slug(proj)}.json")
 
 
+def default_figma_edits():
+    """ledger.figma_edits, the JSON log sessions write each Figma and FigJam edit to (FIGMA); None when unset,
+    so no request settles on a Figma edit."""
+    p = _cfg("figma_edits")
+    return _x(p) if isinstance(p, str) else None
+
+
 SETTLED = ("done", "filed", "ruled", "card", "dropped", "answered")
 
 # ---------------------------------------------------------------- redaction
@@ -373,6 +395,18 @@ def clean_text(raw):
     if HARNESS.match(t):
         return None
     return t
+
+
+def strings_in(v):
+    """Every string in a tool call's input, nested ones included."""
+    if isinstance(v, str):
+        yield v
+    elif isinstance(v, dict):
+        for x in v.values():
+            yield from strings_in(x)
+    elif isinstance(v, list):
+        for x in v:
+            yield from strings_in(x)
 
 
 def blocks(r):
@@ -1143,8 +1177,11 @@ HANDS_ON = re.compile(r"\b(ado|session|separate task|queue|register)\b", re.I)
 # A put-off question that already lives somewhere: a work item. One about a draft in a drafts file ("Draft on 12:34
 # (...): what should happen to it?", "The vendor message: what should happen to it?") is a question, even when it
 # quotes a work item's id, so the draft's hold has a q- id to name (drafts_store.py releases a hold on one).
+# ledger.drafts_by_qid, a date (YYYY-MM-DD): a setup whose drafts file held such questions until it began naming
+# their q- ids gives the day it began, and one put off before it is an answer, since the drafts file holds it.
 HELD_ELSEWHERE = re.compile(r"(?:#|_workitems/edit/)\d{3,5}\b", re.I)
 ABOUT_A_DRAFT = re.compile(r"\b(draft|message)\b[^?\n]{0,100}:\s*what\b", re.I)
+DRAFTS_BY_QID = str(_cfg("drafts_by_qid") or "")
 QID = re.compile(r"\bq-[0-9a-f]{6}\b", re.I)
 REQ_ID = re.compile(r"\b[0-9a-f]{8}\b", re.I)
 # A pick on a card that names an open request and leaves it open ("No longer needed" closes it).
@@ -1171,9 +1208,12 @@ def puts_off_question(e):
     """The pick that puts off a question asked TO the user ("Later", "Defer"..., "Now" beside it or not, or
     a lone "Park..."), the typed words when they lead that way ("not yet. we're still in call"), or None. One
     that hands the work on is a request (classify); a question naming a work item is held there, unless it is
-    about a draft (ABOUT_A_DRAFT)."""
+    about a draft (ABOUT_A_DRAFT), which the drafts file held before ledger.drafts_by_qid when that is set."""
     q = (e.get("question") or "") + " " + (e.get("header") or "")
-    if not ABOUT_A_DRAFT.search(q) and HELD_ELSEWHERE.search(q):
+    if ABOUT_A_DRAFT.search(q):
+        if DRAFTS_BY_QID and (e.get("ts") or "") < DRAFTS_BY_QID:
+            return None
+    elif HELD_ELSEWHERE.search(q):
         return None
     if e.get("answer_kind") == "typed":
         t = e.get("text") or ""
@@ -1366,14 +1406,17 @@ class Stores:
     A store left unconfigured (None) is skipped; one configured and unreadable is named in problems."""
 
     def __init__(self, since=None, problems=None, cache_dir=None, git_repos=None, memory=None, rulings="default",
-                 ado="default", ccd=CCD_SESSIONS):
+                 ado="default", ccd=CCD_SESSIONS, figma_edits="default", streams=None):
         self.problems = problems if problems is not None else []
         self.rulings = self._rulings(RULINGS if rulings == "default" else rulings)
         self.cards = self._cards(default_memory() if memory is None else memory)
         self.ado, self.ado_pulled = self._ado(default_ado_cache() if ado == "default" else ado)
-        self.ccd = self._ccd(ccd)
+        self.ccd, self.desktop = self._ccd(ccd)
         self.cache_dir = cache_dir
         self.git = self._git(git_repos if git_repos is not None else REPOS, since)
+        self.figma_edits = self._figma_edits(default_figma_edits() if figma_edits == "default" else figma_edits)
+        self.streams = streams or {}        # session -> the key of its stream copy (state.json), for figma_written
+        self._figma_calls = None
         self._quote_index = None
 
     def _load(self, path, what):
@@ -1435,7 +1478,10 @@ class Stores:
         return items, j.get("pulled")
 
     def _ccd(self, folder):
-        out = {}
+        """({cli id: the desktop session's id, title, archived}, {cli id: the desktop id's 8 hex digits}). The
+        second also maps the CLI ids a desktop session ran under before (priorCliSessionIds), so a Figma edit
+        logged as made by local_<id> counts for a request typed before the session rolled to a new CLI id."""
+        out, desktop = {}, {}
         for p in glob.glob(os.path.join(folder, "*", "*", "local_*.json")):
             try:
                 d = json.load(open(p, encoding="utf-8"))
@@ -1444,7 +1490,11 @@ class Stores:
             if d.get("cliSessionId"):
                 out[d["cliSessionId"]] = {"ccd": d.get("sessionId"), "title": d.get("title"),
                                           "archived": d.get("isArchived")}
-        return out
+            local = re.match(r"local_([0-9a-f]{8})", str(d.get("sessionId") or ""))
+            for cli in [d.get("cliSessionId")] + list(d.get("priorCliSessionIds") or []):
+                if local and isinstance(cli, str) and cli:
+                    desktop[cli] = local.group(1)
+        return out, desktop
 
     def _git(self, repos, since):
         """{sha: {repo, ts, msg, add}} for commits on any branch since `since`. `add` is the added diff lines
@@ -1508,6 +1558,95 @@ class Stores:
                 out[sha] = dict(v, repo=repo)
         return out
 
+    def _figma_edits(self, path):
+        """Every Figma and FigJam write a session logged in the ledger.figma_edits file, oldest first: `at` in UTC
+        (written by hand: an estimate, off by more than 15 minutes for over a quarter of the rows measured on one
+        log), the file key (the row's, else the log's), the 8 hex digits of each local_<id> its `by` names, `key`
+        (the first 60 characters of its what, normalized, by which figma_written finds the call that wrote it;
+        none under 20), `words` (salient words of what and section: what it changed) and `quote` (by and what,
+        where the user's words it acted on are quoted). `ref` names the row by its own `at`, file and first node.
+        No path (ledger.figma_edits unset): no rows."""
+        j = self._load(path, "figma edits") or {}
+        log_key = re.search(r"\b[A-Za-z0-9]{22}\b", str(j.get("file_key") or ""))
+        out = []
+        for x in j.get("edits") or []:
+            if not isinstance(x, dict):
+                continue
+            t = parse_ts(x.get("at"))
+            if not t:
+                continue
+            at = (t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)).astimezone(dt.timezone.utc)
+            key = re.search(r"\b[A-Za-z0-9]{22}\b", str(x.get("file") or "")) or log_key
+            by = str(x.get("by") or "")
+            nodes = x.get("nodes") if isinstance(x.get("nodes"), list) else []
+            node = re.search(r"I?\d+:\d+(?:;\d+:\d+)*", str(nodes[0])) if nodes else None
+            what = norm(str(x.get("what") or ""))[:60]
+            out.append({"at": at.strftime("%Y-%m-%dT%H:%M:%SZ"), "file": key.group(0) if key else "",
+                        "key": what if len(what) >= 20 else "",
+                        "locals": {m.lower() for m in re.findall(r"local_([0-9a-fA-F]{8})", by)},
+                        "words": salient(f"{x.get('what') or ''} {x.get('section') or ''}"),
+                        "quote": norm(f"{by} {x.get('what') or ''}"),
+                        "ref": " ".join(str(v) for v in ("figma-edit", x.get("at"), key.group(0) if key else "",
+                                                          node.group(0) if node else "") if v)})
+        return sorted(out, key=lambda r: r["at"])
+
+    def figma_written(self, sid, keys):
+        """{row key: time} for each of `keys` (figma_edits rows' keys) that a tool call in the session's stream copy
+        carries in its input: the call that wrote the row, with its time, the earliest if several. Its input, not
+        its result, since a session that reads the log holds the same words in a tool result. None when the stream
+        can't be read here (a zipped copy, or none known). Read only for a request with Figma edits near it; kept in
+        cache_dir/figma-writers.json by byte offset, so a later run reads what the log gained, and the whole log
+        only for a key it has not looked for."""
+        path = self.streams.get(sid)
+        if not path or " :: " in path or not os.path.isfile(path):
+            return None
+        cache = os.path.join(self.cache_dir, "figma-writers.json") if self.cache_dir else None
+        if self._figma_calls is None:
+            self._figma_calls = {}
+            if cache and os.path.exists(cache):
+                try:
+                    self._figma_calls = json.load(open(cache, encoding="utf-8"))
+                except (OSError, ValueError):
+                    self._figma_calls = {}
+        c = self._figma_calls.get(path) or {}
+        size, keys = os.path.getsize(path), set(k for k in keys if k)
+        off, known, hits = c.get("off", 0), set(c.get("keys") or []), dict(c.get("hits") or {})
+        if size < off:
+            off, known, hits = 0, set(), {}                 # rewritten: read again
+        new = keys - known
+        if new or size > off:
+            pos = 0 if new else off
+            with open(path, "rb") as fh:
+                fh.seek(pos)
+                for raw in fh:
+                    if not raw.endswith(b"\n"):
+                        break
+                    pos += len(raw)
+                    look = (keys | known) if pos > off else new
+                    if not look or b'"tool_use"' not in raw:
+                        continue
+                    try:
+                        r = json.loads(raw)
+                    except ValueError:
+                        continue
+                    if not isinstance(r, dict) or r.get("type") != "assistant" or not r.get("timestamp"):
+                        continue
+                    for b in blocks(r):
+                        if b.get("type") != "tool_use":
+                            continue
+                        text = norm(" ".join(strings_in(b.get("input"))))
+                        for k in look:
+                            if k in text and (k not in hits or r["timestamp"] < hits[k]):
+                                hits[k] = r["timestamp"]
+            off = pos
+            self._figma_calls[path] = {"off": off, "keys": sorted(keys | known), "hits": hits}
+            if cache:
+                try:
+                    write_atomic(cache, json.dumps(self._figma_calls))
+                except OSError as e:
+                    self.problems.append(f"figma writers cache {cache}: {type(e).__name__}")
+        return {k: v for k, v in hits.items() if k in keys}
+
     def commit(self, sha):
         if not sha:
             return None
@@ -1532,6 +1671,8 @@ class Stores:
                                                                               (r.get("source") or ""))))
             for i, a in self.ado.items():
                 idx.append(("filed", a["created"], i, norm(a["text"])))
+            for r in self.figma_edits:
+                idx.append(("Figma edit", r["at"], r["ref"], r["quote"]))
             self._quote_index = idx
         return self._quote_index
 
@@ -1588,11 +1729,17 @@ def link(entries, state, stores, relink=False):
                 later_commits.append((e.get("ts") or "", c[0]))
             for p in ev.get("pushes") or []:
                 later_commits.append((e.get("ts") or "", p[0]))
+        last = parse_ts((state.get("sessions", {}).get(sid) or {}).get("last"))
         for s_i, seg in enumerate(segs):
+            # a thread's window, for a Figma edit: up to the user's next request, or the session's last line and
+            # 30 minutes
+            until = (segs[s_i + 1][0].get("ts") if s_i + 1 < len(segs) else
+                     (last + dt.timedelta(minutes=30)).astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+                     if last else None)
             for j, e in enumerate(seg):
                 if not relink and e.get("state") in SETTLED and e["kind"] != "question":
                     continue
-                state_of(e, seg[j:], es, later_commits, stores)
+                state_of(e, seg[j:], es, later_commits, stores, until)
         carry(es)
         # follow_up_of: a correction points at the request before it in the same session
         last_req = None
@@ -1694,7 +1841,38 @@ def set_state(e, st, ref, why):
         e.pop("ref", None)
 
 
-def state_of(e, rest, session_entries, later_commits, stores):
+def figma_edit_after(e, mine, until, stores):
+    """The first figma_edits row that e's session logged after e and before `until` (the user's next request in
+    the session), on e's subject: (row, shared words) or None. Logged by the session: a tool call in its own log
+    wrote the row (its input holds the start of the row's what), dated by that call, since `at` is written by hand;
+    or, for a row no call of its own wrote (a subagent's), the row's `by` names its desktop id, dated by `at`. On
+    the subject: it shares two of e's words and a quarter of them with what the row changed (what and section; `by`
+    quotes whichever of the user's words the edit answered, which may be another request's)."""
+    t0, t1 = parse_ts(e.get("ts")), parse_ts(until)
+    if not (t0 and t1 and mine and stores.figma_edits):
+        return None
+    ts, end = e["ts"][:19], until[:19]
+    day = dt.timedelta(days=1)
+    lo, hi = (t0.replace(tzinfo=None) - day).isoformat()[:19], (t1.replace(tzinfo=None) + day).isoformat()[:19]
+    near = [r for r in stores.figma_edits if lo <= r["at"][:19] <= hi]
+    if not near:
+        return None
+    me = stores.desktop.get(e["session"]) or (e.get("ccd") or "")[6:14] or None
+    wrote = stores.figma_written(e["session"], [r["key"] for r in near]) or {}
+    hits = []
+    for r in near:
+        when = (wrote.get(r["key"]) or "")[:19] if r["key"] else ""
+        if not when and me in r["locals"]:
+            when = r["at"][:19]
+        if not (when and ts < when < end):
+            continue
+        shared = mine & r["words"]
+        if len(shared) >= 2 and len(shared) >= 0.25 * max(1, len(mine)):
+            hits.append((when, r["ref"], r, shared))
+    return min(hits, key=lambda h: (h[0], h[1]))[2:] if hits else None
+
+
+def state_of(e, rest, session_entries, later_commits, stores, until=None):
     k = e["kind"]
     if k == "question":
         # Only close_questions settles it, from an answer on a later card; nothing in this thread does.
@@ -1786,6 +1964,11 @@ def state_of(e, rest, session_entries, later_commits, stores):
             break
     if best:
         set_state(e, "done", best[0][:9], "a later commit in this session shares its words: " + ", ".join(sorted(best[1])[:4]))
+        return
+    fig = None if got["edits"] else figma_edit_after(e, mine, until, stores)     # a file edit keeps its own ref
+    if fig:
+        set_state(e, "done", fig[0]["ref"], "a Figma edit this session logged in the figma_edits file after it, "
+                  "before its next request, shares its words: " + ", ".join(sorted(fig[1])[:4]))
         return
     final = replies[-1] if replies else ""
     results = [r for r in replies if DONE_LEAD.search(first_sentence(r)) and not NEG_LEAD.search(first_sentence(r))]
@@ -1932,10 +2115,10 @@ def close_requests(entries):
 
 def cross_link(entries, stores, state=None):
     """An open request or decision whose words appear verbatim (7 words in a row) in a commit, a card, a
-    ruling or a work item dated after it. state["xl"] keeps a hash of each store row the last run held and
-    the open entries checked against all of them, so a later run checks those entries against new or changed
-    rows only: with hundreds of open requests against thousands of rows, checking all of them every run takes
-    most of the run."""
+    ruling, a work item or a logged Figma edit (its by and what) dated after it. state["xl"] keeps a hash of
+    each store row the last run held and the open entries checked against all of them, so a later run checks
+    those entries against new or changed rows only: with hundreds of open requests against thousands of rows,
+    checking all of them every run takes most of the run."""
     xl = state.setdefault("xl", {}) if state is not None else {}
     prev, done = set(xl.get("rows") or []), set(xl.get("done") or [])
     idx = keys = None
@@ -1954,7 +2137,8 @@ def cross_link(entries, stores, state=None):
             if when and when[:19] < ts[:len(when[:19])]:
                 continue
             if any(s in text for s in sh):
-                set_state(e, {"commit": "done"}.get(where, where), ref, f"its words are quoted in a {where} dated after it")
+                set_state(e, {"commit": "done", "Figma edit": "done"}.get(where, where), ref,
+                          f"its words are quoted in a {where} dated after it")
                 break
         done.add(e["id"])
     if idx is not None:
@@ -2062,6 +2246,7 @@ def _run(ledger_dir, projects, rebuild, relink, stores_kw, quiet, root=None, inv
     since = min((e.get("ts") or "" for e in entries.values() if e.get("state") in (None, "open")), default=None)
     kw = dict(stores_kw or {})
     kw.setdefault("cache_dir", os.path.join(ledger_dir, ".cache"))
+    kw.setdefault("streams", state.get("streams") or {})
     stores = Stores(since=(since or "")[:10] or None, problems=problems, **kw)
     link(entries, state, stores, relink=relink or rebuild)
     rows = sorted(entries.values(), key=lambda e: (e.get("ts") or "", e["id"]))
@@ -2203,6 +2388,14 @@ def told_words(e):
     return own_words(e.get("text") or "")
 
 
+def is_correction(e):
+    """Whether your own words in entry e push back on work done ("huh?", "did u even", "why did u", "r u sure"):
+    TOLD_CORRECTION on user_words, so quoted replies and pasted text don't count. standing_of flags these, and a
+    tool that counts caught misses can call it on ledger entries."""
+    t = user_words(e) if e.get("source") else ""
+    return bool(t and TOLD_CORRECTION.search(t))
+
+
 def standing_of(es):
     """(entry, why) for your words that still govern later work: decisions, rule picks, always/never/stop
     words, corrections and asks typed again."""
@@ -2216,7 +2409,7 @@ def standing_of(es):
             why.append("rule pick")
         if t and TOLD_STANDING.search(t):
             why.append("standing words")
-        if t and TOLD_CORRECTION.search(t):
+        if is_correction(e):
             why.append("correction")
         if t and e.get("kind") == "request":
             sw = salient(t)
@@ -2557,10 +2750,12 @@ def selftest_copies(check):
             os.makedirs(d)
         stores = os.path.join(t, "stores")
         os.makedirs(os.path.join(stores, "memory"))
-        for name, doc in (("rulings.json", {"rulings": []}), ("ado.json", {"pulled": 0, "items": {}, "comments": {}})):
+        for name, doc in (("rulings.json", {"rulings": []}), ("ado.json", {"pulled": 0, "items": {}, "comments": {}}),
+                          ("figma-edits.json", {"edits": []})):
             json.dump(doc, open(os.path.join(stores, name), "w"))
         kw = {"git_repos": [], "memory": [os.path.join(stores, "memory")], "rulings": os.path.join(stores, "rulings.json"),
-              "ado": os.path.join(stores, "ado.json"), "ccd": os.path.join(t, "none"), "cache_dir": os.path.join(t, "cache")}
+              "ado": os.path.join(stores, "ado.json"), "ccd": os.path.join(t, "none"), "cache_dir": os.path.join(t, "cache"),
+              "figma_edits": os.path.join(stores, "figma-edits.json")}
         inv_cache = os.path.join(t, "cc_logs_index.json")
         S = {k: "%s-0000-4000-8000-%012d" % (h * 8, i) for i, (k, h) in enumerate(zip("ampnhwg", "abcdef1"), 1)}
         n = [0]
@@ -2856,10 +3051,12 @@ def selftest_told_cases(check, contextlib, io):
         os.makedirs(os.path.join(proj, "-Users-x-Desktop"))
         stores = os.path.join(t, "stores")
         os.makedirs(os.path.join(stores, "memory"))
-        for name, doc in (("rulings.json", {"rulings": []}), ("ado.json", {"pulled": 0, "items": {}, "comments": {}})):
+        for name, doc in (("rulings.json", {"rulings": []}), ("ado.json", {"pulled": 0, "items": {}, "comments": {}}),
+                          ("figma-edits.json", {"edits": []})):
             json.dump(doc, open(os.path.join(stores, name), "w"))
         kw = {"git_repos": [], "memory": [os.path.join(stores, "memory")], "rulings": os.path.join(stores, "rulings.json"),
-              "ado": os.path.join(stores, "ado.json"), "ccd": os.path.join(t, "none"), "cache_dir": os.path.join(t, "cache")}
+              "ado": os.path.join(stores, "ado.json"), "ccd": os.path.join(t, "none"), "cache_dir": os.path.join(t, "cache"),
+              "figma_edits": os.path.join(stores, "figma-edits.json")}
         sid = "dddddddd-0000-4000-8000-000000000001"
         log = os.path.join(proj, "-Users-x-Desktop", sid + ".jsonl")
         n = [0]
@@ -2973,8 +3170,34 @@ def selftest():
                                 "match": {"name_re": "chip", "slug_re": "home"}}]}, open(rul, "w"))
         ado = os.path.join(t, "ado.json")
         json.dump({"pulled": 0, "items": {}, "comments": {}}, open(ado, "w"))
+        # Figma edits a session logged (s9a and s9b, one desktop session that rolled to a new CLI id at 20:02). FK is
+        # the planted file; each row is a case below, by the request it should or should not settle. A row's `at` is
+        # written by hand: rows 2 and 6 are dated off their writing calls on purpose.
+        FK = "PlantedKey" + "A" * 12
+        fe = os.path.join(t, "figma-edits.json")
+        json.dump({"file_key": FK, "edits": [
+            {"at": "2026-10-20T19:55Z", "file": FK, "by": "Claude (session local_9a9a9a9a), Figma slot",
+             "what": "Taxonomy columns merged into one planted column", "nodes": ["1:1"]},
+            {"at": "2026-10-20T20:25Z", "section": "1:2",       # no file of its own: the log's file_key
+             "what": "Item table: coverage columns for QZ and the planted research list", "nodes": ["1:2"]},
+            {"at": "2026-10-20T20:22Z", "file": FK, "what": "Planted legend recoloured", "nodes": ["1:3"]},
+            {"at": "2026-10-20T20:32Z", "file": FK, "by": "Claude (session local_0b0b0b0b)",
+             "what": "Planted sprint lanes widened", "nodes": ["1:4"]},
+            {"at": "2026-10-20T20:42Z", "file": FK, "what": "Hero frame padding 24 -> 32", "nodes": ["1:5"]},
+            {"at": "2026-10-20T20:55Z", "file": FK, "what": "Planted chat-only thing noted", "nodes": ["1:8"]},
+            {"at": "2026-10-20T21:05Z", "file": FK, "by": "Claude (session local_9a9a9a9a)",
+             "what": "Planted chat-only thing summarised", "nodes": ["1:6"]},
+            {"at": "2026-10-20T21:12Z", "file": FK, "what": "Planted banner gradient flattened", "nodes": ["1:9"]},
+            {"at": "2026-10-20T21:30Z", "file": FK, "by": "Claude (session local_9a9a9a9a), on the user's words: 'how "
+             "can you make the planted overview zone easier to digest at a quick glance'",
+             "what": "Rebuilt as one table", "nodes": ["1:7"]}]}, open(fe, "w"))
+        ccd_dir = os.path.join(t, "ccd", "a", "b")
+        os.makedirs(ccd_dir)
+        json.dump({"sessionId": "local_9a9a9a9a-0000-4000-8000-000000000009", "cliSessionId": "s9b",
+                   "priorCliSessionIds": ["s9a"], "title": "Planted Figma session"},
+                  open(os.path.join(ccd_dir, "local_9a9a9a9a-0000-4000-8000-000000000009.json"), "w"))
         kw = {"git_repos": [], "memory": [mem], "rulings": rul, "ado": ado,
-              "ccd": os.path.join(t, "none"), "cache_dir": os.path.join(t, "cache")}
+              "ccd": os.path.join(t, "ccd"), "cache_dir": os.path.join(t, "cache"), "figma_edits": fe}
         global SKIP_CWD, SKIP_FIRST, ROLE, RULINGS_NAME
         saved = (SKIP_CWD, SKIP_FIRST, ROLE, RULINGS_NAME)
         SKIP_CWD = SCRATCH + (os.path.join(t, "experiments") + "/",)
@@ -3263,8 +3486,47 @@ def selftest():
                                    ["Per page (Recommended)", "One value"], "Per page (Recommended)")
                             + card("19:04", "u3", "Which planted move should get its own session now?",
                                    ["Queryable planted record (Recommended)", "None"], "Queryable planted record (Recommended)"))
+        # Results that landed in Figma (s9a, then s9b after the roll). The known bad case: research on a board
+        # section, answered in chat, its edit logged after the session rolled to a new CLI id with the user's words
+        # quoted in `by`; it read "answered only in chat". The known good one: research answered in chat with no
+        # Figma edit of its own stays open.
+        def figma(ts, tid, desc):
+            return tool(ts, tid, "mcp__figma__use_figma", fileKey=FK, description=desc, code="x")
+
+        def logs(ts, tid, what):      # the call that writes a row to the figma_edits file
+            return tool(ts, tid, "Bash", command="python - <<'EOF'\nimport json\nrow = {\"what\": " + json.dumps(what)
+                        + "}\n# append row to figma-edits.json\nEOF")
+        lines9a = in_session("s9a", [
+            typed("19:50", "research the planted taxonomy columns and figure them out"),
+            say("19:51", "It comes down to two planted cases."),
+            typed("20:00", "how can you make the planted overview zone easier to digest at a quick glance? think bigger"),
+            say("20:01", "It comes down to the planted zone's three parts.")])
+        lines9b = in_session("s9b", [
+            typed("20:05", "QZ and the planted research list: not read yet. why not? research it"),
+            figma("20:06", "f1", "Item table: add coverage columns"),
+            logs("20:07", "l1", "Item table: coverage columns for QZ and the planted research list"),
+            say("20:09", "The record covers both; the label hid three planted cases."),
+            typed("20:20", "/ambition research why the planted legend is confusing and figure it out"),
+            figma("20:21", "f2", "Legend: recolour"),
+            tool("20:23", "g1", "Bash", command="grep -n legend figma-edits.json"),
+            result("20:23", "g1", '{"at": "2026-10-20T20:22Z", "what": "Planted legend recoloured"}'),
+            say("20:24", "It comes down to two planted colours."),
+            typed("20:30", "research the planted sprint lanes and figure out what is missing"),
+            figma("20:31", "f3", "Sprint lanes: widen"),
+            say("20:33", "It comes down to the planted lane widths."),
+            typed("20:40", "research what the planted footer should say and figure it out"),
+            figma("20:41", "f4", "Hero: padding"),
+            logs("20:42", "l2", "Hero frame padding 24 -> 32"),
+            say("20:43", "It comes down to the planted footer's two lines."),
+            typed("20:50", "research the planted chat-only thing and figure it out"),
+            say("20:51", "It comes down to the planted thing's history."),
+            typed("21:00", "fix the planted banner colour"),
+            logs("21:02", "l3", "Planted chat-only thing noted"),
+            typed("21:10", "research the planted banner gradient and figure it out"),
+            tool("21:11", "w9", "Edit", file_path="/Users/x/Desktop/notes/banner.md", old_string="a", new_string="b"),
+            logs("21:12", "l4", "Planted banner gradient flattened")])
         for name, ls in (("s3", lines3), ("s4", lines4), ("s5", lines5), ("s6", lines6), ("s7", lines7),
-                         ("s8", lines8)):
+                         ("s8", lines8), ("s9a", lines9a), ("s9b", lines9b)):
             with open(os.path.join(proj, name + ".jsonl"), "w", encoding="utf-8") as f:
                 f.write("\n".join(ls) + "\n")
         os.makedirs(os.path.join(proj, "s1", "subagents"))
@@ -3349,6 +3611,30 @@ def selftest():
         check("a request typed twice is open once, at its latest copy",
               len(twice) == 2 and all(e["state"] == "open" for e in twice) and len(listed) == 1
               and listed[0]["ts"] == max(e["ts"] for e in twice))
+        qz = get("QZ and the planted research list") or {}
+        check("research answered by a Figma edit its session logged after it, on its words: done, pointing at the row; "
+              "dated by the call that wrote it, though its `at` falls after the user's next request",
+              qz.get("state") == "done" and qz.get("ref") == f"figma-edit 2026-10-20T20:25Z {FK} 1:2")
+        tax = get("research the planted taxonomy columns") or {}
+        check("a Figma edit whose `by` names the desktop session counts for a request typed under its earlier CLI id",
+              tax.get("state") == "done" and (tax.get("ref") or "").startswith("figma-edit 2026-10-20T19:55Z"))
+        ov = get("how can you make the planted overview") or {}
+        check("the known bad case: an edit logged after the session rolled on, quoting the user's words: done by "
+              "the quote", ov.get("state") == "done" and (ov.get("ref") or "").startswith("figma-edit 2026-10-20T21:30Z")
+              and "quoted in a Figma edit" in (ov.get("why") or ""))
+        check("an edit on its words that the session only read (its words in a tool result, not a call's input) "
+              "stays open, though the session called use_figma", (get("/ambition research why the planted le") or {}).get(
+                  "state") == "open")
+        check("an edit on its words whose `by` names another session stays open, though this one called use_figma",
+              (get("research the planted sprint lanes") or {}).get("state") == "open")
+        check("an edit this session made in the window on another subject stays open",
+              (get("research what the planted footer") or {}).get("state") == "open")
+        check("a thread that edited a file and logged a Figma edit on its words keeps the file edit's ref",
+              (get("research the planted banner gradient") or {}).get("ref") == "edited banner.md")
+        chat = get("research the planted chat-only thing") or {}
+        check("the known good case: research answered only in chat stays open, though edits on its words came after "
+              "the user's next request (one its `by` names this session for; one its `at` dates before it, written "
+              "after it)", chat.get("state") == "open" and "only in chat" in (chat.get("why") or ""))
         cq = {e["card_id"]: e for e in entries.values() if e["source"] == "card"}
         bad = cq.get("b1") or {}
         check("a card question put off ('Later', no 'Now' beside it) is an open question under its id, and a "
@@ -3393,6 +3679,20 @@ def selftest():
                bool(puts_off_question(dict(held, question="Draft on 1234:5679 (#600's events): what releases it?"))),
                bool(puts_off_question(dict(held, question="Decision #606: can the planted list take another repo?"))))
               == (True, True, False))
+        # ledger.drafts_by_qid: before that day the drafts file held such a question, so a put-off there is an answer
+        # (known bad: unset, old draft questions a drafts file had settled were listed open again); unset, no cutoff.
+        global DRAFTS_BY_QID
+        kept_cut, DRAFTS_BY_QID = DRAFTS_BY_QID, "2029-06-01"
+        try:
+            cut = (bool(puts_off_question(dict(held, ts="2029-05-31T23:00:00Z"))), bool(puts_off_question(held)),
+                   bool(puts_off_question(dict(held, ts="2029-05-31T23:00:00Z",
+                                               question="Decision #606: can the planted list take another repo?"))))
+            DRAFTS_BY_QID = ""
+            uncut = bool(puts_off_question(dict(held, ts="2029-05-31T23:00:00Z")))
+        finally:
+            DRAFTS_BY_QID = kept_cut
+        check("with ledger.drafts_by_qid set, a put-off on a draft question asked before it is an answer and one asked "
+              "on or after it a question; unset, both are questions", cut == (False, True, False) and uncut)
         held = entries.get("card:t26:2") or {}
         q_held = "q-" + hashlib.sha1(b"card:t26:2").hexdigest()[:6]
         check("a 'Later' picked beside a 'Now' is a question put off, open under its id: the edit, the commit and "

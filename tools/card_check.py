@@ -22,15 +22,22 @@ FLAGS, each with the question it sits in:
   path           a ~/ path or a ../ path; give the path from the session's start folder, or an absolute one
   shape          not 2-4 options, or a header over 12 characters
   estimate       a cost the card calls believed, a guess, a ballpark or not measured: measure it first
+  your work?     the question asks the user to do a task ("will you label / review / recall / open ...") or
+                 its recommended option has them do it ("I'll review them"), and neither says why only they
+                 can (only you, no session can, a managed prompt, before you send): do it or research it instead
   answered?      a past card in the request ledger whose question shares at least 60% of this question's
                  content words (a lead: open it before asking)
-  settled draft  drafts_store's override or own-open rule fails a draft in the drafts file (figma.drafts or
-                 $FIGMA_DRAFTS), and the question names drafts.md or posting Figma comments (every failing
+  your words?    an answer the user typed on a card in the last 24 hours (6 or more content words, so not a
+                 pick) shares 3 or more of this question's content words: what they just said may settle it,
+                 so read it before asking. A row answered? already shows isn't shown again
+  settled draft  drafts_store's ask, override or own-open rule fails a draft in the drafts file (figma.drafts
+                 or $FIGMA_DRAFTS), and the question names drafts.md or posting Figma comments (every failing
                  draft is flagged), or shares 3 or more content words with that draft's subject, its heading
-                 before the ' — ' (only that draft): it is written to open a new thread instead of folding
-                 into an open one, or it links the user's own open comment, which the fix goes into instead.
-                 An own-open check that could not run is flagged too, never passed. The drafts check runs on
-                 every card; with no drafts file configured it has nothing to read, and the summary says so
+                 before the ' — ' (only that draft): it asks design what the record already settles, it is
+                 written to open a new thread instead of folding into an open one, or it links the user's own
+                 open comment, which the fix goes into instead. An ask or own-open check that could not run is
+                 flagged too, never passed. The drafts check runs on every card; with no drafts file
+                 configured it has nothing to read, and the summary says so
 Not here: a flag for a recommended option that is setup work (settings, hooks, gates, a delete) with no
 challenger run first; it needs a session coordinator that maps sessions to logs and lists setup paths.
 
@@ -65,7 +72,9 @@ new question on an old subject can flag. What prints is one hit per source, the 
 match strength, which need not be the one that settles the question. A log place prints one record,
 where the user typed it else its newest; an answer elsewhere in that session, or in its subagents'
 logs, doesn't print. It doesn't judge whether a question is a craft call. An id in a form bare_ids
-doesn't count (an ADO id without #, a node id in its dashed form) passes as linked.
+doesn't count (an ADO id without #, a node id in its dashed form) passes as linked. your work? reads
+only the phrasings TASKS lists, in the question and its first option; a task put another way passes.
+Words inside a link don't count toward any overlap.
 Not here either: pinning a named knowledge page above a question; it needs a knowledge index whose names
 recall can match.
 """
@@ -95,6 +104,18 @@ import pushback_score  # noqa: E402
 
 PATH = re.compile(r"(?<![\w/])(~/|\.\./)[^\s)`'\"]+")
 GUESS = re.compile(r"\b(believed|not measured|unmeasured|my guess|a guess|ballpark)\b", re.I)
+# A task put to the user instead of a decision: "will you label...", "can you recall...", or a recommended option
+# that has them do it ("I'll review them"). Known bad: a hand-labelling ask the user answered by saying no person
+# was needed, and an ask to recall an old call, which the record can answer.
+TASKS = (r"(?:hand-?)?label|review|check|test|measure|compare|rate|score|grade|tag|annotate|classify|sort"
+         r"|read|recall|remember|find|look(?:\s+(?:up|at|through))?|open|inspect|verify|go\s+through|watch")
+YOU_DO = re.compile(r"\b(?:will|can|could|would)\s+you\s+(?:please\s+)?(?:(?:also|first|just|then)\s+)?"
+                    r"(?:" + TASKS + r")\b", re.I)
+I_DO = re.compile(r"^\s*I'?ll\s+(?:(?:also|first|just|then)\s+)?(?:" + TASKS + r")\b", re.I)
+# Why only the user can: said in the question or its recommended option, it lets the task through.
+ONLY_YOU = re.compile(r"\bonly (?:you|the user|a person|a human|he|she|they)\b"
+                      r"|\bno (?:session|tool|agent) (?:can|may)\b|\bmanaged (?:policy|prompts?)\b|\bbefore you send\b",
+                      re.I)
 WORD = re.compile(r"[a-z][a-z0-9-]{2,}")
 STOP = set("""the and for that this with what should from have has are was were will would can could
 into about which when where there their them they you your his her its our not but all any each
@@ -119,7 +140,9 @@ def ledger_path():
 
 
 def words(text):
-    return {w for w in WORD.findall((text or "").lower()) if w not in STOP}
+    """Content words, links left out: a URL's host and path words (example, com, https) say nothing about what a
+    question asks, and they were the whole overlap behind two false 'your words?' leads."""
+    return {w for w in WORD.findall(URL.sub(" ", text or "").lower()) if w not in STOP}
 
 
 # ------------------------------------------------------------------------------------- lookup terms
@@ -186,7 +209,8 @@ def terms(text, k=4, vocab=None):
 # comes from recall's own fetch, in figma_client's gate lane with a deadline (child_env), so a 429 costs Figma alone.
 RECORD_SOURCES = ("logs", "ado", "transcripts", "git", "notes", "memory", "figma")
 SHOWN_SOURCES = ("logs", "ado", "notes", "transcripts", "git", "figma")
-RECORD_TOP, RECORD_SHOW, RECORD_SECONDS = 10, 3, 150
+# 300 s: a 4-question card's lookup took 158 s, past the old 150, and printed 'did not run'.
+RECORD_TOP, RECORD_SHOW, RECORD_SECONDS = 10, 3, 300
 URL = re.compile(r"https?://[^\s)>\]\"'`]+")
 
 
@@ -386,7 +410,8 @@ def past_cards(rows):
 
 def answered(question, cards, limit=3):
     """[(share, row)] for each past card whose question holds at least OVERLAP of this question's content words.
-    The past card's question is what is compared, never its answer."""
+    The past card's question is what is compared, never its answer: a pick alone ('Hold it') shares almost no
+    word with a re-ask of its question."""
     q = words(question)
     if len(q) < 4:
         return []
@@ -397,6 +422,35 @@ def answered(question, cards, limit=3):
             hits.append((shared, r))
     hits.sort(key=lambda h: (-h[0], h[1].get("ts", "")))
     return hits[:limit]
+
+
+# The user's own typed words in the last day: a new question that shares RECENT_SHARED content words with an answer
+# they typed (TYPED_WORDS or more content words, so not a pick) within RECENT_HOURS is shown beside it, since what
+# they just said may settle it. Known bad: a question asking where a demo's reset control lives, 50 minutes after
+# the user's typed answer had put present and reset in the site's demo UI; it shared 4 words with that answer and
+# 17% of its words, far under OVERLAP.
+RECENT_HOURS, RECENT_SHARED, TYPED_WORDS = 24, 3, 6
+
+
+def recent_words(question, cards, now=None, limit=2):
+    """[(shared words, row)]: the user's typed card answers from the last RECENT_HOURS sharing RECENT_SHARED or more
+    of this question's content words, most shared first, then newest."""
+    q, now = words(question), now or dt.datetime.now(dt.timezone.utc)
+    out = []
+    for r in cards:
+        try:
+            ts = dt.datetime.fromisoformat((r.get("ts") or "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        ts = ts if ts.tzinfo else ts.replace(tzinfo=dt.timezone.utc)
+        a = words(r["text"])
+        if len(a) < TYPED_WORDS or not dt.timedelta(0) <= now - ts <= dt.timedelta(hours=RECENT_HOURS):
+            continue
+        shared = q & a
+        if len(shared) >= RECENT_SHARED:
+            out.append((sorted(shared), r))
+    out.sort(key=lambda x: (len(x[0]), x[1].get("ts", "")), reverse=True)
+    return out[:limit]
 
 
 # ------------------------------------------------------------------------------------- settled drafts
@@ -419,9 +473,10 @@ def drafts_file():
 
 
 def settled_drafts():
-    """drafts_store's override and own-open problems in the drafts file: a draft written to open a new thread, or
-    one that links the user's own open comment. Each row (file, line, rule, words, title): title is the draft's
-    subject, its heading before the ' — ' that opens the status. No drafts file configured: no rows."""
+    """drafts_store's ask, override and own-open problems in the drafts file, and the drafts its ask or own-open
+    check couldn't judge: a draft asking what the record settles, one written to open a new thread, or one that
+    links the user's own open comment. Each row (file, line, rule, words, title): title is the draft's subject,
+    its heading before the ' — ' that opens the status. No drafts file configured: no rows."""
     import drafts_store
     path = drafts_store.drafts_path()
     if not path:
@@ -444,11 +499,11 @@ def draft_title(head):
 
 
 # ------------------------------------------------------------------------------------- the check
-def check(card, cards, drafts=None, found=None, reader=None):
+def check(card, cards, drafts=None, found=None, reader=None, now=None):
     """[(question number, flag, detail)]. drafts: settled_drafts or a stand-in; without one the settled-draft
     flag isn't checked. found: run_record()'s lookups, one per question. reader(question, top) -> [(flag,
     detail)] reads a question's top RECORD_TOP for what the record settles; without one (today) nothing is
-    flagged from them."""
+    flagged from them. now: the time your words? counts the last RECENT_HOURS back from (default the clock)."""
     flags, seen, failing = [], set(), {}
     for n, (q, f) in enumerate(zip(card.get("questions", []), found or []), 1):
         if reader and f.get("terms"):
@@ -481,14 +536,26 @@ def check(card, cards, drafts=None, found=None, reader=None):
             for m in GUESS.finditer(t):
                 flags.append((n, "estimate", f"'{m.group(0)}': measure it first from past work of the same kind, "
                                              f"or leave the cost off the card"))
+        first = (q.get("options") or [{}])[0]
+        asks = YOU_DO.search(q.get("question", "")) or I_DO.search(first.get("label", ""))
+        if asks and not any(ONLY_YOU.search(t) for t in texts[:2]):
+            flags.append((n, "your work?", f"'{asks.group(0).strip()}' puts a task to the user, not a decision: do it "
+                                           f"or research it in a session; ask only if no session can, and say why in "
+                                           f"the question"))
         k = len(q.get("options", []))
         if not 2 <= k <= 4:
             flags.append((n, "shape", f"{k} options"))
         if len(q.get("header", "")) > 12:
             flags.append((n, "shape", f"header {q.get('header')!r} is over 12 characters"))
-        for shared, r in answered(q.get("question", ""), cards):
+        hits = answered(q.get("question", ""), cards)
+        for shared, r in hits:
             flags.append((n, "answered?", f"{shared:.0%} shared with {r.get('ts', '')[:10]} session "
                                           f"{(r.get('session') or '?')[:8]}: {r['question'][:100]} -> {r['text'][:60]}"))
+        for shared, r in recent_words(q.get("question", ""), cards, now):
+            if not any(r is h for _, h in hits):
+                flags.append((n, "your words?", f"shares {', '.join(shared)} with what the user typed "
+                                                f"{r.get('ts', '')[:16]}Z to {(r.get('question') or '')[:80]!r}: "
+                                                f"{r['text'][:200]!r}; read it before asking"))
     return flags
 
 
@@ -672,7 +739,11 @@ def selftest():
               "text": "Archive them", "ts": "2026-10-29T01:00:00Z", "session": "aaaaaaaa-0000"},
              {"source": "card", "question": "Which footer goes on the help pages?",
               "text": "Move the footer links into the help menu bar", "ts": "2026-10-28T01:00:00Z",
-              "session": "bbbbbbbb-0000"}]
+              "session": "bbbbbbbb-0000"},
+             # A pick that shares no word with a re-ask of its question.
+             {"source": "card", "question": "Your chat draft to the vendor about the access request and the 14 tool "
+                                            "fixes is ready, and nothing holds it. What should happen to it?",
+              "text": "Hold it", "ts": "2026-11-05T07:27:00Z", "session": "cccccccc-0000"}]
     ok = {"questions": [{"question": "Which header should the demo screens share?", "header": "Header",
                          "options": [{"label": "A", "description": "reviews/drafts.md:59"},
                                      {"label": "B", "description": "https://www.figma.com/design/k/W?node-id=1-2"}]}]}
@@ -694,6 +765,9 @@ def selftest():
                              q0["options"][1]]}]}, {"estimate"}),
         ("linked id passes", {"questions": [{**q0, "question":
                               "Close [4242](https://dev.azure.com/o/p/_workitems/edit/4242/) today?"}]}, set()),
+        ("re-asked behind a pick", {"questions": [{**q0, "question":
+                                    "The chat draft to the vendor about the access request and the 14 tool fixes is "
+                                    "ready. Send it, or hold it?"}]}, {"answered?"}),
     ]
     bad = 0
     for name, card, want in cases:
@@ -701,6 +775,62 @@ def selftest():
         good = got == want
         bad += not good
         print(f"{'PASS' if good else 'FAIL'}  {name}: want {sorted(want)}, got {sorted(got)}")
+    # Your words in the last day: a question asking where a demo's reset control lives, 50 minutes after the user's
+    # typed answer put reset in the site's demo UI, sharing 4 words and 17% of its words (known bad); the same answer
+    # 3 days old, and a pick sharing 3 of its words (known good: no flag).
+    said = ("one shell with free screens i guess? but our lab and network demos had no present or reset mode, right? "
+            "they reset on refresh or something - so wouldnt those be part of the site demo ui instead of each demo's "
+            "actual ui?")
+    reset_q = {"questions": [{**q0, "question": (
+        "Reset in rebuilt walkthroughs: question 9 of the spec says the site's panel needs no reset because the demo "
+        "build has its own Reset button. The Present frame in the design and last week's working session put reset "
+        "outside the demo. Where does the Reset control live?")}]}
+    now = dt.datetime(2026, 11, 10, 4, 0, tzinfo=dt.timezone.utc)
+    row = lambda text, ts: [{"source": "card", "text": text, "ts": ts, "session": "dddddddd-0000",  # noqa: E731
+                             "question": "Which wins: one shell, fixed layouts, or fully free?"}]
+    extra_recent = 0    # the your-words and your-work cases, which the total below counts one by one
+    for name, rows, want in (("known-bad: the user's typed answer 50 minutes earlier", row(said, "2026-11-10T03:10:40Z"), 1),
+                             ("known-good: the same answer 3 days earlier", row(said, "2026-11-07T03:10:40Z"), 0),
+                             ("known-good: a pick, not typed words", row("Fixed layouts, reset in the site demo",
+                                                                         "2026-11-10T03:10:40Z"), 0)):
+        got = [f for f in check(reset_q, rows, now=now) if f[1] == "your words?"]
+        good = len(got) == want
+        bad, extra_recent = bad + (not good), extra_recent + 1
+        print(f"{'PASS' if good else 'FAIL'}  your words: {name}: want {want} flag, got {len(got)}")
+    # A cleanup card whose only overlap with a typed answer is link words (example, com, https): no lead.
+    linked_q = {"questions": [{**q0, "question": (
+        "Close these issues now? https://git.example.com/team/x/-/work_items/11 and https://www.example.com/us-en/x")}]}
+    got = [f for f in check(linked_q, row("The model endpoint is OpenAI-compatible: base_url https://models.example.com"
+                                          "/v1, model small-flash-0731, key in the env file", "2026-11-10T03:10:40Z"),
+                            now=now) if f[1] == "your words?"]
+    bad, extra_recent = bad + bool(got), extra_recent + 1
+    print(f"{'FAIL' if got else 'PASS'}  your words: known-good: words shared only through links: want 0, got {len(got)}")
+    # Your work: a hand-labelling ask the user answered by saying no person was needed, a check in the design file's
+    # version history, a recall of an old call, and a recommended option that has the user do it (known bad); an
+    # accept no session may give, a spend, a tracker write and a send the user reads first (known good).
+    ask_q = lambda text, first="Yes (Recommended)": {"questions": [{**q0, "question": text, "options": [  # noqa: E731
+        {"label": first, "description": "x"}, q0["options"][1]]}]}
+    for name, card, want in (
+            ("known-bad: hand labels", ask_q("The render check has to agree with a person on 90% of first screens. "
+                                             "Will you label about 30 first-screen screenshots on a local page?",
+                                             "I'll label them (Recommended)"), 1),
+            ("known-bad: version history", ask_q("Will you open last week's version in the design file's version "
+                                                 "history and read both stamps' avatars?"), 1),
+            ("known-bad: an old call", ask_q("Can you recall which call named the owner of the gallery integration?"), 1),
+            ("known-bad: only the option", ask_q("Which reviewer should go through the 40 board questions?",
+                                                 "I'll review them myself (Recommended)"), 1),
+            ("known-good: the user's accept", ask_q("The command that checks it needs your one-time accept on this "
+                                                    "machine, and no session may accept for you. Will you accept it?",
+                                                    "I'll run the accept (Recommended)"), 0),
+            ("known-good: a spend", ask_q("On this machine a build finishes only if a person approves its prompts. "
+                                          "Run all four arms?", "All four arms (Recommended)"), 0),
+            ("known-good: a tracker write", ask_q("Work item 4242 still names someone who has left. Retitle it?",
+                                                  "Retitle it (Recommended)"), 0),
+            ("known-good: a send the user reads", ask_q("Will you read the call message again before you send it?"), 0)):
+        got = [f for f in check(card, cards) if f[1] == "your work?"]
+        good = len(got) == want
+        bad, extra_recent = bad + (not good), extra_recent + 1
+        print(f"{'PASS' if good else 'FAIL'}  your work: {name}: want {want} flag, got {len(got)}")
     # The settled-draft flag: a card offering to post drafts the record settles, and a card about something else,
     # against a planted drafts check that fails two drafts.
     planted = lambda: [("drafts.md", 76, "override", "the post command carries --new-thread"),  # noqa: E731
@@ -732,12 +862,13 @@ def selftest():
         print(f"{'PASS' if good else 'FAIL'}  known-bad: a draft linking the user's own open comment flags a card "
               f"offering to post drafts, and a moot heading does not: want 1, got {len(got)}")
         drafts_store.structure = lambda text, name: [
-            ("drafts.md", 64, drafts_store.OWN_NOT_RUN, "the own-open check did not run (HTTPError: 429)")]
+            ("drafts.md", 64, drafts_store.ASK_NOT_RUN, "the ask check did not run (SettledNotRun: not accepted)"),
+            ("drafts.md", 68, drafts_store.OWN_NOT_RUN, "the own-open check did not run (HTTPError: 429)")]
         got = [f for f in check(post4, cards, drafts=settled_drafts) if f[1] == "settled draft"]
-        good = len(got) == 1 and "did not run" in got[0][2]
+        good = len(got) == 2 and all("did not run" in g[2] for g in got)
         bad, extra = bad + (not good), extra + 1
-        print(f"{'PASS' if good else 'FAIL'}  known-bad: an own-open check that could not run is flagged, never "
-              f"passed: want 1, got {len(got)}")
+        print(f"{'PASS' if good else 'FAIL'}  known-bad: an ask or own-open check that could not run is flagged, "
+              f"never passed: want 2, got {len(got)}")
         drafts_store.drafts_path = lambda: None
         got = settled_drafts()
         good = got == []
@@ -786,7 +917,7 @@ def selftest():
               f"checked, and a run for a card never asked is counted apart: want [1, 2, 1], got {tot}")
     rec = selftest_record()
     bad += rec[0]
-    total = len(cases) + extra + 1 + rec[1]
+    total = len(cases) + extra + extra_recent + 1 + rec[1]
     print(f"{total - bad} of {total} cases pass")
     return 1 if bad else 0
 
