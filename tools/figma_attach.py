@@ -71,15 +71,18 @@ only, so the picture goes in through the web app. figma_post.py new and reply ru
 they post a FIX note with --picture, and print the manual step only when it did not attach.
 
 HOW. Reads the comment over REST and refuses (below) before any browser opens. Then launches one
-browser for the batch (signed_in_browser.session: Playwright, Edge or Chrome per its config,
-headless, a fresh profile in the system temp dir) and opens the first comment's link. On
+browser for the batch (signed_in_browser.session: Playwright, Edge or Chrome per its config, a
+fresh profile in the system temp dir) and opens the first comment's link. Figma's CDN answers a
+headless browser 403 "Request blocked", so with config `figma.window` set the batch's one browser
+on figma.com has a window, with no stop and no ask first (window_for); unset, it runs headless and
+stops there with "bot check". On
 Figma's own login page it types the token owner's email (GET /v1/me) into the email field and
 presses the button; single sign-on, if your account has it, then finishes from the browser's saved
 identity-provider session. It types nothing else anywhere: never a password and never into an
-identity provider's page. A password field, a code or an account picker stops the batch with
-"needs sign-in", and so does a sign-in still unfinished a minute after the email; nothing more is
-typed and no window opens. With SIGNED_IN_BROWSER_HEADED=1 the browser has a window instead, and
-you finish the sign-in there, which waits --wait-user seconds (default 180) and then gives up.
+identity provider's page. Headless, a password field, a code or an account picker stops the batch
+with "needs sign-in", and so does a sign-in still unfinished a minute after the email; nothing more
+is typed. With a window (or SIGNED_IN_BROWSER_HEADED=1 on any run) you finish the sign-in there,
+which waits --wait-user seconds (default 180) and then gives up.
 Figma's "desktop app or installed fonts" prompt is closed with Escape, never Continue. Then:
 Comment actions -> Edit on that comment, a check that the editor holds the comment's text and ends
 "Before and after:", the pictures through the editor's file input,
@@ -405,6 +408,27 @@ def _has_window():
         return True
 
 
+def window_setting():
+    """figma.window in the product-os config: true, or a line saying whose go it is, when a Figma
+    batch may open one visible window. False when unset."""
+    try:
+        import kit_config
+    except ImportError:
+        return False
+    value = kit_config.get("figma", "window")
+    return value is True or (isinstance(value, str) and bool(value.strip()))
+
+
+def window_for(url, setting=None):
+    """Whether the batch's browser on `url` gets a window: only on figma.com or a host under it, and
+    only with figma.window set. Figma's CloudFront answered a headless browser 403 "Request blocked"
+    and a windowed one 200 (11-11), so a headless batch there never signs in; every other host stays
+    headless."""
+    setting = window_setting() if setting is None else setting
+    host = (urllib.parse.urlparse(url or "").hostname or "").lower()
+    return bool(setting) and (host == "figma.com" or host.endswith(".figma.com"))
+
+
 def sign_in(pg, email, wait_user, now=time.time, sleep=time.sleep, target=None, window=None):
     """Wait for the comment to be on screen, typing the email once on Figma's login page and opening
     the comment's link again once if the sign-in redirect dropped its #id. 'ready', or why not.
@@ -426,8 +450,8 @@ def sign_in(pg, email, wait_user, now=time.time, sleep=time.sleep, target=None, 
                         "was typed, and no sign-in passes it")
             return (f"bot check: {where} answered this headless browser 403 \"Request blocked\", its "
                     "CDN's refusal page; nothing was typed, and this tool doesn't disguise the browser. "
-                    "A run with a window got through on 11-11, but a window needs the person's go first "
-                    "(then SIGNED_IN_BROWSER_HEADED=1 for that run)")
+                    "A run with a window got through on 11-11: set figma.window in the product-os config "
+                    "and the batch opens one, or run with SIGNED_IN_BROWSER_HEADED=1")
         if target and not reopened and lost_comment(info.get("url"), target):
             pg.goto(target, wait_until="domcontentloaded", timeout=90000)
             reopened, start = True, now()
@@ -768,10 +792,11 @@ def _failed(pg, e, name="failed-step"):
 
 def figma_session(url, email, wait_user):
     """One signed-in browser on Figma for a whole batch (signed_in_browser.session): it opens `url`,
-    signs in by typing `email` on Figma's own login page, and is gone when the `with` ends."""
+    with a window on figma.com when window_for says so, signs in by typing `email` on Figma's own
+    login page, and is gone when the `with` ends."""
     import signed_in_browser
     return signed_in_browser.session(url, ready=lambda pg: sign_in(pg, email, wait_user, target=url),
-                                     wait_user=wait_user)
+                                     wait_user=wait_user, headed=window_for(url))
 
 
 # --- mentions ------------------------------------------------------------------------------------
@@ -1501,12 +1526,54 @@ def _selftest():
     pg = Page([blocked])
     got = sign_in(pg, "a@b.c", 600, tick, step, window=False)
     case("the 11-11 stall: Figma's 403 'Request blocked' page ends it at once as a bot check, nothing typed",
-         got.startswith("bot check") and pg.typed == [] and clock[0] < 2 and "the person's go" in got)
+         got.startswith("bot check") and pg.typed == [] and clock[0] < 2 and "figma.window" in got
+         and "go first" not in got)
     clock[0] = 0.0
     got = sign_in(Page([blocked]), "a@b.c", 600, tick, step, window=True)
     case("... with a window too, and then it offers no window", got.startswith("bot check") and "go" not in got)
     case("... and a page that only quotes the words is not one", not cdn_block(
         {"title": "Figma", "head": "ERROR: The request could not be satisfied. Request blocked."}))
+    # figma.window set: a Figma batch opens its one browser with a window, asking nobody. The stand-in
+    # session builds signed_in_browser's real launch options and asks its real launch_refusal.
+    import kit_config
+    import signed_in_browser as sib
+    seen = []
+
+    def fake_session(url, ready=None, wait_user=180, chan=None, headed=False):
+        window = sib.asked_for_window(headed)
+        opts = sib.launch_options(os.path.join(td, "never-launched"), chan="msedge", window=window)
+        seen.append((url, opts["headless"], sib.launch_refusal(opts, window)))
+        return contextlib.nullcontext()
+
+    saved = (sib.session, globals()["window_setting"], kit_config.get, os.environ.pop(sib.HEADED_ENV, None))
+    sib.session = fake_session
+    try:
+        globals()["window_setting"] = lambda: True
+        figma_session(file_url, "a@b.c", 5)
+        figma_session("https://login.microsoftonline.com/common/oauth2/authorize", "a@b.c", 5)
+        globals()["window_setting"] = lambda: False
+        figma_session(file_url, "a@b.c", 5)
+        globals()["window_setting"] = saved[1]
+        read = {}
+        for value in (True, "the person's go, 11-11", "", "  ", None, False, 1):
+            kit_config.get = lambda *keys, v=value: v
+            read[repr(value)] = window_setting()
+    finally:
+        sib.session, globals()["window_setting"], kit_config.get = saved[:3]
+        if saved[3] is not None:
+            os.environ[sib.HEADED_ENV] = saved[3]
+    case("figma.window set: a figma.com job launches its one browser headed, and the launch is let through",
+         len(seen) == 3 and seen[0] == (file_url, False, None))
+    case("... another host stays headless with it set", len(seen) == 3 and seen[1][1] is True and seen[1][2] is None)
+    case("... and with figma.window unset, figma.com stays headless (then the bot check above stops it)",
+         len(seen) == 3 and seen[2][1] is True)
+    case("figma.window counts when true or a line naming the go, not when empty, unset, false or a number",
+         read == {"True": True, repr("the person's go, 11-11"): True, "''": False, "'  '": False,
+                  "None": False, "False": False, "1": False})
+    case("only figma.com and the hosts under it get the window, not a look-alike",
+         window_for("https://figma.com/file/K", True) and window_for("https://www.figma.com/design/K", True)
+         and not window_for("https://figma.com.example.net/x", True)
+         and not window_for("https://notfigma.com/x", True) and not window_for(None, True))
     clock[0] = 0.0
     dropped = {"url": "https://www.figma.com/design/K/f?node-id=1-2", "actions": 0}
     pg = Page([login, redirect, dropped, loaded])
