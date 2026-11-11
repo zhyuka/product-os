@@ -173,9 +173,10 @@ the strength of one.
 
 ## 8. Scope: whose board is it
 
-Touch only what is yours: someone else's item gets a comment, not a state change, except pure
-hygiene such as a stale sprint on an open item. Don't restructure another person's in-flight sprint,
-even with dozens of their items at the project root; flag it.
+Touch only what is yours: someone else's item gets no state change, except pure hygiene such as a
+stale sprint on an open item. Scope it gains goes in its body while it hasn't started (the body rule
+in `references/writing-work-items.md`), and in a comment to its owner once it has. Don't restructure
+another person's in-flight sprint, even with dozens of their items at the project root; flag it.
 
 ## 9. Sign-offs
 
