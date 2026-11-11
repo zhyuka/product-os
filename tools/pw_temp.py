@@ -60,6 +60,8 @@ _env_lock = threading.Lock()
 
 
 def _alive(pid):
+    if _WIN:
+        return alive_on_windows(pid)
     try:
         os.kill(pid, 0)
         return True
@@ -67,6 +69,37 @@ def _alive(pid):
         return False
     except OSError:
         return True   # alive under another user
+
+
+STILL_ACTIVE, ACCESS_DENIED, QUERY_LIMITED_INFORMATION = 259, 5, 0x1000
+
+
+def alive_on_windows(pid, kernel32=None, last_error=None):
+    """Whether pid runs, on Windows: OpenProcess, then GetExitCodeProcess. os.kill(pid, 0) is no test
+    there: signal 0 is CTRL_C_EVENT, which Python hands to GenerateConsoleCtrlEvent, and Microsoft
+    documents that call as succeeding for a nonzero group id with nobody receiving the signal, so a
+    gone pid would read alive. Access denied means it runs under another user. signed_in_browser and
+    upkeep ask this too. kernel32 and last_error stand in for the real ones in the selftest; not yet
+    measured on Windows."""
+    import ctypes
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if kernel32 is None:
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        last_error = ctypes.get_last_error
+    handle = kernel32.OpenProcess(QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return last_error() == ACCESS_DENIED
+    try:
+        code = ctypes.c_ulong(0)
+        return bool(kernel32.GetExitCodeProcess(handle, ctypes.pointer(code))) and code.value == STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _running_args():
@@ -114,10 +147,10 @@ def reap(root=None, dry=False, now=None, alive=_alive, legacy_age=None, args=Non
 
     A folder named <prefix><pid>- goes once that pid is gone and the folder is MIN_AGE old. With
     legacy_age (seconds), a LEGACY item that old also goes, unless a running process's command line
-    names it; args stands in for ps in the selftest. Windows is skipped: os.kill(pid, 0) sends
-    CTRL_C_EVENT there, not measured."""
-    if _WIN:
-        return []
+    names it; args stands in for ps in the selftest. On Windows the pid comes from alive_on_windows,
+    and legacy items stay, since there is no ps to say what runs (not yet measured there)."""
+    if _WIN and args is None:
+        legacy_age = None
     root = root or tempfile.gettempdir()
     now = time.time() if now is None else now
     gone = []
@@ -376,6 +409,58 @@ def selftest():
               re.search(pat.replace("[[:space:]]", r"\s"), "x --dir=/t/com.google.chrome.for.testing._i/a")
               and not re.search(pat.replace("[[:space:]]", r"\s"), "x --dir=/t/comXgoogle.chrome.for.testing._i/a"), pat)
     decoy.kill()
+
+    # Windows: a pid is alive by OpenProcess and GetExitCodeProcess, never by os.kill(pid, 0), which
+    # there sends CTRL_C_EVENT. A stand-in kernel32 plays each answer Windows can give.
+    class Kernel32:
+        def __init__(self, handle, code=STILL_ACTIVE, ok=1):
+            self.handle, self.code, self.ok, self.asked, self.closed = handle, code, ok, [], []
+
+        def OpenProcess(self, access, inherit, pid):
+            self.asked.append((access, inherit, pid))
+            return self.handle
+
+        def GetExitCodeProcess(self, handle, code):
+            code.contents.value = self.code
+            return self.ok
+
+        def CloseHandle(self, handle):
+            self.closed.append(handle)
+
+    k = Kernel32(8)
+    check("windows: a running pid reads alive, asked with query-limited access, its handle closed",
+          alive_on_windows(4242, k, lambda: 0) is True and k.asked == [(0x1000, False, 4242)] and k.closed == [8],
+          (k.asked, k.closed))
+    k = Kernel32(8, code=0)
+    check("windows: a pid that exited reads gone, its handle closed",
+          alive_on_windows(4242, k, lambda: 0) is False and k.closed == [8])
+    check("windows: no handle with access denied reads alive (another user's)",
+          alive_on_windows(4242, Kernel32(0), lambda: ACCESS_DENIED) is True)
+    check("windows: no handle for any other reason (87, no such pid) reads gone",
+          alive_on_windows(4242, Kernel32(0), lambda: 87) is False)
+    check("windows: an exit code that can't be read reads gone", alive_on_windows(4242, Kernel32(8, ok=0), lambda: 0) is False)
+    k = Kernel32(8)
+    check("windows: pid 0 or no pid reads gone, nothing asked",
+          alive_on_windows(0, k, lambda: 0) is False and alive_on_windows(None, k, lambda: 0) is False and k.asked == [])
+    kills = []
+    saved = (globals()["_WIN"], globals()["alive_on_windows"], os.kill)
+    globals()["_WIN"], globals()["alive_on_windows"] = True, lambda pid: pid == me
+    os.kill = lambda *a: kills.append(a)
+    try:
+        win_alive = (_alive(me), _alive(dead))
+        with tempfile.TemporaryDirectory() as root:
+            old = time.time() - 2 * MIN_AGE
+            for n in (f"pw-run-{dead}-_a", f"pw-run-{me}-_b", "playwright-artifacts-_g"):
+                os.makedirs(os.path.join(root, n))
+                os.utime(os.path.join(root, n), (old, old))
+            win_gone = names(reap(root, legacy_age=MIN_AGE))
+    finally:
+        globals()["_WIN"], globals()["alive_on_windows"] = saved[:2]
+        os.kill = saved[2]
+    check("windows: _alive asks alive_on_windows and never os.kill", win_alive == (True, False) and kills == [],
+          (win_alive, kills))
+    check("windows: reap runs there now: a gone pid's folder goes, a live one's and a legacy item stay (no ps)",
+          win_gone == [f"pw-run-{dead}-_a"], win_gone)
 
     # Playwright's list, read from its driver; a list holding anything but names is refused.
     pw_off = playwright_disabled()

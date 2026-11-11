@@ -470,6 +470,11 @@ def scratch_projects(dry, projects, backup, now):
 
 
 def pid_alive(pid):
+    """Whether pid runs. On Windows os.kill(pid, 0) sends CTRL_C_EVENT and reads every pid alive, so
+    pw_temp.alive_on_windows asks there instead."""
+    if os.name == "nt":
+        import pw_temp
+        return pw_temp.alive_on_windows(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -1029,6 +1034,19 @@ def selftest():
         check("session-env does not run without the sessions folder, without ps, or with an unreadable pid file",
               no_dir and no_ps and bad_json and left() == set(ids) - {"old_empty", "dead"},
               f"no_dir={no_dir} no_ps={no_ps} bad_json={bad_json}")
+
+    # Windows, played here: os.name "nt" and a stand-in for pw_temp's OpenProcess check; os.kill
+    # (CTRL_C_EVENT there) must not be called. Not measured on Windows itself.
+    import pw_temp
+    kills, saved = [], (os.name, pw_temp.alive_on_windows, os.kill)
+    try:
+        os.name, os.kill = "nt", lambda *a: kills.append(a)
+        pw_temp.alive_on_windows = lambda pid: pid == 4242
+        win = (pid_alive(4242), pid_alive(77))
+    finally:
+        os.name, pw_temp.alive_on_windows, os.kill = saved
+    check("windows: pid_alive asks pw_temp's OpenProcess check, never os.kill(pid, 0)",
+          win == (True, False) and kills == [], f"{win} {kills}")
 
     print(f"selftest: {sum(results)} of {len(results)} checks passed")
     return 0 if all(results) else 1

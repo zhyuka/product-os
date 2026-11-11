@@ -95,6 +95,8 @@ LAUNCHES = 0                   # browser launches in this process; the selftests
 NEEDS_SIGN_IN = "needs sign-in"   # a reason that starts so is a person's step, not a failure
 HEADED_ENV = "SIGNED_IN_BROWSER_HEADED"
 _HEADED = False                # whether this process's last launch has a window
+_WIN = os.name == "nt"         # Windows: liveness, the serve's signals, stop and Edge's temp dir differ
+STOP_FILE = "stop"             # Windows: `stop` writes it in the serve's folder, and the serve closes itself
 # Sites whose sign-in lands on another host: Microsoft 365 moved its apps to cloud.microsoft
 # (measured 2026-11-10: outlook.office.com ends on outlook.cloud.microsoft, teams.microsoft.com on
 # teams.cloud.microsoft). Without these the page is signed in but never counts as on the site.
@@ -165,7 +167,8 @@ def headed():
 
 def asked_for_window(asked=False):
     """A launch shows a window only when the run asked: headed=True, `--headed`, or HEADED_ENV=1,
-    each set for the one launch where a person signs in."""
+    each set for a launch where a person signs in, or by a caller whose site refuses a headless
+    browser (figma_attach on figma.com, with its config's figma.window)."""
     return bool(asked) or os.environ.get(HEADED_ENV) == "1"
 
 
@@ -182,9 +185,13 @@ def root_refusal(root, synced=None):
 def _alive(pid):
     """Whether pid is a running process. A zombie (exited, its parent not yet told) is not: `stop`
     would otherwise wait out its whole limit on a serve that already closed. Neither is a record's
-    missing pid (0, which would signal this process group)."""
+    missing pid (0, which would signal this process group). On Windows os.kill(pid, 0) sends
+    CTRL_C_EVENT and reads every pid alive, so pw_temp.alive_on_windows asks instead."""
     if not isinstance(pid, int) or pid <= 0:
         return False
+    if _WIN:
+        import pw_temp
+        return pw_temp.alive_on_windows(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -418,8 +425,12 @@ class NeedsSignIn(NotReady):
 def launch_options(folder, args=(), chan=None, window=False):
     """The options the browser starts with. Headless unless the run asked for a window. A site's
     permission request (notifications, camera, location) is denied, never shown: headless denies it
-    on its own (measured), and --deny-permission-prompts does the same for a --headed launch."""
+    on its own (measured), and --deny-permission-prompts does the same for a --headed launch. The
+    browser's own temp files go in the folder too: Chromium reads MAC_CHROMIUM_TMPDIR on macOS, and
+    TMP, then TEMP, on Windows."""
     env = dict(os.environ, MAC_CHROMIUM_TMPDIR=os.path.join(folder, "t"))
+    if _WIN:
+        env.update(TMP=env["MAC_CHROMIUM_TMPDIR"], TEMP=env["MAC_CHROMIUM_TMPDIR"])
     return dict(user_data_dir=os.path.join(folder, "profile"), channel=chan or channel(),
                 headless=not window, env=env, viewport={"width": 1280, "height": 900},
                 args=["--no-first-run", "--no-default-browser-check", "--deny-permission-prompts", *args])
@@ -629,8 +640,10 @@ def serve(url, minutes=SERVE_DEFAULT, port=SERVE_PORT, wait_user=600, chan=None,
         reap()
         folder = new_folder()
         stop = {"now": False}
-        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        for sig in _stop_signals():
             signal.signal(sig, lambda *_: stop.update(now=True))
+        if _WIN:
+            _watch_stop_file(folder, stop)
         host = urllib.parse.urlparse(url).netloc
         _write_state(state_path(port), dict(rec, folder=folder))
         with sync_playwright() as p:
@@ -689,7 +702,41 @@ def serve(url, minutes=SERVE_DEFAULT, port=SERVE_PORT, wait_user=600, chan=None,
     return code
 
 
-def stop_serve(port=None, wait=90, root=None, alive=_alive):   # a loaded machine can take well over 30 s to close the browser
+def _stop_signals(mod=signal):
+    """The signals that stop a serve: SIGTERM, SIGINT and SIGHUP, and on Windows, which has no SIGHUP,
+    SIGTERM, SIGINT and SIGBREAK (Ctrl+Break)."""
+    return [getattr(mod, n) for n in ("SIGTERM", "SIGINT", "SIGHUP", "SIGBREAK") if hasattr(mod, n)]
+
+
+def _watch_stop_file(folder, stop, interval=0.5):
+    """Windows: set stop["now"] once `stop` writes STOP_FILE in the serve's folder, so the serve closes
+    the browser and deletes its profile itself. There is no SIGTERM to send there: os.kill ends the
+    one process at once, before its cleanup, and leaves its driver and Edge running."""
+    import threading
+    path = os.path.join(folder, STOP_FILE)
+
+    def watch():
+        while not stop["now"]:
+            if os.path.exists(path):
+                stop["now"] = True
+                return
+            time.sleep(interval)
+
+    t = threading.Thread(target=watch, daemon=True)
+    t.start()
+    return t
+
+
+def _kill_tree(pid):
+    """Windows: end pid and every process under it, its driver and Edge too (taskkill /T /F)."""
+    import subprocess
+    try:
+        subprocess.run(["taskkill", "/PID", str(int(pid)), "/T", "/F"], capture_output=True, timeout=60)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+
+
+def stop_serve(port=None, wait=90, root=None, alive=_alive, kill_tree=None):   # a loaded machine can take well over 30 s to close the browser
     up = [f"{s.get('port')} (pid {s.get('pid')})" for s in map(_read_state, _state_files(root))
           if s and alive(s.get("pid", 0)) and (port is None or int(s.get("port") or 0) != int(port))]
     if port is None:
@@ -703,11 +750,26 @@ def stop_serve(port=None, wait=90, root=None, alive=_alive):   # a loaded machin
         return 0
     pid, folder = st.get("pid", 0), st.get("folder", "")
     if alive(pid):
-        os.kill(pid, signal.SIGTERM)
-        for _ in range(wait):
+        asked = False
+        if _WIN and folder and os.path.isdir(folder):   # the serve closes itself (_watch_stop_file)
+            try:
+                open(os.path.join(folder, STOP_FILE), "w").close()
+                asked = True
+            except OSError:
+                pass
+        elif not _WIN:
+            os.kill(pid, signal.SIGTERM)
+            asked = True
+        for _ in range(wait if asked else 0):
             if not alive(pid):
                 break
             time.sleep(1)
+        if _WIN and alive(pid):
+            (kill_tree or _kill_tree)(pid)
+            for _ in range(10):
+                if not alive(pid):
+                    break
+                time.sleep(1)
     if alive(pid):
         print(f"DID NOT RUN: pid {pid} is still up after {wait}s.")
         return 2
@@ -957,16 +1019,73 @@ def selftest():
              free_port(9340, 5, sd, in_use=lambda p: False) == 9341)
         _write_state(state_path(9342, sd), {"pid": dead.pid, "port": 9342})
         case("a dead serve's record is taken over", claim(9342, dict(me, port=9342), sd) is None)
-        zombie = subprocess.Popen([sys.executable, "-c", "pass"])
-        for _ in range(100):
-            if subprocess.run(["ps", "-o", "stat=", "-p", str(zombie.pid)], capture_output=True,
-                              text=True).stdout.strip().startswith("Z"):
-                break
-            time.sleep(0.05)
-        case("a serve that exited but is not yet reaped (a zombie) counts as gone, so stop doesn't wait on it",
-             _alive(zombie.pid) is False)
-        zombie.wait()
+        if os.name != "nt":          # a zombie and ps are POSIX's; Windows has neither
+            zombie = subprocess.Popen([sys.executable, "-c", "pass"])
+            for _ in range(100):
+                if subprocess.run(["ps", "-o", "stat=", "-p", str(zombie.pid)], capture_output=True,
+                                  text=True).stdout.strip().startswith("Z"):
+                    break
+                time.sleep(0.05)
+            case("a serve that exited but is not yet reaped (a zombie) counts as gone, so stop doesn't wait on it",
+                 _alive(zombie.pid) is False)
+            zombie.wait()
         case("a record with no pid holds nothing", _alive(0) is False and _alive("unknown") is False)
+        # Windows, played on any machine: _WIN on, and stand-ins for pw_temp's OpenProcess check, os.kill
+        # and taskkill. Not measured on Windows itself.
+        import pw_temp, types
+        kills, trees = [], []
+        saved = (globals()["_WIN"], pw_temp.alive_on_windows, os.kill)
+        try:
+            globals()["_WIN"], os.kill = True, lambda *a: kills.append(a)
+            pw_temp.alive_on_windows = lambda pid: pid == 4242
+            win_alive = (_alive(4242), _alive(77), _alive(0))
+            win_env = launch_options(os.path.join(td, "w"), chan="msedge")["env"]
+            wf = os.path.join(td, "win-serve")
+            os.makedirs(wf)
+            _write_state(state_path(9350, sd), {"pid": 4242, "port": 9350, "folder": wf})
+            asked = []
+
+            def closes_itself(pid):          # up until the stop file lands, as _watch_stop_file makes it
+                up = not os.path.exists(os.path.join(wf, STOP_FILE))
+                asked.append(up)
+                return up
+            win_stop = stop_serve(9350, wait=3, root=sd, alive=closes_itself, kill_tree=trees.append)
+            trees_then = list(trees)
+            stuck = {"up": True}
+            _write_state(state_path(9351, sd), {"pid": 4243, "port": 9351, "folder": ""})
+            win_kill = stop_serve(9351, wait=1, root=sd, alive=lambda pid: stuck["up"],
+                                  kill_tree=lambda pid: (trees.append(pid), stuck.update(up=False)))
+        finally:
+            globals()["_WIN"], pw_temp.alive_on_windows, os.kill = saved
+        case("windows: _alive asks pw_temp's OpenProcess check, never os.kill(pid, 0), which sends CTRL_C_EVENT there",
+             win_alive == (True, False, False) and kills == [])
+        case("windows: the browser's temp files go in the run's folder through TMP and TEMP too",
+             win_env.get("TMP") == win_env.get("TEMP") == win_env.get("MAC_CHROMIUM_TMPDIR") == os.path.join(td, "w", "t"))
+        if os.name != "nt":
+            mac_env = launch_options(os.path.join(td, "w"), chan="msedge")["env"]
+            case("... and here TMP and TEMP are left as they are",
+                 (mac_env.get("TMP"), mac_env.get("TEMP")) == (os.environ.get("TMP"), os.environ.get("TEMP")))
+        case("windows: stop writes the stop file, the serve closes itself, and nothing is killed",
+             win_stop == 0 and asked[0] is True and asked[-1] is False and trees_then == [] and kills == []
+             and not os.path.exists(wf)
+             and record_for(9350, sd) == (None, None))
+        case("windows: a serve that doesn't close (or has no folder) is ended with its tree, taskkill /T",
+             win_kill == 0 and trees == [4243] and record_for(9351, sd) == (None, None))
+        case("windows has no SIGHUP: a serve stops on SIGTERM, SIGINT and SIGBREAK there",
+             _stop_signals(types.SimpleNamespace(SIGTERM=15, SIGINT=2, SIGBREAK=21)) == [15, 2, 21])
+        if os.name != "nt":
+            case("... and here on SIGTERM, SIGINT and SIGHUP, as before",
+                 _stop_signals() == [signal.SIGTERM, signal.SIGINT, signal.SIGHUP])
+        wf2 = os.path.join(td, "watch")
+        os.makedirs(wf2)
+        flag = {"now": False}
+        watcher = _watch_stop_file(wf2, flag, interval=0.02)
+        time.sleep(0.1)
+        before = flag["now"]
+        open(os.path.join(wf2, STOP_FILE), "w").close()
+        watcher.join(2)
+        case("windows: the serve's watcher sets stop once the stop file lands, and not before",
+             before is False and flag["now"] is True and not watcher.is_alive())
         # The race: the other serve's record lands between this run's check and its create.
         _write_state(state_path(9345, sd), {"pid": os.getpid(), "port": 9345})
         seen = []
