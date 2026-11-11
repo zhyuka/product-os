@@ -323,9 +323,19 @@ def paragraphs(text):
     return [[ln.strip() for ln in p.strip().split("\n")] for p in re.split(r"\n\s*\n", text.strip()) if p.strip()]
 
 
+def cdn_block(info):
+    """True on the CDN's refusal page: Figma's CloudFront answers a headless browser with 403 "The
+    request could not be satisfied. Request blocked." (measured 2026-11-11: 403 headless, the login
+    page with a window). No sign-in gets past it, so waiting on it only runs out the timer."""
+    return bool(re.match(r"\s*ERROR: The request could not be satisfied", info.get("title") or "")
+                and re.search(r"Request blocked", info.get("head") or "", re.I))
+
+
 def classify(info):
     """What the tab is showing, from _probe's dict: ready, figma-email, needs-user or wait."""
     host = urllib.parse.urlparse(info.get("url") or "").netloc
+    if cdn_block(info):
+        return "blocked"
     if info.get("actions") and host.endswith("figma.com"):
         return "ready"
     if info.get("password") or info.get("code") or info.get("picker") or info.get("consent"):
@@ -349,6 +359,8 @@ PROBE = """() => {
     picker: /pick an account/i.test(body),
     consent: /permissions requested|accept/i.test(body) && !/figma\\.com$/.test(location.host),
     fonts: /desktop app or installed fonts/i.test(body),
+    title: document.title,
+    head: body.slice(0, 300),
   };
 }"""
 
@@ -407,6 +419,15 @@ def sign_in(pg, email, wait_user, now=time.time, sleep=time.sleep, target=None, 
             pg.keyboard.press("Escape")
         if state == "ready":
             return "ready"
+        if state == "blocked":       # signed_in_browser.BOT_CHECK starts the reason
+            where = urllib.parse.urlparse(info.get('url') or '').netloc
+            if window:
+                return (f"bot check: {where} answered 403 \"Request blocked\" even with a window; nothing "
+                        "was typed, and no sign-in passes it")
+            return (f"bot check: {where} answered this headless browser 403 \"Request blocked\", its "
+                    "CDN's refusal page; nothing was typed, and this tool doesn't disguise the browser. "
+                    "A run with a window got through on 11-11, but a window needs the person's go first "
+                    "(then SIGNED_IN_BROWSER_HEADED=1 for that run)")
         if target and not reopened and lost_comment(info.get("url"), target):
             pg.goto(target, wait_until="domcontentloaded", timeout=90000)
             reopened, start = True, now()
@@ -1472,6 +1493,20 @@ def _selftest():
     got = sign_in(pg, "a@b.c", 600, tick, step, window=False)
     case("headless, a password page ends it at once with 'needs sign-in', typed into never",
          got.startswith("needs sign-in") and pg.typed == ["a@b.c"] and clock[0] < 5)
+    clock[0] = 0.0
+    blocked = {"url": "https://www.figma.com/design/K/f?node-id=12130-9887#1980461740",
+               "title": "ERROR: The request could not be satisfied",
+               "head": "403 ERROR The request could not be satisfied. Request blocked. We can't connect to the "
+                       "server for this app or website at this time."}
+    pg = Page([blocked])
+    got = sign_in(pg, "a@b.c", 600, tick, step, window=False)
+    case("the 11-11 stall: Figma's 403 'Request blocked' page ends it at once as a bot check, nothing typed",
+         got.startswith("bot check") and pg.typed == [] and clock[0] < 2 and "the person's go" in got)
+    clock[0] = 0.0
+    got = sign_in(Page([blocked]), "a@b.c", 600, tick, step, window=True)
+    case("... with a window too, and then it offers no window", got.startswith("bot check") and "go" not in got)
+    case("... and a page that only quotes the words is not one", not cdn_block(
+        {"title": "Figma", "head": "ERROR: The request could not be satisfied. Request blocked."}))
     clock[0] = 0.0
     dropped = {"url": "https://www.figma.com/design/K/f?node-id=1-2", "actions": 0}
     pg = Page([login, redirect, dropped, loaded])
