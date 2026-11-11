@@ -35,6 +35,8 @@ CONFIG (product-os config, all optional):
     signed_in_browser.channel            "msedge" (default) or "chrome": the installed browser to drive
     signed_in_browser.sign_in_buttons    {"<host>": "<regex>"}: a site's own landing page in front of
                                          single sign-on, and the name of its one sign-in button
+    signed_in_browser.account            the user's own address: the one tile it may click on
+                                         Microsoft's account picker (unset: it clicks none)
     signed_in_browser.no_profile_under   folders a profile must never sit under, because they are
                                          synced to a cloud drive or backed up (default ~/Desktop and
                                          ~/Documents)
@@ -60,6 +62,10 @@ RULES IT KEEPS
     the others alone. It refuses a port something else already listens on, naming a free one.
   - On a site with a landing page of its own (config sign_in_buttons), `sso_ready` clicks that
     page's one sign-in button so single sign-on starts; a click on a button, never a field.
+  - On Microsoft's account picker `sso_ready` clicks the user's own tile (config account), once a
+    run, and only on login.microsoftonline.com or login.microsoft.com, with no password or code field
+    on the page, when the picker lists exactly one account and it is that address. Never "Use
+    another account". Whatever comes after the click ends the run with NEEDS SIGN-IN.
 
 EXIT 0 done, 1 refused, 2 did not run (no Playwright or browser, single sign-on did not finish),
 3 needs sign-in (a person has to act; nothing was typed and no window opened).
@@ -104,6 +110,14 @@ def _cfg(key, default):
 
 def channel():
     return _cfg("channel", "msedge")
+
+
+def account():
+    """The user's own address (config signed_in_browser.account), for Microsoft's account picker;
+    '' when unset, and then no tile is ever clicked."""
+    a = _cfg("account", "")
+    a = a.strip().lower() if isinstance(a, str) else ""
+    return a if re.fullmatch(r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}", a) else ""
 
 
 def sign_in_buttons():
@@ -166,12 +180,28 @@ def root_refusal(root, synced=None):
 
 
 def _alive(pid):
+    """Whether pid is a running process. A zombie (exited, its parent not yet told) is not: `stop`
+    would otherwise wait out its whole limit on a serve that already closed. Neither is a record's
+    missing pid (0, which would signal this process group)."""
+    if not isinstance(pid, int) or pid <= 0:
+        return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if os.name != "nt":
+        try:
+            import subprocess
+            st = subprocess.run(["ps", "-o", "stat=", "-p", str(int(pid))], capture_output=True,
+                                text=True, timeout=10).stdout.strip()
+            if st.startswith("Z"):
+                return False
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
     return True
 
 
@@ -230,6 +260,7 @@ def sso_ready(host):
       text: document.body ? document.body.innerText.slice(0, 3000) : ''})"""
 
     pattern, clicks = sign_in_buttons().get(host), {"n": 0}
+    mine, picked = account(), {"n": 0}
 
     def ready(page):
         try:
@@ -239,8 +270,52 @@ def sso_ready(host):
         state = classify(info, host)
         if state == "ready" and pattern:
             return press_sign_in(page, pattern, clicks)
+        if state == "needs-user" and pick_account(page, mine, picked):
+            return "wait"
         return state
     return ready
+
+
+# Microsoft's account picker ("Pick an account"). Each account is a tile button whose data-test-id
+# is its address; "Use another account" (#otherTile) and a tile's menu (<address>-menu-dots) are not.
+PICKER_HOSTS = ("login.microsoftonline.com", "login.microsoft.com")
+TILES_JS = """() => ({
+  picker: /pick an account/i.test(document.body ? document.body.innerText : ''),
+  password: !!document.querySelector('input[type=password]'),
+  code: !!document.querySelector('input[autocomplete="one-time-code"],input[name=otc]'),
+  tiles: [...document.querySelectorAll('#tilesHolder [role=button][data-test-id]')]
+           .map(e => e.getAttribute('data-test-id') || '')
+           .filter(t => t.includes('@') && !t.endsWith('-menu-dots'))})"""
+
+
+def tile_to_pick(info, url, mine):
+    """The one tile this run may click on Microsoft's account picker, or None. Only on Microsoft's own
+    sign-in host, with no password or code field, when the picker shows exactly one account and it is
+    the user's own address. Two accounts, another address, or no address configured: None."""
+    if not mine or urllib.parse.urlparse(url or "").netloc not in PICKER_HOSTS:
+        return None
+    if not info.get("picker") or info.get("password") or info.get("code"):
+        return None
+    tiles = [str(t).strip().lower() for t in info.get("tiles") or []]
+    return tiles[0] if tiles == [mine] else None
+
+
+def pick_account(page, mine, picked):
+    """Click the user's own tile on Microsoft's account picker when tile_to_pick allows it, at most
+    once a run, so whatever comes after the click (a password, MFA, consent, the picker again) ends
+    the run with NEEDS SIGN-IN. A click on a tile, never a field. True when it clicked."""
+    if picked["n"] or not mine:
+        return False
+    try:
+        addr = tile_to_pick(page.evaluate(TILES_JS), page.url, mine)
+        if not addr:
+            return False
+        picked["n"] += 1
+        page.locator(f'#tilesHolder [role=button][data-test-id="{addr}"]').click(timeout=10000)
+    except Exception:
+        return False
+    print("  account picker: clicked the one account tile, the configured address; nothing typed", flush=True)
+    return True
 
 
 def press_sign_in(page, pattern, clicks, most=2):
@@ -286,15 +361,18 @@ def _page_host(page):
         return "an unknown page"
 
 
-def wait_ready(page, ready, wait_user, settle=90, now=time.time, sleep=time.sleep, window=None):
+def wait_ready(page, ready, wait_user, settle=90, now=time.time, sleep=time.sleep, window=None,
+               stopped=lambda: False):
     """Poll ready(page) until 'ready'. 'ready', or why not.
     With no window (the default; `window` None reads this process's launch): on 'needs-user' it
     returns NEEDS_SIGN_IN at once, and after `settle` seconds of waiting it gives up, since nobody
     can see the page. With a window, after `settle` seconds or at once on 'needs-user', the window is
-    the user's for `wait_user` seconds."""
+    the user's for `wait_user` seconds. 'stopped' as soon as stopped() is true (serve's stop)."""
     window = headed() if window is None else window
     start, user_since = now(), None
     while True:
+        if stopped():
+            return "stopped"
         state = ready(page)
         if state == "ready":
             return "ready"
@@ -575,8 +653,11 @@ def serve(url, minutes=SERVE_DEFAULT, port=SERVE_PORT, wait_user=600, chan=None,
                 return 2
             deadline = time.time() + minutes * 60
             _write_state(state_path(port), dict(rec, folder=folder, deadline=deadline))
-            state = wait_ready(pg, sso_ready(host), wait_user, window=window)
-            if state != "ready" and not window:
+            state = wait_ready(pg, sso_ready(host), wait_user, window=window, stopped=lambda: stop["now"] or closed["yes"])
+            if state == "stopped":
+                why = "stopped" if stop["now"] else "the browser closed"
+                why += " while it waited for single sign-on"
+            elif state != "ready" and not window:
                 code = 3 if state.startswith(NEEDS_SIGN_IN) else 2
                 detail = state[len(NEEDS_SIGN_IN) + 2:] if code == 3 else state
                 print(f"{'NEEDS SIGN-IN' if code == 3 else 'DID NOT RUN'}: {detail}.", flush=True)
@@ -759,6 +840,58 @@ def selftest():
         case("a button that is not the site's own sign-in button is not clicked",
              press_sign_in(Landing([True]), r"^Log in$", {"n": 0}) == "ready")
 
+        # Microsoft's account picker: the user's own tile, only under every guard, once a run.
+        mine_addr = "pat@example.com"
+        picker_url = "https://login.microsoftonline.com/t/oauth2/v2.0/authorize"
+        one = {"picker": True, "tiles": [mine_addr]}
+        case("the picker lists one account, the user's own: that tile", tile_to_pick(one, picker_url, mine_addr) == mine_addr)
+        case("... on login.microsoft.com too", tile_to_pick(one, "https://login.microsoft.com/c/x", mine_addr) == mine_addr)
+        case("two accounts (the user's and another tenant's): no tile, the user picks", tile_to_pick(
+            {"picker": True, "tiles": [mine_addr, "pat@dev.example.com"]}, picker_url, mine_addr) is None)
+        case("one account that is not the user's: no tile",
+             tile_to_pick({"picker": True, "tiles": ["sam@example.com"]}, picker_url, mine_addr) is None)
+        case("a password field on the page: no tile", tile_to_pick(dict(one, password=True), picker_url, mine_addr) is None)
+        case("a code field on the page: no tile", tile_to_pick(dict(one, code=True), picker_url, mine_addr) is None)
+        case("a look-alike of Microsoft's host: no tile",
+             tile_to_pick(one, "https://login.microsoftonline.com.evil.example/x", mine_addr) is None)
+        case("a page that is not the picker: no tile", tile_to_pick(dict(one, picker=False), picker_url, mine_addr) is None)
+        case("only 'Use another account' left: no tile", tile_to_pick({"picker": True, "tiles": []}, picker_url, mine_addr) is None)
+        case("no address configured (the default): no tile", tile_to_pick(one, picker_url, "") is None and account() == "")
+
+        class PickerPage:
+            url = picker_url
+
+            def __init__(self):
+                self.clicked = []
+
+            def evaluate(self, js):
+                return dict(one, url=picker_url, text="Pick an account")
+
+            def locator(self, sel):
+                page = self
+
+                class L:
+                    def click(s, timeout=None):
+                        page.clicked.append(sel)
+                return L()
+        pp, once = PickerPage(), {"n": 0}
+        got = [pick_account(pp, mine_addr, once), pick_account(pp, mine_addr, once)]
+        case("the tile is clicked once a run, by its own address; a second picker is not clicked",
+             got == [True, False] and pp.clicked == [f'#tilesHolder [role=button][data-test-id="{mine_addr}"]'])
+        real_account, pp = globals()["account"], PickerPage()
+        globals()["account"] = lambda: mine_addr
+        try:
+            clock[0] = 0.0
+            got = wait_ready(pp, sso_ready(site), 600, now=tick, sleep=sleep, window=False)
+        finally:
+            globals()["account"] = real_account
+        case("anything after the click (here the picker again) ends the run with NEEDS SIGN-IN",
+             got.startswith(NEEDS_SIGN_IN) and len(pp.clicked) == 1)
+        clock[0] = 0.0
+        case("serve's stop ends the wait for sign-in at once, even with a window",
+             wait_ready(None, lambda _: "wait", 600, now=tick, sleep=sleep, window=True, stopped=lambda: True)
+             == "stopped" and clock[0] == 0)
+
         # No window unless the run asked for one: a fake Playwright records what each launch asked for.
         class FakePlaywright:
             def __init__(self):
@@ -824,6 +957,16 @@ def selftest():
              free_port(9340, 5, sd, in_use=lambda p: False) == 9341)
         _write_state(state_path(9342, sd), {"pid": dead.pid, "port": 9342})
         case("a dead serve's record is taken over", claim(9342, dict(me, port=9342), sd) is None)
+        zombie = subprocess.Popen([sys.executable, "-c", "pass"])
+        for _ in range(100):
+            if subprocess.run(["ps", "-o", "stat=", "-p", str(zombie.pid)], capture_output=True,
+                              text=True).stdout.strip().startswith("Z"):
+                break
+            time.sleep(0.05)
+        case("a serve that exited but is not yet reaped (a zombie) counts as gone, so stop doesn't wait on it",
+             _alive(zombie.pid) is False)
+        zombie.wait()
+        case("a record with no pid holds nothing", _alive(0) is False and _alive("unknown") is False)
         # The race: the other serve's record lands between this run's check and its create.
         _write_state(state_path(9345, sd), {"pid": os.getpid(), "port": 9345})
         seen = []
