@@ -27,7 +27,7 @@ It needs Python 3.9 or later. In PowerShell, where the `product-os` launcher doe
 Report the table as printed, with every result that isn't `pass` and its detail. Only `pass` passes:
 
 - `fail`: the check ran and found a problem. Its last lines of output follow the table.
-- `unproven`: the check has no current record that it fails its planted bad cases and passes its good ones, so it doesn't count yet. "Not accepted on this machine" means it didn't run at all: show the user its command from `.claude/product-os-checks.json`, and only if they say yes, run `"${CLAUDE_PLUGIN_ROOT}/bin/product-os" accept <name>`, which proves it and lets it run here. Claude Code asks them too.
+- `unproven`: the check has no current record that it fails its planted bad cases and passes its good ones, so it doesn't count yet. "Not accepted on this machine" means it didn't run at all: show the user its command from `.claude/product-os-checks.json` and give them the line to run in a terminal of their own, `product-os accept <name>`, which proves it and lets it run here. Accepting is their step, never yours, even on a yes, and product-os refuses it from an agent's shell.
 - `removed`: the change took away a check, or one of its cases, that the base branch has.
 - `skip`, in folder mode: the check had nothing to read. A skip is not a pass.
 

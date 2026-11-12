@@ -67,7 +67,7 @@ CLOCK_NS = 20_000_000
 # is left out, since every cd changes it: the tests that read it set it themselves.
 ENV_KEYS = ("PATH", "PATHEXT", "HOME", "USERPROFILE", "TMPDIR", "TEMP", "TMP", "REQUIRE_SHELLS",
             "ANTHROPIC_IDENTITY_TOKEN_FILE", "CLAUDE_PROJECT_DIR", "CLAUDE_CONFIG_DIR", "CLAUDE_PLUGIN_",
-            "CLAUDE_CODE_GIT_BASH_PATH", "CLAUDE_CODE_FEDERATION", "PRODUCT_OS_")
+            "CLAUDE_CODE_GIT_BASH_PATH", "CLAUDE_CODE_FEDERATION", "CLAUDE_CODE_CHILD_SESSION", "PRODUCT_OS_")
 CHANGED = "changed while its tests ran"  # a value no later check returns
 
 

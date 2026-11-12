@@ -118,7 +118,8 @@ class PluginFilesTest(unittest.TestCase):
     def test_pre_tool_use_matches_every_tool_the_hook_handles(self):
         [group] = load("hooks/hooks.json")["hooks"]["PreToolUse"]
         self.assertEqual(set(group["matcher"].split("|")),
-                         {"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash", "PowerShell", "Agent"})
+                         {"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash", "PowerShell", "Monitor",
+                          "Agent"})
 
     def test_each_skill_has_a_description(self):
         skills = sorted((ROOT / "skills").glob("*/SKILL.md"))

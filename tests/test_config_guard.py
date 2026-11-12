@@ -1,7 +1,9 @@
 """Any agent that writes .claude/product-os-checks.json could turn the checks off.
 
 The PreToolUse hook answers "ask" for such a call, whoever makes it, so the
-user decides. Reads of the file, and writes elsewhere, are left alone.
+user decides. Reads of the file, and writes elsewhere, are left alone. An
+agent's accept, by command or by writing an accepted file, is denied, since
+accepting is the person's step, even on their yes.
 """
 import json
 import os
@@ -213,31 +215,52 @@ class ConfigGuardTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIsNone(self.answer("Bash", {"command": command}))
 
-    def test_writes_to_the_accepted_checks_ask(self):
-        # Only an accepted check runs on this machine, so a hand-written entry could run anything.
+    def test_an_agents_write_to_the_accepted_checks_is_refused(self):
+        # Only an accepted check runs on this machine, so a hand-written entry could run anything,
+        # and writing it is accepting, which is the person's step.
         accepted = self.user / "product-os-checks-accepted.json"
         for tool, tool_input in (("Write", {"file_path": str(accepted)}),
                                  ("Bash", {"command": f"echo '{{}}' > '{accepted}'"}),
+                                 ("Monitor", {"command": f"echo '{{}}' > '{accepted}'"}),
                                  ("Bash", {"command": f"rm '{accepted}'"})):
             with self.subTest(tool=tool, tool_input=tool_input):
                 output = self.answer(tool, tool_input)
-                self.assertEqual(decision(output), "ask")
-                self.assertIn("the checks you accepted",
-                              output["hookSpecificOutput"]["permissionDecisionReason"])
+                self.assertEqual(decision(output), "deny")
+                reason = output["hookSpecificOutput"]["permissionDecisionReason"]
+                self.assertIn("the checks you accepted", reason)
+                self.assertIn("never an agent's, even on their yes", reason)
 
-    def test_accepting_checks_or_running_every_listed_one_asks(self):
-        # Neither writes a file a guard sees: product-os writes the accepted file itself.
-        for command in ("product-os accept", "product-os accept no-print --project shop",
-                        "python3 -m product_os accept", "cd shop && product-os accept",
-                        "FOO=1 ~/.local/bin/product-os accept", "product-os check --run-listed",
-                        "python -m product_os check --prove --run-listed --base origin/main",
-                        "product-os check | product-os accept", "product-os 'accept"):
+    def test_an_agents_accept_is_refused_and_running_every_listed_check_asks(self):
+        # Neither writes a file a guard sees: product-os writes the accepted file itself. Accepting
+        # is the person's step, even on their yes, so an agent's is refused, in every form.
+        accepts = ("product-os accept", "product-os accept no-print --project shop",
+                   "python3 -m product_os accept", "cd shop && product-os accept",
+                   "FOO=1 ~/.local/bin/product-os accept", "product-os check | product-os accept",
+                   "product-os 'accept", "python -m product_os.__main__ accept",
+                   "bash -c 'product-os accept'", "zsh -lc \"cd shop && product-os accept no-print\"",
+                   "eval \"product-os accept\"", "sh -c \"bash -c 'product-os accept'\"",
+                   "pwsh -NoProfile -Command product-os accept", "cmd /c product-os accept",
+                   "env -u CLAUDE_CODE_CHILD_SESSION product-os accept",
+                   "product-os check --run-listed && product-os accept")
+        for tool in ("Bash", "PowerShell", "Monitor"):
+            for command in accepts:
+                with self.subTest(tool=tool, command=command):
+                    output = self.answer(tool, {"command": command})
+                    self.assertEqual(decision(output), "deny")
+                    reason = output["hookSpecificOutput"]["permissionDecisionReason"]
+                    self.assertIn(f"refused this {tool} call", reason)
+                    self.assertIn("never an agent's, even on their yes", reason)
+                    self.assertIn(".claude/product-os-checks.json", reason)
+        for command in ("product-os check --run-listed", "bash -c 'product-os check --run-listed'",
+                        "python -m product_os check --prove --run-listed --base origin/main"):
             with self.subTest(command=command):
                 output = self.answer("Bash", {"command": command})
                 self.assertEqual(decision(output), "ask")
                 self.assertIn("needs your OK", output["hookSpecificOutput"]["permissionDecisionReason"])
         for command in ("product-os check", "product-os check --prove --base origin/main",
-                        "product-os prove", "grep accept README.md", "product-os design states"):
+                        "product-os prove", "grep accept README.md", "product-os design states",
+                        "echo 'product-os accept'", "git commit -m 'product-os accept refuses agents'",
+                        "bash -c 'product-os check'", "bash scripts/accept.sh"):
             with self.subTest(command=command):
                 self.assertIsNone(self.answer("Bash", {"command": command}))
 
@@ -245,24 +268,32 @@ class ConfigGuardTest(unittest.TestCase):
         # A command in your own settings runs without being accepted, and the accepted file decides
         # which of a project's commands run. kit_config.py keeps both in ~/.claude.
         with mock.patch.dict(os.environ, home(self.user.parent)):
-            for name, said in (("product-os.json", "your own product-os settings"),
-                               ("product-os-commands-accepted.json", "the project commands you accepted")):
+            # Your own settings ask; writing the accepted commands is accepting, so it is refused.
+            for name, said, decided in (("product-os.json", "your own product-os settings", "ask"),
+                                        ("product-os-commands-accepted.json",
+                                         "the project commands you accepted", "deny")):
                 path = self.user / name
                 for tool, tool_input in (("Write", {"file_path": str(path)}),
                                          ("Bash", {"command": f"echo '{{}}' > ~/.claude/{name}"}),
                                          ("Bash", {"command": f"rm '{path}'"})):
                     with self.subTest(tool=tool, tool_input=tool_input):
                         output = self.answer(tool, tool_input)
-                        self.assertEqual(decision(output), "ask")
+                        self.assertEqual(decision(output), decided)
                         self.assertIn(said, output["hookSpecificOutput"]["permissionDecisionReason"])
             self.assertIsNone(self.answer("Read", {"file_path": str(self.user / "product-os.json")}))
         for command in ("product-os kit_config accept retro.propose_cmd", "python3 tools/kit_config.py accept --all",
-                        "python \"${CLAUDE_PLUGIN_ROOT}/tools/kit_config.py\" accept triage.sources"):
+                        "python \"${CLAUDE_PLUGIN_ROOT}/tools/kit_config.py\" accept triage.sources",
+                        "product-os kit_config --project . accept --all",
+                        "python3 tools/kit_config.py accept --project shop app.build_cmd",
+                        "bash -c 'product-os kit_config accept --all'"):
             with self.subTest(command=command):
                 output = self.answer("Bash", {"command": command})
-                self.assertEqual(decision(output), "ask")
-                self.assertIn("product-os.json", output["hookSpecificOutput"]["permissionDecisionReason"])
-        for command in ("product-os kit_config", "python3 tools/kit_config.py --selftest"):
+                self.assertEqual(decision(output), "deny")
+                reason = output["hookSpecificOutput"]["permissionDecisionReason"]
+                self.assertIn("product-os.json", reason)
+                self.assertIn("never an agent's, even on their yes", reason)
+        for command in ("product-os kit_config", "python3 tools/kit_config.py --selftest",
+                        "product-os kit_config --project ."):
             with self.subTest(command=command):
                 self.assertIsNone(self.answer("Bash", {"command": command}))
 

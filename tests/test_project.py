@@ -55,9 +55,14 @@ class ProjectTest(unittest.TestCase):
     def prove(self, *names, **kw):
         return project.prove_project(self.root, names, self.env, **kw)
 
-    def cli(self, *args):
+    def cli(self, *args, agent=False):
+        """Run product-os as a person in their own terminal, or with agent as an agent's command,
+        whatever shell runs the tests."""
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.dict(os.environ, self.env), redirect_stdout(out), redirect_stderr(err):
+            os.environ.pop(hooks.AGENT_SHELL, None)
+            if agent:
+                os.environ[hooks.AGENT_SHELL] = "1"
             code = main([*args, "--project", str(self.root)])
         return code, out.getvalue(), err.getvalue()
 
@@ -252,6 +257,23 @@ class LocalTest(ProjectTest):
         self.assertTrue(self.ran())
         self.plant()
         self.assertEqual(self.cli("check")[0], 1)
+
+    def test_an_agents_accept_is_refused_and_a_persons_goes_through(self):
+        # Accepting is the person's step, even on their yes, so from an agent's shell nothing counts.
+        code, out, err = self.cli("accept", "no-print", agent=True)
+        self.assertEqual(code, 2, out + err)
+        self.assertIn("never an agent's, even on their yes", err)
+        self.assertIn("in a terminal they opened themselves", err)
+        self.assertIn(": product-os accept no-print", err)
+        self.assertNotIn("proven and accepted", out)
+        self.assertFalse((self.user / "product-os-checks-accepted.json").exists())
+        self.assertFalse(self.ran(), "the agent's accept ran the check's cases")
+        code, out, _ = self.cli("check")
+        self.assertEqual(code, 1)
+        self.assertIn("not accepted on this machine, so it didn't run", out)
+        self.assertIn("the person's step, never an agent's", out)
+        self.assertEqual(self.cli("accept", "no-print")[0], 0)
+        self.assertEqual(self.cli("check")[0], 0)
 
     def test_an_accepted_check_that_changes_stops_running(self):
         self.assertEqual(self.cli("accept")[0], 0)

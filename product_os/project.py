@@ -486,8 +486,8 @@ def stale(check, root, proof, accepted=False):
     again = f"Run product-os {fix} {check.name}"
     if not isinstance(proof, dict):
         if accepted:
-            return (f"not accepted on this machine, so it didn't run. Read its command, then run "
-                    f"product-os accept {check.name}")
+            return (f"not accepted on this machine, so it didn't run. Accepting it is "
+                    f"{hooks.PERSON}: read its command, then run product-os accept {check.name}")
         return f"no proof. {again}"
     if proof.get("check") != _definition(check, root):
         return f"the check changed since it was {done}, so it didn't run. {again}"

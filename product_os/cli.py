@@ -130,9 +130,9 @@ def run_project(root, base, reprove, run_listed=False):
         if r.output:
             print(f"\n--- {r.check}: the last lines of its output\n{r.output}")
     if any(r.detail.startswith("not accepted on this machine") for r in failed):
-        print(f"\nA check that isn't accepted didn't run. Read its command in "
-              f"{project.hooks.CONFIG.as_posix()}, then accept it with product-os accept. "
-              "An agent asks the user first.")
+        print(f"\nA check that isn't accepted didn't run. Accepting it is {project.hooks.PERSON}: "
+              f"read its command in {project.hooks.CONFIG.as_posix()}, then run product-os accept "
+              "in a terminal of your own.")
     if failed:
         print(f"\n{project.BLOCKED}")
     return 1 if failed else 0
@@ -172,8 +172,8 @@ def run_prove(root, names, base, check_file=None, accept=False):
     if accept:
         print(f"  Accepted on this machine: {project.accepted_path(root, os.environ)[0]}.")
     elif proven:
-        print("  On this machine a check runs only once you accept it: read its command, then run "
-              "product-os accept.")
+        print(f"  On this machine a check runs only once it is accepted. That's {project.hooks.PERSON}: "
+              "read its command, then run product-os accept in a terminal of your own.")
     if check_file and proven:
         print(f"  A proven entry counts once it is listed in {project.hooks.CONFIG.as_posix()} "
               "unchanged.")
@@ -448,6 +448,13 @@ def main(argv=None):
     if args.command == "check":
         return run_project(args.project, args.base, args.prove, args.run_listed)
     if args.command == "accept":
+        if project.hooks.agent_shell(os.environ):
+            line = " ".join(["product-os accept", *args.names])
+            print(f"product-os: accepting is {project.hooks.PERSON}. This ran in an agent's shell, "
+                  "so nothing was accepted. Give the person the line to run in a terminal they "
+                  f"opened themselves, once they have read each check's command in "
+                  f"{project.hooks.CONFIG.as_posix()}: {line}", file=sys.stderr)
+            return 2
         return run_prove(args.project, args.names, args.base, accept=True)
     if args.command == "gates":
         return run_gates(args.url, args.serve, args.baseline, args.width, args.only, args.scale,

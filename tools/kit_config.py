@@ -58,7 +58,8 @@ repository it was made in, and not in another clone. Until then it is left out o
 if unset, and need() and the listing below say so. Yours, in ~/.claude, always count.
   python kit_config.py accept <key> ...   print each named command setting and accept it here
   python kit_config.py accept --all       the same for every command setting the project's file has
-The accepted ones are kept as digests in ~/.claude/product-os-commands-accepted.json.
+The accepted ones are kept as digests in ~/.claude/product-os-commands-accepted.json. Accepting is
+the person's step, so accept refuses to run in an agent's shell ($CLAUDE_CODE_CHILD_SESSION set).
 
 TOKENS are never in this file. token("ADO_PAT", ...) reads the first environment variable that is set,
 and otherwise, optionally, the OS keychain: on macOS the generic password with service "product-os"
@@ -91,6 +92,10 @@ FILE = os.path.join(".claude", NAME + ".json")
 ENV = "PRODUCT_OS_CONFIG"
 NO_KEYCHAIN = ("PRODUCT_OS_NO_KEYCHAIN",)
 ACCEPTED = os.path.join(".claude", NAME + "-commands-accepted.json")
+# Claude Code sets this in the shell of every command an agent runs, and not in a terminal a person
+# opens. An accept is the person's step, so it refuses there. product_os/hooks.py reads the same.
+AGENT_SHELL = "CLAUDE_CODE_CHILD_SESSION"
+PERSON = "the person's step, never an agent's, even on their yes"
 # The settings that run a command or send a request, besides any key ending in _cmd. A list of
 # commands, or a list of {"name", "cmd"}, is one setting: accepting it accepts the whole list.
 RUNS = {("retro", "footprint"), ("retro", "insights"), ("retro", "records"), ("retro", "loop_outcome"),
@@ -773,6 +778,23 @@ def selftest():
                 code = accept(["retro.report"], start=repo)
             check("accept refuses a key that isn't a command setting", code == 2)
 
+            # Accepting is the person's step: run in an agent's shell, accept keeps nothing.
+            theirs = os.path.join(root, "theirs")
+            write(os.path.join(theirs, FILE), {"retro": {"propose_cmd": "echo agent"}})
+            reset()
+            line = ["accept", "--project", theirs, "retro.propose_cmd"]
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as said:
+                code = main(line, {AGENT_SHELL: "1"})
+            reset()
+            check("an agent's accept is refused, gives the person's line, and accepts nothing",
+                  code == 2 and "never an agent's, even on their yes" in said.getvalue()
+                  and "product-os kit_config accept retro.propose_cmd" in said.getvalue()
+                  and get("retro", "propose_cmd", start=theirs) is None)
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = main(line, {})
+            check("the person's accept, in a terminal of their own, goes through",
+                  code == 0 and get("retro", "propose_cmd", start=theirs) == "echo agent")
+
             # An accept counts in every worktree of its repository, and not in another clone.
             if shutil.which("git"):
                 shop = os.path.join(root, "shop")
@@ -1027,7 +1049,7 @@ def selftest():
     print("mutations: each rule broken on purpose must fail a check above")
     for m in ("no_walk", "user_wins", "no_env", "no_withhold", "no_cmd_suffix",
               "no_plugin_guard", "no_repo_key", "no_dangling", "no_isolate", "project_tokens",
-              "no_name_check", "no_cache"):
+              "no_name_check", "no_cache", "agent_accepts"):
         MUT.clear()
         MUT.add(m)
         n = len(base)
@@ -1046,15 +1068,25 @@ def selftest():
     return 0 if ok_base and all(results) else 1
 
 
-if __name__ == "__main__":
-    if sys.argv[1:2] in (["-h"], ["--help"]):
+def main(argv, environ):
+    if argv[:1] in (["-h"], ["--help"]):
         print(__doc__)
-        sys.exit(0)
-    args, start = sys.argv[1:], None
+        return 0
+    args, start = list(argv), None
     if "--project" in args and args.index("--project") + 1 < len(args):
         i = args.index("--project")
         start = args[i + 1]
         del args[i:i + 2]
     if args[:1] == ["accept"]:
-        sys.exit(accept(args[1:], start))
-    sys.exit(selftest() if args[:1] == ["--selftest"] else show(start))
+        if environ.get(AGENT_SHELL) and "agent_accepts" not in MUT:
+            print(f"kit_config: accepting is {PERSON}. This ran in an agent's shell, so nothing was "
+                  "accepted. Give the person the line to run in a terminal they opened themselves, "
+                  f"once they have read each command in {FILE}: "
+                  f"{' '.join(['product-os kit_config accept', *args[1:]])}", file=sys.stderr)
+            return 2
+        return accept(args[1:], start)
+    return selftest() if args[:1] == ["--selftest"] else show(start)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:], os.environ))

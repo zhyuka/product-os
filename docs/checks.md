@@ -144,7 +144,7 @@ Proving the checks in /home/sam/product-os/examples/project
   check     bad cases caught  good cases passed  result
   no-print  1 of 1            1 of 1             proven
   1 of 1 checks proven. Records: .claude/product-os-checks-proofs.json.
-  On this machine a check runs only once you accept it: read its command, then run product-os accept.
+  On this machine a check runs only once it is accepted. That's the person's step, never an agent's, even on their yes: read its command, then run product-os accept in a terminal of your own.
 
 $ product-os accept --project examples/project
 Accepting the checks in /home/sam/product-os/examples/project. These are the commands that now run on this machine:
@@ -161,7 +161,7 @@ Checks for /home/sam/product-os/examples/project
   1 of 1 checks passed.
 ```
 
-On your own machine a check runs only once you accept it. A project's file can list any command as a check, and its proof records are files anyone can write, so neither makes a command run here. `product-os accept` prints each check's command, proves it, and keeps the proof in `product-os-checks-accepted.json` beside your own config, for that project's repository: it counts in every git worktree of the repository, and not in a separate clone, which needs its own accept. A check that changes after that, or whose cases change, stops running until you accept it again. In Claude Code, the hooks ask you before an agent runs `accept` or edits that file. CI has no accepted checks, so the CI templates pass `--run-listed`, which runs every listed check and counts the project's own records; the code owner's review of `.claude/` stands in for accepting.
+On your own machine a check runs only once you accept it. A project's file can list any command as a check, and its proof records are files anyone can write, so neither makes a command run here. `product-os accept` prints each check's command, proves it, and keeps the proof in `product-os-checks-accepted.json` beside your own config, for that project's repository: it counts in every git worktree of the repository, and not in a separate clone, which needs its own accept. A check that changes after that, or whose cases change, stops running until you accept it again. Accepting is yours, never an agent's, even on your yes: `product-os accept` refuses to run in an agent's shell in Claude Code, and the hooks refuse an agent's `accept` and its edits to that file. CI has no accepted checks, so the CI templates pass `--run-listed`, which runs every listed check and counts the project's own records; the code owner's review of `.claude/` stands in for accepting.
 
 `product-os prove` runs each check on its cases. A check is proven when it exits non-zero on every bad case and 0 on every good one. A case where the command didn't start or timed out proves nothing. A check that passes its bad case would miss the defect, and one that fails its good case is a false alarm, so neither is proven. The record goes in `.claude/product-os-checks-proofs.json`, which you commit with the check.
 
@@ -433,7 +433,7 @@ Claude Code keeps the agent working and hands it the reason as its next instruct
 - A project's `.claude/product-os-checks.json` can only add reviewers and builders, which makes the checks stricter. A project's own Claude Code settings can do more: they can turn any plugin off. Read them in a repo you don't trust.
 - The build scorer reads static HTML, CSS and JS only. Any other build comes out UNSCORABLE.
 - A proof is only as good as its cases. A bad case that doesn't hold the real defect proves a check that would miss it. `--base` keeps a change from dropping or editing the cases the base has, but it can't judge a new case.
-- With `--run-listed` and without `--prove`, `product-os check` trusts the project's stored record, which an agent could write by hand. On your machine it trusts only what you accepted. In Claude Code the hooks ask you first when an agent edits either with a file tool or a shell command that names it, or runs `accept` or `--run-listed`, but not when code the hooks can't read writes the file.
+- With `--run-listed` and without `--prove`, `product-os check` trusts the project's stored record, which an agent could write by hand. On your machine it trusts only what you accepted. In Claude Code the hooks ask you first when an agent edits the record with a file tool or a shell command that names it, or runs `--run-listed`, and refuse an agent's `accept` and its edits to what you accepted. They can't see code they can't read writing either file.
 - A check's fingerprint covers the files its command names, such as `checks/no_print.py`, but not what those files import or call. A change to a module the script imports doesn't make the check unproven.
 - `--base` reads the base from the local git history. In CI, the checkout needs that history: `fetch-depth: 0` in GitHub Actions, `fetchDepth: 0` in Azure Pipelines. The templates set it.
 - A check's command runs without a shell. For a pipe or a redirect, put it in a script and name the script.

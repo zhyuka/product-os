@@ -4,6 +4,8 @@ hooks/reviewer_readonly.py runs on PreToolUse. It denies any call that writes
 files when the acting agent is a reviewer, and denies a reviewer spawning a
 subagent that is not a reviewer. For every agent, it asks the user before a
 call that writes the config file below, since changing it can turn the checks off.
+It denies every agent's accept, by command or by writing the accepted files,
+since accepting is the person's step, even on their yes.
 
 hooks/qa_before_done.py runs on Stop and SubagentStop. It blocks a builder
 from stopping when the transcript shows a file write after the last QA
@@ -74,6 +76,19 @@ ACCEPTED_FILE = Path(f"{CHECKS}-accepted.json")  # beside USER_FILE; project.py 
 # reads the first and writes the second.
 SETTINGS_FILE = Path(f"{NAME}.json")
 COMMANDS_ACCEPTED_FILE = Path(f"{NAME}-commands-accepted.json")
+# Whose step an accept is. The skills, the tools and the hooks all say it in these words.
+PERSON = "the person's step, never an agent's, even on their yes"
+# Claude Code sets this in the shell of every command an agent runs: its Bash, PowerShell and
+# Monitor tools and hook commands. It doesn't set it in a terminal a person opens, an IDE's
+# included, where it does set CLAUDECODE. tools/kit_config.py reads the same name.
+AGENT_SHELL = "CLAUDE_CODE_CHILD_SESSION"
+
+
+def agent_shell(environ):
+    """True when environ is the shell of a command an agent runs, so an accept there is refused."""
+    return bool(environ.get(AGENT_SHELL))
+
+
 DEFAULTS = {"reviewer_agents": ["*reviewer*"], "reviewer_shell": "block-writes",
             "builder_agents": ["*builder*"], "qa_commands": []}
 # The project file can also list the project's checks, which project.py reads. The hooks
@@ -250,17 +265,26 @@ def label(agent):
 
 
 def reviewer_readonly(event, config):
-    """PreToolUse output that denies a reviewer's write, or asks the user before
-    any agent changes the product-os config, or None to leave the call alone."""
+    """PreToolUse output that denies a reviewer's write or any agent's accept, or asks the user
+    before any agent changes the product-os config, or None to leave the call alone."""
     if event.get("hook_event_name") != "PreToolUse":
         return None
+    if event.get("tool_name") == "Monitor":
+        # Monitor runs its command in the same shell as Bash, under Bash's rules, so it is read as
+        # one, and named as itself.
+        event = {**event, "tool_name": "Bash", "shown_as": "Monitor"}
     return (_deny_reviewer_write(event, config) or _ask_before_config_change(event)
             or _ask_before_trusting_checks(event))
 
 
+def _shown(event):
+    return event.get("shown_as") or event.get("tool_name", "")
+
+
 def _ask_before_config_change(event):
     """Any agent that writes the project's config, its proof records or the user's own config
-    could change the checks, so the user decides."""
+    could change the checks, so the user decides. Writing either accepted file is an accept,
+    which is the person's step, so that is denied."""
     tool, tool_input = event.get("tool_name", ""), event.get("tool_input") or {}
     project = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or "."
     cwd = event.get("cwd") or project
@@ -286,21 +310,35 @@ def _ask_before_config_change(event):
     watched.append((home / COMMANDS_ACCEPTED_FILE, "the project commands you accepted, "
                     f"{home / COMMANDS_ACCEPTED_FILE}. Only an accepted one runs on this machine, so a "
                     "change by hand could run a command you never saw"))
+    accepted = {str(home / COMMANDS_ACCEPTED_FILE)} | ({str(folder / ACCEPTED_FILE)} if folder else set())
+    asked = None
     for path, what in watched:
         reason = readonly.touch_check(tool, tool_input, str(path), cwd)
-        if reason:
-            return {"hookSpecificOutput": {
+        if reason and str(path) in accepted:
+            return _refuse(f"product-os refused this {_shown(event)} call: it {reason}, which "
+                           f"changes {what}. Accepting is {PERSON}, so don't try it another way. "
+                           "Give the person the accept line to run in a terminal they opened "
+                           "themselves, once they have read each command it accepts.")
+        if reason and asked is None:
+            asked = {"hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "ask",
-                "permissionDecisionReason": f"product-os: this {tool} call {reason}, which "
+                "permissionDecisionReason": f"product-os: this {_shown(event)} call {reason}, which "
                                             f"changes {what}. It needs your OK."}}
-    return None
+    return asked
+
+
+def _refuse(reason):
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                   "permissionDecisionReason": reason}}
 
 
 def _ask_before_trusting_checks(event):
-    """`product-os accept` runs a project's checks and makes them count on this machine,
-    and `check --run-listed` runs every listed check without that. Both write nothing a file
-    guard sees, so the user decides before an agent starts either."""
+    """`product-os accept` runs a project's checks and makes them count on this machine, and
+    `kit_config accept` does the same for the commands in the project's settings. Accepting is
+    the person's step, so an agent's accept is denied. `check --run-listed` runs every listed
+    check without accepting any, as CI does, so the user decides before an agent starts it. None
+    of them writes anything a file guard sees."""
     tool, tool_input = event.get("tool_name", ""), event.get("tool_input") or {}
     if tool not in ("Bash", "PowerShell"):
         return None
@@ -309,49 +347,89 @@ def _ask_before_trusting_checks(event):
     if asks == "run-listed":
         what = ("runs every check the project lists, including ones you haven't accepted, so a "
                 "check whose command you never saw would run")
-    elif asks == "accept":
-        what = ("accepts the project's checks, so their commands run on this machine from now on. "
-                "Read each check's command in .claude/product-os-checks.json first")
+        return {"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "ask",
+            "permissionDecisionReason": f"product-os: this {_shown(event)} call {what}. It needs "
+                                        "your OK."}}
+    if asks == "accept":
+        what, read = ("accepts the project's checks, so their commands would run on this machine "
+                      "from now on", "each check's command in .claude/product-os-checks.json")
     elif asks == "accept-commands":
-        what = ("accepts commands from the project's .claude/product-os.json, so they run on this "
-                "machine from now on. Read each one there first")
+        what, read = ("accepts commands from the project's .claude/product-os.json, so they would "
+                      "run on this machine from now on", "each one there")
     else:
         return None
-    return {"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "ask",
-        "permissionDecisionReason": f"product-os: this {tool} call {what}. It needs your OK."}}
+    return _refuse(f"product-os refused this {_shown(event)} call: it {what}. Accepting is "
+                   f"{PERSON}, so don't try it another way, such as running the command yourself "
+                   "or writing the accepted file. Give the person the line to run in a terminal "
+                   f"they opened themselves, once they have read {read}.")
 
 
 # The command and module names.
 OURS = ("product-os", "product-os.exe")
-MODULES = ("product_os",)
+MODULES = ("product_os", "product_os.__main__")
+KIT_CONFIG = ("kit_config", "kit_config.py")
+# Shells whose -c (PowerShell's -Command, cmd's /c) takes a command line, read here as one.
+SHELLS = ("sh", "bash", "zsh", "dash", "ksh", "fish", "pwsh", "powershell", "cmd")
+NESTING = 4  # how deep a command line inside a command line is read
 
 
-def _trusting_words(command):
-    """ "accept" when the command line runs product-os accept, "run-listed" when it passes
-    check --run-listed to product-os, else "". A line that can't be read is judged on
-    its plain words, so an unclosed quote can't hide either."""
+def _inner(words):
+    """The command lines a simple command runs as text: a shell's -c argument, or eval's words."""
+    if not words:
+        return []
+    name = os.path.basename(words[0]).lower()
+    name = name[:-4] if name.endswith(".exe") else name
+    if name == "eval":
+        return [" ".join(words[1:])]
+    if name not in SHELLS:
+        return []
+    for i, word in enumerate(words[1:], 1):
+        flag = word.lower()
+        if flag in ("/c", "/k", "-command", "-c") or (
+                flag.startswith("-") and not flag.startswith("--") and flag.endswith("c")):
+            # PowerShell and cmd take the rest of the line; a POSIX shell takes the next word.
+            whole = name in ("pwsh", "powershell", "cmd")
+            return [" ".join(words[i + 1:] if whole else words[i + 1:i + 2])]
+    return []
+
+
+def _trusting_words(command, depth=0):
+    """ "accept" when the command line runs product-os accept, "accept-commands" when it runs
+    kit_config accept, "run-listed" when it passes check --run-listed to product-os, else "".
+    A command line given to a shell's -c or to eval is read too. A line that can't be read is
+    judged on its plain words, so an unclosed quote can't hide any of them."""
     try:
         commands = [shell.program(simple.words) for level in shell.split(command) for simple in level]
     except ValueError:
         commands = [re.sub(r"[\"'`\\]", " ", command).split()]
+    found = ""
     for words in commands:
+        for inner in (_inner(words) if depth < NESTING else []):
+            found = found or _trusting_words(inner, depth + 1)
+            if found in ("accept", "accept-commands"):
+                return found
         for i, word in enumerate(words):
             name = os.path.basename(word).lower()
-            if name in ("kit_config", "kit_config.py") and words[i + 1:i + 2] == ["accept"]:
-                return "accept-commands"
+            if name in KIT_CONFIG:
+                rest = words[i + 1:]
+                if rest[:1] == ["--project"]:  # kit_config takes --project DIR anywhere
+                    rest = rest[2:]
+                if rest[:1] == ["accept"]:
+                    return "accept-commands"
+                continue
             if name in OURS:
                 rest = words[i + 1:]
             elif word == "-m" and i + 1 < len(words) and words[i + 1] in MODULES:
                 rest = words[i + 2:]
             else:
                 continue
-            if "--run-listed" in rest:
-                return "run-listed"
             if rest[:1] == ["accept"]:
                 return "accept"
-    return ""
+            if "--run-listed" in rest:
+                found = found or "run-listed"
+    return found
 
 
 def _deny_reviewer_write(event, config):
@@ -375,7 +453,7 @@ def _deny_reviewer_write(event, config):
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
         "permissionDecisionReason": (
-            f"product-os blocked this {tool} call: it {reason}. The project config lists "
+            f"product-os blocked this {_shown(event)} call: it {reason}. The project config lists "
             f"{label(agent)} as a reviewer, and reviewers are read-only, so don't try it another "
             "way. Finish the review: in your answer, name each problem you found and the change "
             "you would make, for the person to apply.")}}
