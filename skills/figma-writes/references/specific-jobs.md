@@ -19,6 +19,10 @@ Detail for one job each. Read the section when the job comes up; it is not loade
 
 ## Board text
 
+- Ask what the room does with each note in the meeting its section serves, such as map a step,
+  person or option, answer a question only it can, or change what gets built. Cut a note with no
+  answer, or whose answer another note already gives, however true or well sourced. Put the answer
+  to a question that turns out answered into the step or option it changes, or drop it.
 - Fold a section into the fewest parts that show how its items relate, often one table: a row per
   item, its relations as columns. Evidence sits in its own zone beside them.
 - Cells are fragments: the point in the first two words, one idea per line, a number rather than
@@ -28,10 +32,12 @@ Detail for one job each. Read the section when the job comes up; it is not loade
   gains and costs, then the recommendation and the fact that decides it.
 - Draw numbers the room compares on one shared scale.
 - Show status as a word, not colour alone.
-- The one look before handover is a fresh `cold-reader` given pictures of each part, the reader's
-  job, the meeting's time and the section's word count now. Ask what they would cut and what they
-  didn't need, as well as where they got lost. Fix by cutting, renaming or moving; a finding that
-  something lacks a key or a definition means the label changes. One round, in the background.
+- The one look before handover is a fresh `cold-reader` given pictures of each part, each by its
+  full path, what the room will do with the section, the reader's job, the meeting's time and the
+  section's word count now. Ask which notes the room could do nothing with, what they didn't need,
+  and where they got lost; a fact-check doesn't replace it. Fix by cutting, renaming or moving; a
+  finding that something lacks a key or a definition means the label changes. One round, in the
+  background.
 
 ## Ready for dev
 
