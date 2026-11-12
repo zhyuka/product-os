@@ -102,7 +102,7 @@ While the plugin is enabled, Claude Code puts its [`bin/`](bin) folder on the Ba
 
 `product-os check`, `prove`, `accept`, `gates`, `design` and `demo` run the checks. `product-os <tool> [args...]` runs `tools/<tool>.py` with `python3`, or `python` if there's no `python3`, and exits with the tool's own code. An unknown tool exits 2 with a one-line message.
 <!-- github-only -->
-In CI, `pip install "product-os @ git+https://github.com/zhyuka/product-os@v0.1.4"` installs the checks command alone.
+In CI, `pip install "product-os @ git+https://github.com/zhyuka/product-os@v0.1.5"` installs the checks command alone.
 <!-- /github-only -->
 
 ## Settings
