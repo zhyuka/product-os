@@ -46,11 +46,12 @@ never share a record print as SPLIT, so search each alone.
 
 ## Read the answer
 
-- Exit 0 is hits; 1 is every source ran and nothing matched; 2 is a source DID NOT RUN, so its zero
-  clears nothing. Name that source when you report.
+- Exit 0 is hits; 1 is every source ran and nothing matched in full, so open any leads it lists; 2
+  is a source DID NOT RUN, so its zero clears nothing. Name that source when you report.
 - Quote COVERAGE (copies scanned of copies found, folders not searched) with the answer.
-- `near` and `fuzzy` hits are leads, not matches, and an earlier recall run is not evidence. Open
-  the record a hit names before quoting it.
+- `near`, `fuzzy` and `some` hits are leads, not matches, and an earlier recall run is not evidence.
+  A `some` hit holds only half or more of a long concept's terms. Open the record a hit names before
+  quoting it.
 - `--before` cannot cut notes or memory: a file has no history, so each is searched as it is today.
 - Not covered: Downloads, mail, chat apps, browser history, anything outside the configured
   folders. If the answer could live there, say so instead of "never discussed".

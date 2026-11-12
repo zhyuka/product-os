@@ -64,7 +64,18 @@ HOW A CONCEPT MATCHES, strongest first; every hit names its form
            A search --before that date does not get it, since the record did not hold the name yet.
            Not in git -S.
   fuzzy    a close spelling found in the transcripts (transcripts only): captions mishear names
-  Each source prints its hits newest first; in the logs, sessions where you typed it come first.
+  some     at least half the terms of an alternative of 3 to 8 terms (2 at least), each within 120
+           characters of one place, so a query that names a tool or two beside its topic still finds the
+           words that name only the topic. A term is a piece between spaces with its edge punctuation cut
+           (claude.ai, signed_in_browser, #1234), matched as an alternative of its own would be; common
+           words (the, and), the word after not, no, without, never or except ("not Edge"), and pieces with
+           no run of 3 characters are not terms. A lead, not a match: every source prints its some hits
+           after its others, --brief marks each, a search holding only leads exits 1 and says it holds
+           leads, and --calibrate does not count one found. The command line, --brief and --calibrate use
+           it; a tool calling search() or compile_query() gets it by putting "some": True in the query.
+           Not in git -S, and in git a commit whose diff holds the text beats a lead in its message.
+  Each source prints its hits newest first, some hits after the rest; in the logs, sessions where you
+  typed it come first.
   A node id matches as 123:456, 123-456 and 123%3A456, never inside a longer number. A layer inside
   an instance is one id, I10:20;30:40, and matches in the form a Figma URL writes it too,
   I10-20%3B30-40. #1234 also matches _workitems/edit/1234 and "item 1234". A Figma URL becomes its
@@ -101,8 +112,9 @@ OUTPUT  SUMMARY first, then COVERAGE, then the hits, then RECAP. A NARROWED line
   other into figma.default_file; with neither it stays bare. --out and --brief print links the same way.
   Long token-like strings are redacted in everything printed; logs hold pasted credentials.
 
-EXIT  0 hits.  1 every source that is configured ran and nothing matched.  2 a source, or part of one,
-  DID NOT RUN; hits are still printed, but a zero from that source is not a clear.
+EXIT  0 hits.  1 every source that is configured ran and nothing matched: leads (form some) may still be
+  printed, and SUMMARY says how many to open.  2 a source, or part of one, DID NOT RUN; hits are still
+  printed, but a zero from that source is not a clear.
 
 DATES  --since and --before are UTC: --before 2026-01-05T15:39 means 15:39 UTC, and a date alone is
   midnight UTC. A value ending in Z or an offset is read in that zone, so 2026-01-05T10:39-05:00 is the
@@ -123,9 +135,12 @@ DATES  --since and --before are UTC: --before 2026-01-05T15:39 means 15:39 UTC, 
                                 list of 12: each source's strongest hit, then each one's next. Strength
                                 counts the rarer query words a hit holds, its match form, a title or file
                                 name match and a decision record. A NARROWED line says what it leaves out.
-                                This session, headless runs, sealed logs and archived sessions are left
-                                out. With --before, as it stood then. Not Figma or older logs. Exit 0
-                                something to read, 1 nothing matched, 2 a part DID NOT RUN: with no request
+                                A concept of 3 or more terms gets a SOME line, and each line or session
+                                matched only as form some comes after the full matches, marked [some: the
+                                terms it holds]: a lead to open, not a match. This session, headless runs,
+                                sealed logs and archived sessions are left out. With --before, as it stood
+                                then. Not Figma or older logs. Exit 0 something matched, 1 nothing matched
+                                (with leads listed, a LEADS ONLY line says so), 2 a part DID NOT RUN: with no request
                                 ledger (ledger.py writes it) or no notes folder set, that part says so and
                                 the exit is 2; ADO or transcripts not configured is said, not exit 2.
                                 Live sessions are found under
@@ -138,7 +153,9 @@ DATES  --since and --before are UTC: --before 2026-01-05T15:39 means 15:39 UTC, 
                                 FILE is JSON: [{"id", "terms": [...], "expect": [...], "before"}], each
                                 expect one of: an 8-hex session id, figma:<comment id>, ado:<id>,
                                 git:<sha>, memory:<card stem>, file:<path>, transcript:<words>.
-                                A session a header names on "also in" counts, marked (copy)
+                                A session a header names on "also in" counts, marked (copy). An answer
+                                found only as a lead (form some) does not count: it is marked ~ and
+                                counted apart
   recall.py --selftest          planted tree, every source, then each rule broken on purpose
 
 NO POOL. Notes, memory, transcripts and the logs scan run in a process pool. Where none can start (a sandbox
@@ -154,8 +171,8 @@ import sys
 # Run through a symlink, Windows leaves the link's folder first on sys.path (POSIX resolves it): take this file's own.
 if __name__ == "__main__" and sys.path and os.path.normcase(sys.path[0]) == os.path.normcase(os.path.dirname(__file__)):
     sys.path[0] = os.path.dirname(os.path.realpath(__file__))
-import argparse, bisect, collections, datetime, difflib, glob, gzip, hashlib, io, json, math, os, re, subprocess, sys
-import sqlite3, tempfile, time, urllib.parse, zipfile, zlib
+import argparse, bisect, collections, datetime, difflib, glob, gzip, hashlib, io, itertools, json, math, os, re
+import subprocess, sys, sqlite3, tempfile, time, urllib.parse, zipfile, zlib
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 try:
@@ -302,9 +319,20 @@ def _off(name):
 
 # --------------------------------------------------------------------------------------------- matching
 
-FORMS = ("exact", "variant", "near", "stem", "named", "fuzzy")
+FORMS = ("exact", "variant", "near", "stem", "named", "fuzzy", "some")
 RANK = {f: i for i, f in enumerate(FORMS)}
 NEAR = 120
+# Form some: an alternative of SOME_MIN or more terms also matches where at least half of them, 2 at least, sit
+# within NEAR of one place. On 2026-11-11 --brief "claude.ai Safari not Edge signed_in_browser" found none of the
+# three messages where the user had said to read claude.ai in Safari, as near needs every word, and
+# --brief "claude.ai safari" found all three.
+SOME_MIN = 3
+SOME_MAX = 8         # more terms is a pasted sentence: its C(n, n/2) index groups grow past 70
+NEGATE = frozenset({"not", "no", "without", "never", "except"})   # "not Edge": Edge is not a term
+STOP = frozenset("a an and any are as at be but by can did do does for from had has have how i if in into is it "
+                 "its just me my no nor not of off on or our out so than that the their them then there these they "
+                 "this those to too up us vs was we were what when where which who why will with would you your"
+                 .split())
 SEP = r"(?:[ \t\n\r_\-/]|\\+[nrt])*"
 RAW_SEP = rb"(?:[ \t_\-/]|\\+[nrt])*"
 CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
@@ -406,7 +434,103 @@ def _alt(text):
     if len(words) >= 2:
         near = [re.compile(re.escape(w), re.I) for w in words]
         near_raw = [_raw(w) for w in words]
-    return {"text": text, "kind": "text", "forms": forms, "raw": raw, "near": near, "near_raw": near_raw}
+    return {"text": text, "kind": "text", "forms": forms, "raw": raw, "near": near, "near_raw": near_raw,
+            "some": _some_terms(text)}
+
+
+def _alt_sets(a):
+    """The word lists the logs index looks an alternative up by, each list all in one row: what every exact or
+    variant match holds, then, with near words, every near word."""
+    t = a["text"]
+    if a["kind"] == "node":
+        return [re.findall(r"\d+", t)]
+    if a["kind"] in ("ado", "digits"):
+        return [[a["id"]]]
+    words = sorted({w.lower() for w in re.findall(r"\w+", t) if len(w) >= 3})
+    return [_parts(t)] + ([words] if a["near"] else [])
+
+
+def _some_terms(text):
+    """Form some's terms for an alternative of SOME_MIN to SOME_MAX terms, else None: {"terms", "subs" (each term
+    as an alternative of its own, _alt), "rxs" (each one's forms), "k" (how many must sit together: half, rounded
+    up, 2 at least)}. A term is a piece between spaces with its edge punctuation cut, once however often it is
+    written. A common word (STOP) is not one, nor the piece a NEGATE word rules out ("not Edge": a record holding
+    Edge is not nearer the topic for it), nor a piece the logs index can't look up (no part of 3 characters)."""
+    pieces = text.split()
+    if len(pieces) < SOME_MIN or "no_some" in MUT:
+        return None
+    subs, seen, negated = [], set(), False
+    for p in pieces:
+        t = p.strip(".,;:!?()[]{}<>\"'`")
+        w = t.lower()
+        if w in NEGATE:
+            negated = True
+            continue
+        if not t or w in STOP:
+            continue
+        if negated:
+            negated = False
+            continue
+        sub = _alt(t)
+        if w in seen or recall_index.all_of(_alt_sets(sub)[0]) is None:
+            continue
+        seen.add(w)
+        subs.append(sub)
+    if not SOME_MIN <= len(subs) <= SOME_MAX:
+        return None
+    return {"terms": [s["text"] for s in subs], "subs": subs, "rxs": [[rx for _, rx in s["forms"]] for s in subs],
+            "k": max(2, -(-len(subs) // 2))}
+
+
+def _some_pos(s, text, cap=400, low=None):
+    """Each term's places in text, sorted: each of its forms' first cap matches, as match_concept reads a record;
+    cap 0, every place one can start (_starts), as a paragraph's prefilter needs. low: text.lower() with no
+    FOLD_ODD in it, where an ASCII text term's forms run lowercased (_lowered), faster."""
+    out = []
+    for sub, rxs in zip(s["subs"], s["rxs"]):
+        fast = low is not None and sub["kind"] == "text" and sub["text"].isascii()
+        on, ps = (low if fast else text), set()
+        for rx in rxs:
+            rx = _lowered(rx) if fast else rx
+            ps.update(_starts(rx, on) if not cap else (m.start() for _, m in zip(range(cap), rx.finditer(on))))
+        out.append(sorted(ps))
+    return out
+
+
+def _some_at(s, pos):
+    """[(place, the numbers of the terms within NEAR of it)] for each place of a term where k or more terms are."""
+    out = []
+    for ps in pos:
+        for p in ps:
+            held = [j for j, qs in enumerate(pos)
+                    if qs and (i := bisect.bisect_left(qs, p - NEAR)) < len(qs) and qs[i] <= p + NEAR]
+            if len(held) >= s["k"]:
+                out.append((p, held))
+    return out
+
+
+def _some(s, text):
+    """(place, [the terms there]) for a some alternative in text: the place with the most terms within NEAR of it,
+    the first on a tie; None with fewer than k near one another. Each form's first 400 places, as _near."""
+    pos = _some_pos(s, text)
+    if sum(1 for ps in pos if ps) < s["k"]:
+        return None
+    best = None
+    for p, held in _some_at(s, pos):
+        if best is None or (len(held), -p) > (len(best[1]), -best[0]):
+            best = (p, held)
+    return best and (best[0], [s["terms"][j] for j in best[1]])
+
+
+def _some_ready(s, low):
+    """Whether k of a some alternative's terms can be in low, lowercased text with no FOLD_ODD: each term's words
+    (_needs) all there. A plain substring test, many times faster than the forms."""
+    n = 0
+    for sub in s["subs"]:
+        need = dict(_needs(sub) or ())
+        words = need.get("variant") or need.get("forms")
+        n += words is None or all(w in low for w in words)
+    return n >= s["k"]
 
 
 def _alts(label):
@@ -518,17 +642,21 @@ def _extra_alts(alts, cut):
                 continue
             have.add(alias.lower())
             b = _alt(alias)
-            out.append(dict(b, forms=[("named", rx) for _, rx in b["forms"]], named=True, near=None, near_raw=None))
+            out.append(dict(b, forms=[("named", rx) for _, rx in b["forms"]], named=True, near=None, near_raw=None,
+                            some=None))
     return out
 
 
 def compile_query(q):
-    """{"labels": [...], "since", "before"} -> the same with "concepts": [{"label", "alts": [...]}], and
-    since and before as UTC text. Each concept also gets its plural words' stems and its listed aliases."""
+    """{"labels": [...], "since", "before", "some"} -> the same with "concepts": [{"label", "alts": [...]}], and
+    since and before as UTC text. Each concept also gets its plural words' stems and its listed aliases, and with
+    "some" true its long alternatives' form some."""
     before = _cut(q.get("before"))
     cons = []
     for lb in q["labels"]:
         alts = [_alt(a) for a in _alts(lb)]
+        if not q.get("some"):     # form some only when the query asks, as the command line does: a tool that imports
+            alts = [dict(a, some=None) for a in alts]     # recall keeps the matches it was built and measured on
         cons.append({"label": lb, "alts": alts + _extra_alts(alts, before)})
     return dict(q, concepts=[c for c in cons if c["alts"]], since=_cut(q.get("since")), before=before)
 
@@ -563,6 +691,10 @@ def match_concept(con, text, extra=()):
             p = _near(a["near"], text)
             if p is not None:
                 best = (RANK["near"], "near", p, a["text"])
+        if a.get("some") and best is None:
+            got = _some(a["some"], text)
+            if got:
+                best = (RANK["some"], "some", got[0], a["text"])
     for form, rx, alt in extra:
         if best is not None and best[0] <= RANK[form]:
             break
@@ -578,20 +710,42 @@ def _which(q, texts):
     for con in q["concepts"]:
         for a in con["alts"]:
             if any(t and rx.search(t) for t in texts for _, rx in a["forms"]) or \
-                    (a["near"] and any(t and _near(a["near"], t) is not None for t in texts)):
+                    (a["near"] and any(t and _near(a["near"], t) is not None for t in texts)) or \
+                    (a.get("some") and any(t and _some(a["some"], t) for t in texts)):
                 got.add(a["text"].lower())
     return sorted(got)
+
+
+def _held(q, best, segs):
+    """The terms of each concept match_record's best matched as form some, as the query writes them: [] when
+    every concept matched in full."""
+    out = []
+    for b, con in zip(best, q["concepts"]):
+        if not b or b[1] != "some":
+            continue
+        a = next((a for a in con["alts"] if a.get("some") and a["text"] == b[3]), None)
+        got = a and _some(a["some"], segs[b[4]][1] if b[4] >= 0 else "")
+        out += got[1] if got else []
+    return out
 
 
 # A file that holds rulings or decisions, so a hit in it outranks one of the same strength elsewhere.
 DECISION_FILES = {"rulings.json", "decisions.md", "decisions.json"}
 FORM_W = {"exact": 1.0, "variant": 0.95, "item id": 1.0, "diff": 0.8, "near": 0.7, "pinned here": 1.0,
-          "stem": 0.6, "named": 0.6, "fuzzy": 0.5}
+          "stem": 0.6, "named": 0.6, "fuzzy": 0.5, "some": 0.4}
 
 
 def _form_w(h):
-    forms = h.get("forms") or re.split(r"/", h.get("form") or "")
-    return max((FORM_W.get(f.split(" ")[0].split(",")[0], 0.7) for f in forms if f), default=0.7)
+    """Its strongest form's weight; a hit where any concept matched as form some only weighs as some."""
+    forms = [f.split(" ")[0].split(",")[0] for f in h.get("forms") or re.split(r"/", h.get("form") or "") if f]
+    if "some" in forms:
+        return FORM_W["some"]
+    return max((FORM_W.get(f, 0.7) for f in forms), default=0.7)
+
+
+def _partial(h):
+    """A hit where a concept matched only as form some: a lead, printed after the source's other hits."""
+    return h.get("rank", 0) >= RANK["some"] and "no_some_tier" not in MUT
 
 
 def order_hits(hits):
@@ -599,7 +753,8 @@ def order_hits(hits):
     holds, of their rarity among this source's hits (1 + ln((H + 1) / (df + 1))), times its match form's
     weight, times 1.5 when a title, subject, heading or file name holds one, and 1.5 for a ruling or decision
     record. Only --brief's ranked list orders by strength (ranked()): in the full search, strength order put
-    no better answer higher and pushed down the log sessions where you typed it."""
+    no better answer higher and pushed down the log sessions where you typed it. Hits matched only as form
+    some go after the rest, newest first, so a long query's leads never push its matches past a cap."""
     if "no_strength" in MUT:
         return hits
     df = collections.Counter(a for h in hits for a in h.get("alts") or ())
@@ -608,18 +763,26 @@ def order_hits(hits):
         idf = sum(1 + math.log((n + 1) / (df[a] + 1)) for a in h.get("alts") or ())
         h["strength"] = round(idf * _form_w(h) * (1.5 if h.get("title") else 1) * (1.5 if h.get("decision") else 1), 4)
     hits.sort(key=lambda h: h.get("ts") or "", reverse=True)
+    hits.sort(key=_partial)
     return hits
 
 
 def log_groups(hits):
     """[(session, its hits)] in the order recall prints them: sessions where you typed it first, then the
-    newest. Strength order here buried the sessions where you typed it."""
+    newest. Strength order here buried the sessions where you typed it. A session holding only form some hits
+    goes after every session holding a full one, in the same order among themselves; a session's some hits
+    don't move it up among the others."""
     groups = collections.defaultdict(list)
     for h in hits:
         groups[skey(h["key"])].append(h)
+
+    def tier(s):
+        full = [h for h in groups[s] if not _partial(h)]
+        hs = full or groups[s]
+        return (not full, not any(h["role"].startswith("you") for h in hs),
+                all(h["role"].endswith("search run") for h in hs))
     order = sorted(groups, key=lambda s: max(h["ts"] or "" for h in groups[s]), reverse=True)
-    order.sort(key=lambda s: (not any(h["role"].startswith("you") for h in groups[s]),
-                              all(h["role"].endswith("search run") for h in groups[s])))
+    order.sort(key=tier)
     return [(s, groups[s]) for s in order]
 
 
@@ -631,9 +794,14 @@ def ranked(qr, top=0, caps=None):
     top (--brief), a ranked list first (each source's strongest entry, sources ordered by their strongest, then
     each source's next, round-robin), then each source's section in SOURCES order, an entry already in the
     list not placed again. A place is None past a section's cap. The full search prints sections only: a
-    ranked list above them pushed log sessions out of the first five."""
+    ranked list above them pushed log sessions out of the first five. In the ranked list every full match
+    places before any lead (form some only), whatever their strength: a lead under a heading in a decisions
+    file weighs 0.4 x 1.5 x 1.5, more than a full near match."""
     caps = dict(CAPS, **(caps or {}))
     lists = {}
+
+    def lead(e):
+        return all(_partial(h) for h in e["hits"]) if e["src"] == "logs" else _partial(e["hit"])
     for n, r in qr["src"].items():
         if not r["ran"]:
             continue
@@ -642,18 +810,21 @@ def ranked(qr, top=0, caps=None):
         else:
             lists[n] = [{"src": n, "hit": h} for h in r["hits"]]
             if top:
-                lists[n].sort(key=lambda e: -e["hit"].get("strength", 0))
+                lists[n].sort(key=lambda e: (lead(e), -e["hit"].get("strength", 0)))
 
     def strength(e):
         return max(h.get("strength", 0) for h in e["hits"]) if e["src"] == "logs" else e["hit"].get("strength", 0)
-    heads = sorted((n for n in lists if lists[n]), key=lambda n: -strength(lists[n][0]))
-    out, seen, i = [], set(), 0
-    while len(out) < top and any(i < len(lists[n]) for n in heads):
-        for n in heads:
-            if i < len(lists[n]) and len(out) < top:
-                out.append(dict(lists[n][i], place=len(out) + 1))
-                seen.add(id(lists[n][i]))
-        i += 1
+    out, seen = [], set()
+    for tier in (False, True):                  # the full matches' round-robin, then the leads'
+        part = {n: [e for e in lists[n] if lead(e) == tier] for n in lists}
+        heads = sorted((n for n in part if part[n]), key=lambda n: -strength(part[n][0]))
+        i = 0
+        while len(out) < top and any(i < len(part[n]) for n in heads):
+            for n in heads:
+                if i < len(part[n]) and len(out) < top:
+                    out.append(dict(part[n][i], place=len(out) + 1))
+                    seen.add(id(part[n][i]))
+            i += 1
     place = len(out)
     for n in SOURCES:
         for j, e in enumerate(lists.get(n, ())):
@@ -927,6 +1098,18 @@ def _scan(data, kind, Q, r):
                     for s in set(sets[0]).intersection(*sets[1:]):
                         got = cand.setdefault(s, [sets[0][s][0], set()])
                         got[1].add(qi)
+                sm = a.get("some")
+                if sm and "no_some_raw" not in MUT:     # a line holding k of the terms' raw forms
+                    held, ends = collections.Counter(), {}
+                    for sub in sm["subs"]:
+                        d = {}
+                        for pat in sub["raw"]:
+                            _lines(low, pat, d, qi)
+                        held.update(d.keys())
+                        ends.update((s, v[0]) for s, v in d.items())
+                    for s, n in held.items():
+                        if n >= sm["k"]:
+                            cand.setdefault(s, [ends[s], set()])[1].add(qi)
     del low
     for s in sorted(cand):
         e, qis = cand[s]
@@ -1406,18 +1589,21 @@ def _index_expr(q):
                 return None, f"{t!r} holds a quote or a backslash, which a log writes escaped"
             if cc_logs.redact(t) != t or CTX_KEY.search(t):
                 return None, f"{t!r} is text redaction rewrites, and the index holds redacted text only"
-            if a["kind"] == "node":
-                sets = [re.findall(r"\d+", t)]
-            elif a["kind"] in ("ado", "digits"):
-                sets = [[a["id"]]]
-            else:   # exact and variant hold every part; near holds every word (_alt)
-                words = sorted({w.lower() for w in re.findall(r"\w+", t) if len(w) >= 3})
-                sets = [_parts(t)] + ([words] if a["near"] else [])
-            exprs = [recall_index.all_of(s) for s in sets]
+            exprs = [recall_index.all_of(s) for s in _alt_sets(a)]   # exact and variant, then near (_alt)
             if exprs[0] is None:
                 return None, f"{t!r} has no run of 3 characters to look up"
             out += [e for e in exprs if e]
+            if a.get("some") and "no_some_index" not in MUT:
+                out.append(_some_expr(a["some"]))
     return (" OR ".join(dict.fromkeys(out)), "") if out else (None, "no concept to look up")
+
+
+def _some_expr(s):
+    """The FTS lookup for the records where k of a some alternative's n terms can sit together: each group of k
+    terms all in one row, ORed; at most C(8, 4) = 70 groups (SOME_MAX). A some match spans at most 2 * NEAR and a
+    term, under the overlap of two rows, so its terms share one."""
+    each = [recall_index.all_of(_alt_sets(sub)[0]) for sub in s["subs"]]   # each term can be looked up (_some_terms)
+    return "(" + " OR ".join("(" + " AND ".join(g) + ")" for g in itertools.combinations(each, s["k"])) + ")"
 
 
 def _spec(plain, keep=None):
@@ -1578,7 +1764,7 @@ def src_logs(queries, opts):
     inv, copies, (held, nomatch) = _inventory(opts, seals)
     lifted = {s["dir"] for s in seals if s["state"] == "lifted"}
     kept_out = sum(h.get("log copies", 0) for d, h in held.items() if d not in lifted)
-    plain = [{k: q.get(k) for k in ("labels", "since", "before")} for q in queries]
+    plain = [{k: q.get(k) for k in ("labels", "since", "before", "some")} for q in queries]
     serial, pool = getattr(opts, "serial", False), getattr(opts, "pool", None)
     via_index, direct, answered, notes = _logs_index(queries, plain, copies, inv, seals, opts)
     if answered:
@@ -2362,8 +2548,8 @@ def src_git(queries, opts):
             best = []
             for con, ds in zip(q["concepts"], diff):
                 m = match_concept(con, c["msg"])
-                if m:
-                    best.append(m)
+                if m and (m[1] != "some" or sha not in ds or "some_beats_diff" in MUT):   # a diff holding it in full
+                    best.append(m)                                                         # beats a lead in the message
                 elif sha in ds:
                     best.append((0, "diff", -1, ""))
                 else:
@@ -2530,6 +2716,9 @@ def _could_match(con, text, low=None):
                 return True
             if a["near"] and has("near") and _near_anywhere([lower(rx) for rx in a["near"]], on):
                 return True
+            sm = a.get("some")
+            if sm and (low is None or _some_ready(sm, low)) and _some_at(sm, _some_pos(sm, text, 0, low)):
+                return True
         elif has("forms") and any(rx.search(text) for _, rx in a["forms"]):
             return True
     return any(rx.search(text) for _, rx, _ in con.get("extra", ()))
@@ -2553,6 +2742,9 @@ def _places(con, text, low=None):
                     out.update(_starts(lower(rx), on))
             if a["near"] and has("near"):
                 out.update(_near_places([lower(rx) for rx in a["near"]], on))
+            sm = a.get("some")
+            if sm and "no_some_places" not in MUT and (low is None or _some_ready(sm, low)):
+                out.update(p for p, _ in _some_at(sm, _some_pos(sm, text, 0, low)))
         elif has("forms"):
             for _, rx in a["forms"]:
                 out.update(_starts(rx, text))
@@ -2834,15 +3026,25 @@ def search(queries, opts):
 
 
 def exit_code(qr):
-    """A source with nothing configured (off) is left out: it was never asked to search."""
+    """A source with nothing configured (off) is left out: it was never asked to search. A lead (form some) is not
+    a match: with nothing else, the exit is 1, and the report says leads are there to open (meaning())."""
     if any((not r["ran"] and (not r.get("off") or "off_is_gap" in MUT)) or r["partial"] for r in qr["src"].values()):
         return 2
-    return 0 if any(r["hits"] for r in qr["src"].values()) else 1
+    return 0 if any(not _partial(h) for r in qr["src"].values() for h in r["hits"]) else 1
 
 
 MEANING = {0: "hits: read them before calling this new or open",
            1: "every configured source ran and nothing matched (mail and chat are not searched)",
            2: "a source DID NOT RUN: a zero there is not a clear"}
+
+
+def meaning(qr, code):
+    """MEANING[code], and for an exit 1 holding leads, that nothing matched in full and the leads are to open."""
+    n = sum(1 for r in qr["src"].values() for h in r["hits"])
+    if code == 1 and n:
+        return (f"nothing matched in full; {n} lead(s) hold only some of a long concept's terms (form some): open "
+                f"each before calling this new or open")
+    return MEANING[code]
 
 
 # -------------------------------------------------------------------------------------------- output
@@ -2883,7 +3085,9 @@ def render(qr, opts, full=False, link=False):
          + (f"   since {q['since']}" if q.get("since") else "") + (f"   before {q['before']}" if q.get("before") else ""),
          "  alternatives: " + "; ".join(", ".join(f'{a["text"]} ({a["kind"]})' if a["kind"] != "text" else a["text"]
                                                  for a in c["alts"]) for c in q["concepts"]),
-         f"SUMMARY  exit {code}: {MEANING[code]}"]
+         *[f'  some: "{a["text"]}" also matches {a["some"]["k"]} of {", ".join(a["some"]["terms"])} together'
+           for c in q["concepts"] for a in c["alts"] if a.get("some")],
+         f"SUMMARY  exit {code}: {meaning(qr, code)}"]
     for n, r in src.items():
         if not r["ran"]:
             L.append(f"  {n:12} " + ("NOT CONFIGURED, not searched: " if r.get("off") else "DID NOT RUN: ") + r["why"])
@@ -2891,8 +3095,11 @@ def render(qr, opts, full=False, link=False):
         hs = r["hits"]
         if n == "logs":
             sess = {skey(h["key"]) for h in hs}
-            you = {skey(h["key"]) for h in hs if h["role"].startswith("you")}
-            s = f"{len(hs)} record(s) in {len(sess)} session(s), typed by you in {len(you)}"
+            you = {skey(h["key"]) for h in hs if h["role"].startswith("you")
+                   and (not _partial(h) or "you_counts_leads" in MUT)}   # selftest: the count before leads
+            lead = {skey(h["key"]) for h in hs if h["role"].startswith("you") and _partial(h)} - you
+            s = f"{len(hs)} record(s) in {len(sess)} session(s), typed by you in {len(you)}" \
+                + (f" (and some of its words in {len(lead)} more)" if lead else "")
             if hs:
                 s += f", newest {max(h['ts'] for h in hs)[:10] or 'undated'}"
             if r["me"] in sess:
@@ -2904,7 +3111,10 @@ def render(qr, opts, full=False, link=False):
             th = [h for h in hs if not h.get("canvas")]
             s = f"{len(th)} thread(s), {sum(1 for h in th if h['open'])} open, {len(hs) - len(th)} canvas text layer(s)"
         else:
-            s = f"{len(hs)} hit(s)" + (f", newest {hs[0]['ts'][:10]}" if hs and hs[0]["ts"] else "")
+            new = max((h["ts"] or "" for h in hs), default="")
+            s = f"{len(hs)} hit(s)" + (f", newest {new[:10]}" if new else "")
+        part = sum(1 for h in hs if _partial(h))
+        s += f"; {part} of them on some of the words only (form some, leads)" if part else ""
         L.append(f"  {n:12} {s}" + (f"   ⚠ PARTIAL: {len(r['partial'])} part(s) did not run" if r["partial"] else ""))
     lg = src.get("logs")
     if lg and lg["ran"] and lg["split"]:
@@ -2942,18 +3152,21 @@ def render(qr, opts, full=False, link=False):
         if cap is not None and len(r["hits"]) > cap:
             L.append(f"  (+{len(r['hits']) - cap} more: --max N, --everything or --out FILE)")
     L.append("")
-    you = []
+    you, some = [], []
     if lg and lg["ran"]:
-        seen = {}
+        seen, part = {}, {}
         for h in lg["hits"]:
             if h["role"].startswith("you"):
-                k = skey(h["key"])
-                seen[k] = max(seen.get(k, ""), h["ts"] or "")
+                d, k = part if _partial(h) else seen, skey(h["key"])
+                d[k] = max(d.get(k, ""), h["ts"] or "")
         you = sorted(seen.items(), key=lambda kv: kv[1], reverse=True)
+        some = sorted(((k, t) for k, t in part.items() if k not in seen), key=lambda kv: kv[1], reverse=True)
     newest = max((h["ts"] or "" for r in src.values() for h in r["hits"]), default="")
-    L.append(f"RECAP  exit {code}: {MEANING[code]}."
+    L.append(f"RECAP  exit {code}: {meaning(qr, code)}."
              + (f" You typed it in {len(you)} session(s): " + ", ".join(f"{k[:8]} {t[:10]}" for k, t in you[:5])
                 + "." if you else "")
+             + (f" You typed some of its words in {len(some)} more (leads): "
+                + ", ".join(f"{k[:8]} {t[:10]}" for k, t in some[:5]) + "." if some else "")
              + (f" Newest hit {newest[:10]}." if newest else "")
              + (f" {held} seal(s) held material back, so this is not a search of it: see COVERAGE." if held else ""))
     return link_lines(L, keys) if link else L
@@ -3157,10 +3370,13 @@ def _unread_ids(qr, sources):
     return ids
 
 
-def _ids(qr):
+def _ids(qr, leads=False):
+    """The ids of the hits, full matches only; with leads, the leads' (form some) too."""
     ids = set()
     for n, r in qr["src"].items():
         for h in r["hits"]:
+            if _partial(h) and not leads:
+                continue
             if n == "logs":
                 ids.add("log:" + skey(h["key"])[:8])
             else:
@@ -3170,25 +3386,28 @@ def _ids(qr):
 
 def _copy_ids(qr):
     """Log sessions a header names on "also in" with no hit printed under their own id: each holds a copy of a
-    record printed under another session."""
+    record printed under another session. A lead's copies are not credited."""
     if "no_copy_credit" in MUT:
         return set()
     lg = qr["src"].get("logs") or {}
-    return {"log:" + skey(a)[:8] for h in lg.get("hits", ()) for a in h.get("also") or ()} - _ids(qr)
+    return {"log:" + skey(a)[:8] for h in lg.get("hits", ()) if not _partial(h) for a in h.get("also") or ()} - _ids(qr)
 
 
 def cmd_calibrate(path, opts):
+    """Each past miss searched as the command line searches it, form some included; an answer found only as a lead
+    is not counted found, and is marked ~ with the count printed apart."""
     with open(path, encoding="utf-8") as fh:
         entries = json.load(fh)
-    queries = [{"labels": ["|".join(e["terms"])], "since": None, "before": e.get("before")} for e in entries]
+    queries = [{"labels": ["|".join(e["terms"])], "since": None, "before": e.get("before"), "some": True}
+               for e in entries]
     t0 = time.time()
     res = search(queries, opts)
     print(f"calibrate: {len(entries)} past cases from {path.replace(HOME, '~')}, each searched as one concept "
           f"(its terms joined by |) with only what existed before its timestamp; {time.time() - t0:.0f}s\n")
-    full, got_n, want_n, by_chan, copy_n = [], 0, 0, collections.Counter(), 0
+    full, got_n, want_n, by_chan, copy_n, lead_n = [], 0, 0, collections.Counter(), 0, 0
     seen_miss, unseen_miss, down = 0, 0, set()
     for e, qr in zip(entries, res):
-        ids, copies = _ids(qr), _copy_ids(qr)
+        ids, copies, leads = _ids(qr), _copy_ids(qr), _ids(qr, leads=True)
         code = exit_code(qr)
         marks = []
         for exp in e["expect"]:
@@ -3213,12 +3432,16 @@ def cmd_calibrate(path, opts):
                     down.update(off or [f"{s} (the file holding it was not read)" for s in srcs])
                 else:
                     seen_miss += 1
-            marks.append(("✓ " if ok else "✗ ") + exp + (" (copy)" if copy else ""))
+            lead = not ok and bool(_expect(exp, leads))
+            lead_n += lead
+            marks.append(("✓ " if ok else "~ " if lead else "✗ ") + exp + (" (copy)" if copy else "")
+                         + (" (lead only: form some)" if lead else ""))
         print(f"  {e['id']:4} exit {code}  {'  '.join(marks)}")
         if opts.out:
             full += [f"===== {e['id']}: {e.get('failure_class', '')}"] + render(qr, opts, full=True) + [""]
     print(f"\n{got_n} of {want_n} expected answers found"
-          + (f", {copy_n} of them as a copy: a header names the session on \"also in\"" if copy_n else "") + ".")
+          + (f", {copy_n} of them as a copy: a header names the session on \"also in\"" if copy_n else "") + "."
+          + (f" {lead_n} more only as a lead (form some, marked ~), not counted found." if lead_n else ""))
     for chan in sorted({c for c, _ in by_chan}):
         print(f"  {chan:11} {by_chan[(chan, True)]} of {by_chan[(chan, True)] + by_chan[(chan, False)]}")
     print("notes and memory are searched as they are today, so their hits are not limited by the cutoff.")
@@ -3255,15 +3478,16 @@ def _clip(s, n):
 
 
 def _brief_words(q, cut):
-    """(lines, matched count, problem): your typed messages and card answers in the request ledger that
-    match every concept, rulings first, then newest. Before a cutoff, only what you had said by then, and
-    no state, since the state is today's."""
+    """(lines, matched count, how many of them matched only as form some, problem): your typed messages and card
+    answers in the request ledger that match every concept, rulings first, then newest; after them those that
+    hold only some of a long concept's terms, each marked with the terms it holds, the most terms first. Before
+    a cutoff, only what you had said by then, and no state, since the state is today's."""
     path = ledger_path()
     try:
         with open(path, encoding="utf-8") as fh:
             lines = fh.readlines()
     except OSError as e:
-        return [], 0, f"DID NOT RUN: the request ledger {path.replace(HOME, '~')}: {_why(e)}"
+        return [], 0, 0, f"DID NOT RUN: the request ledger {path.replace(HOME, '~')}: {_why(e)}"
     got = []
     for ln in lines:
         try:
@@ -3280,18 +3504,22 @@ def _brief_words(q, cut):
         segs = [("you", r["text"])]
         if r.get("source") == "card":
             segs = [("card", r["question"]), ("you", r["answer"] or r["text"])]
-        if match_record(q, segs)[0]:
-            got.append((r.get("kind") == "decision" or r.get("state") == "ruled", ts, r))
-    got.sort(key=lambda g: (g[0], g[1]), reverse=True)
+        best = match_record(q, segs)[0]
+        if best:
+            some = _held(q, best, segs)
+            full = not any(b[1] == "some" for b in best)
+            got.append((full, r.get("kind") == "decision" or r.get("state") == "ruled", len(some), ts, r, some))
+    got.sort(key=lambda g: g[:4], reverse=True)     # full matches first, as before; then those holding most terms
     out = []
-    for ruled, ts, r in got[:12]:
+    for full, ruled, _, ts, r, some in got[:12]:
         tag = "ruling" if ruled else (r.get("kind") if cut else r.get("state")) or "?"
         said = (f'card "{_clip(r.get("question"), 140)}" -> "{_clip(r.get("answer") or r.get("text"), 140)}"'
                 if r.get("source") == "card" else f'"{_clip(r.get("text"), 300)}"')
-        out.append(f"  {ts[:16].replace('T', ' ')}  {tag}  {said}  ({_clip(r.get('title') or 'untitled', 60)})")
+        lead = "" if full else f"  [some: {', '.join(some)}]"
+        out.append(f"  {ts[:16].replace('T', ' ')}  {tag}{lead}  {said}  ({_clip(r.get('title') or 'untitled', 60)})")
     if len(got) > 12:
         out.append(f"  +{len(got) - 12} more: recall.py <the same concepts> --source notes")
-    return out, len(got), None
+    return out, len(got), sum(1 for g in got if not g[0]), None
 
 
 def _plan(calls):
@@ -3428,9 +3656,12 @@ def _brief_live(q, ref, cut, seals=()):
         title = a["title"] or v["title"] or "untitled"
         segs = ([("title", title)] + [("you", p) for _, p in v["prompts"]] + [("plan", s) for s, _ in v["plan"]]
                 + [("recap", v["recap"][1]), ("report", v["report"][1])] + [("file", f) for f in v["files"]])
-        (hit if match_record(q, segs)[0] else other).append(dict(v, title=title, id=a["id"] or sid, archived=a["archived"]))
+        best = match_record(q, segs)[0]
+        (hit if best else other).append(dict(v, title=title, id=a["id"] or sid, archived=a["archived"],
+                                             some=_held(q, best, segs) if best else []))
     for xs in (hit, other):
         xs.sort(key=lambda v: v["last"], reverse=True)
+    hit.sort(key=lambda v: bool(v["some"]))      # a session holding only some of a long concept's terms goes after
     cov = (f"{read} log(s) written in the {BRIEF_HOURS} h before {ref[:16]}Z read"
            + (f"; left out: {', '.join(f'{k} {n}' for k, n in sorted(left.items()))}" if left else ""))
     return hit, other, cov, (f"{left['unreadable']} log(s) could not be read" if left["unreadable"] else None)
@@ -3448,7 +3679,7 @@ def _brief_session(q, v):
     done = v["recap"][0] and v["recap"][0] >= v["planned"]
     said = [p for p in v["prompts"] if any(match_concept(c, p[1]) for c in q["concepts"])] or v["prompts"]
     out = [f"  {v['title']}  ({v['id'][:14]}{', archived since' if v['archived'] else ''}; last active "
-           f"{when(v['last'])}Z)"]
+           f"{when(v['last'])}Z)" + (f"  [some: {', '.join(v['some'])}]" if v.get("some") else "")]
     if v["plan"]:
         out.append(f"    plan{' (wrapped up after it)' if done else ''}: {_clip(plan, 300)}")
     ts, text = _stands(v)
@@ -3466,7 +3697,7 @@ def _brief_search(labels, cut, opts):
     one comments call per item, minutes), notes trimmed of the ledger (your words are above), .cache data and,
     before a cutoff, notes born after it; a note changed after it is marked."""
     o = argparse.Namespace(**dict(vars(opts), sources=BRIEF_SOURCES, no_pull=True))
-    qr = search([{"labels": labels, "since": None, "before": cut}], o)[0]
+    qr = search([{"labels": labels, "since": None, "before": cut, "some": True}], o)[0]
     born = 0
     r = qr["src"].get("notes")
     if r and r["ran"]:
@@ -3487,11 +3718,11 @@ def _brief_search(labels, cut, opts):
 
 
 def _brief_earlier(labels, cut, opts):
-    """(lines, hit count, problem) from notes, git, ADO and transcripts, in one round-robin TOP: each
-    source's strongest hit, then each one's next (ranked). ADO or transcripts not configured is said, not
-    a problem."""
+    """(lines, hit count, how many of them are leads (form some), problem) from notes, git, ADO and transcripts,
+    in one round-robin TOP: each source's strongest hit, then each one's next, every full match before any lead
+    (ranked). ADO or transcripts not configured is said, not a problem."""
     qr, born = _brief_search(labels, cut, opts)
-    out, n, bad, off = [], 0, [], []
+    out, n, nl, bad, off = [], 0, 0, [], []
     for name in BRIEF_SOURCES:
         r = qr["src"][name]
         if r.get("off") and name in BRIEF_OPTIONAL:
@@ -3500,14 +3731,15 @@ def _brief_earlier(labels, cut, opts):
         if not r["ran"] or r["partial"]:
             bad.append(f"{name}: {r['why'] or '; '.join(r['partial'])[:200]}")
         n += len(r["hits"]) if r["ran"] else 0
+        nl += sum(1 for h in r["hits"] if _partial(h)) if r["ran"] else 0
     shown = collections.Counter()
     for e in ranked(qr, top=BRIEF_TOP, caps={x: 0 for x in BRIEF_SOURCES}):
         if not e["place"]:
             continue
         h = e["hit"]
         shown[e["src"]] += 1
-        out += [f"  {e['src']}  {h['head']}{'  (changed after the cutoff)' if h.get('changed') else ''}",
-                f"      {h['excerpt']}"]
+        out += [f"  {e['src']}  {h['head']}{'  (changed after the cutoff)' if h.get('changed') else ''}"
+                + ("  [some of the words only]" if _partial(h) else ""), f"      {h['excerpt']}"]
     for name in BRIEF_SOURCES:
         r = qr["src"][name]
         more = (len(r["hits"]) if r["ran"] else 0) - shown[name]
@@ -3517,7 +3749,7 @@ def _brief_earlier(labels, cut, opts):
         out.append(f"  ({born} note(s) created after the cutoff left out)")
     if off:
         out.append(f"  ({', '.join(off)} not configured, so not searched)")
-    return out, n, "; ".join(bad) or None
+    return out, n, nl, "; ".join(bad) or None
 
 
 def _ado_age():
@@ -3532,14 +3764,15 @@ def _ado_age():
 
 
 def cmd_brief(labels, opts):
-    """Print the brief; exit 0 something to read, 1 nothing matched, 2 a part DID NOT RUN."""
+    """Print the brief; exit 0 something matched, 1 nothing matched (leads, form some, may still be listed:
+    a LEADS ONLY line says so), 2 a part DID NOT RUN."""
     def say(text):                          # each line carries its ids' links (link_lines)
         print("\n".join(link_lines(str(text).split("\n"))))
 
-    q = compile_query({"labels": labels, "before": opts.before})
+    q = compile_query({"labels": labels, "before": opts.before, "some": True})
     cut = q["before"]
     ref = cut or CONFIG.get("brief_now") or utc(datetime.datetime.now(datetime.timezone.utc))  # brief_now: selftest
-    words, nw, w_bad = _brief_words(q, cut)
+    words, nw, nsome, w_bad = _brief_words(q, cut)
     try:                                    # before any log is read, as search() does
         seals = find_seals(opts)["seals"]
     except Exception as e:                  # unknown seals: listing live sessions could show a sealed one
@@ -3548,15 +3781,21 @@ def cmd_brief(labels, opts):
                                               else f"DID NOT RUN: the seal check crashed: {_why(e)}")
     if seals is not None:
         hit, other, cov, l_bad = _brief_live(q, ref, cut, seals)
-    earlier, ne, e_bad = _brief_earlier(labels, cut, opts)
+    earlier, ne, nel, e_bad = _brief_earlier(labels, cut, opts)
     say(f"recall --brief  {' '.join(json.dumps(x, ensure_ascii=False) for x in labels)}  "
         + (f"(as it stood before {cut[:16]}Z)" if cut else "(now)"))
     say(f"NARROWED  --brief leaves out Figma threads and logs older than {BRIEF_HOURS} h, and reads ADO as cached"
         f"{_ado_age()}: run recall.py with the same concepts for those")
+    some = "; ".join(f'"{a["text"]}" matches {a["some"]["k"]} of its terms together too ({", ".join(a["some"]["terms"])})'
+                     for c in q["concepts"] for a in c["alts"] if a.get("some"))
+    if some:
+        say(f"SOME  {some}: a [some: ...] line holds only those terms, a lead to open, not a match")
     say(f"YOUR WORDS  {nw} message(s) and card answer(s) in the request ledger match"
-        + (f"; {w_bad}" if w_bad else ""))
+        + (f", {nsome} of them on some of the words only" if nsome else "") + (f"; {w_bad}" if w_bad else ""))
     say("\n".join(words) or "  none")
-    say(f"LIVE SESSIONS  {len(hit)} match, {len(other)} other live; {cov}" + (f"; {l_bad}" if l_bad else ""))
+    ns = sum(1 for v in hit if v["some"])
+    say(f"LIVE SESSIONS  {len(hit)} match{f' ({ns} on some of the words only)' if ns else ''}, {len(other)} other live; "
+        f"{cov}" + (f"; {l_bad}" if l_bad else ""))
     for v in hit[:8]:
         say("\n".join(_brief_session(q, v)))
     for v in other[:12]:
@@ -3564,13 +3803,17 @@ def cmd_brief(labels, opts):
                or (v["prompts"] or [("", "")])[-1][1])
         say(f"  also live: {v['title']} ({v['id'][:14]}): {_clip(now, 150)}")
     say(f"EARLIER WORK  {ne} hit(s) in notes, git, ADO and transcripts: each source's strongest, then each one's next"
-        + (f"; DID NOT RUN: {e_bad}" if e_bad else ""))
+        + (f", {nel} of them on some of the words only" if nel else "") + (f"; DID NOT RUN: {e_bad}" if e_bad else ""))
     say("\n".join(earlier) or "  none")
     say("NOT IN THIS BRIEF  Figma threads and logs older than "
         f"{BRIEF_HOURS} h: run recall.py with the same concepts for those.")
+    full = nw - nsome or len(hit) - ns or ne - nel
+    if not full and (nsome or ns or nel):
+        say(f"LEADS ONLY  nothing matched in full; the {nsome + ns + nel} [some ...] line(s) above hold only some of "
+            "the terms: open each before calling this new or open")
     if w_bad or l_bad or e_bad:
         return 2
-    return 0 if nw or hit or ne else 1
+    return 0 if full else 1
 
 
 # -------------------------------------------------------------------------------------- --selftest
@@ -3608,6 +3851,7 @@ def _plant(root):
         rec(82, "assistant", "see frame 3900-33900 for the card"),
         rec(83, "assistant", "the heading is node-id=I10900-71900%3B5900-52900 in that link"),
         rec(84, "assistant", "a longer layer id, I10900:71900;5900:529001, is another node"),
+        rec(85, "user", "read the claude.ai chats in safari this time, not edge; I asked for this before"),   # some
         rec(9, "user", "the apple pie token is ghp_" + "Ab1" * 12),
         (json.dumps({"type": "attachment", "uuid": "r10", "sessionId": u[0], "timestamp": "2026-09-15T10:00:00Z",
                      "attachment": {"type": "edited_text_file", "filename": "/x/notes.md",
@@ -3797,7 +4041,9 @@ def _plant(root):
     git = ["git", "-C", g, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.hooksPath=/dev/null",
            "-c", "commit.gpgsign=false"]
     subprocess.run(["git", "init", "-q", g], check=True)
-    for fname, body, msg in (("a.txt", "x\n", "Add pstack helper"), ("b.txt", "the hero crop moved\n", "tweak")):
+    for fname, body, msg in (("a.txt", "x\n", "Add pstack helper"), ("b.txt", "the hero crop moved\n", "tweak"),
+                             # its message holds 2 of the terms (a lead), its diff the whole text (a match)
+                             ("c.txt", "claude.ai Safari not Edge signed_in_browser\n", "Read claude.ai in Safari")):
         with open(os.path.join(g, fname), "w") as fh:
             fh.write(body)
         subprocess.run(git + ["add", fname], check=True)
@@ -3849,11 +4095,19 @@ def selftest_brief():
                  {"question": "Which widget roster layout?", "answer": ["Two columns", "with photos"], "text": ""}),
                 ("2026-10-21T08:00:00Z", "typed", "request", "open", {"text": "fix the footer spacing"}),
                 ("2026-10-21T08:30:00Z", "spawned", "request", "done", {"text": "SPAWNED brief on the widget roster"}),
-                ("2026-10-19T09:00:00Z", "typed", "decision", "ruled", {"text": "RULING the widget roster stays one page"})]
+                ("2026-10-19T09:00:00Z", "typed", "decision", "ruled", {"text": "RULING the widget roster stays one page"}),
+                # Shaped as the user's messages of 2026-11-10/11 on reading claude.ai, reworded: --brief "claude.ai
+                # Safari not Edge signed_in_browser" missed them while --brief "claude.ai safari" found them.
+                ("2026-10-22T04:29:00Z", "typed", "request", "done",
+                 {"text": "read the claude.ai chats in safari this time, not edge; I asked for this before"}),
+                ("2026-10-21T21:30:00Z", "typed", "request", "answered",
+                 {"text": "> Cloudflare: a script can't get past it, so the scripted route won't reach claude.ai. "
+                          "my own safari window has it open already"})]
         with open(led, "w", encoding="utf-8") as fh:
             fh.writelines(json.dumps(dict(r, ts=t, source=s, kind=k, state=st, title="Roster work")) + "\n" for t, s, k, st, r in rows)
         for local, cli, title, arch in (("local_A", "A", "Roster redesign", False), ("local_B", "B", "Old roster", True),
-                                        ("local_C", "C", "Footer fix", False), ("local_S", "S", "This one", False)):
+                                        ("local_C", "C", "Footer fix", False), ("local_S", "S", "This one", False),
+                                        ("local_D", "D", "Read every claude.ai chat", False)):
             with open(os.path.join(apps, local + ".json"), "w", encoding="utf-8") as fh:
                 json.dump({"sessionId": local, "cliSessionId": cli, "title": title, "isArchived": arch}, fh)
 
@@ -3877,6 +4131,11 @@ def selftest_brief():
                 "B": [user("2026-10-21T09:10:00Z", "ARCHIVED widget roster, old version")],
                 "C": [user("2026-10-21T10:00:00Z", "fix the footer"),
                       tool("2026-10-21T10:01:00Z", PLAN_TOOL, {"items": [{"content": "FOOTER-STEP", "status": "in_progress"}]})],
+                # the session where the user said to read claude.ai in a browser, its recap naming the tools
+                "D": [user("2026-10-22T10:00:00Z", "open a browser and read every chat end to end"),
+                      tool("2026-10-22T11:00:00Z", WRAP_TOOL, {"recap": "Opened an Edge window for the Cloudflare check "
+                                                               "on claude.ai, then read it through Safari; "
+                                                               "signed_in_browser failed the check"})],
                 "S": [user("2026-10-21T09:10:00Z", "SELF widget roster")],
                 # this session as the CLI names it, with no desktop app file
                 "S2": [user("2026-10-21T09:12:00Z", "SELFCLI widget roster", entry="cli")],
@@ -3891,6 +4150,8 @@ def selftest_brief():
                             json.dumps({"reason": "t", "owner": "t", "until": "2099-01-01", "logs": ["SEALD"]})),
                            (os.path.join(notes, "roster.md"), "# Roster\n\nNOTE the widget roster lives here.\n"),
                            (os.path.join(notes, ".cache", "c.md"), "CACHED widget roster\n"),
+                           (os.path.join(notes, "browser-route.md"), "# Browser route\n\nclaude.ai is read through the "
+                            "open Safari tab, since Cloudflare stops a scripted Edge.\n"),
                            (os.path.join(repo, "r.txt"), "x\n")):
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(text)
@@ -3954,6 +4215,26 @@ def selftest_brief():
                     and "Footer fix" not in then and "NOTE the widget" not in then and "1 note(s) created after" in then
                     and "SEALEDLOG" not in then
                     and "Add the widget roster" not in then and "LATEADO" not in then and "WIDGETADO" in then)]
+            # Known bad of 2026-11-11: the long query found none of these, the short one all of them.
+            c, lg = brief("claude.ai Safari not Edge signed_in_browser")
+            cs, sh = brief("claude.ai safari")
+            _, un = brief("footer spacing Safari tablet breakpoint")
+            mine = ("read the claude.ai chats in safari", "my own safari window has it open")
+            said = 'you said (10-22 10:00Z): "open a browser and read every chat'
+            res += [("a long query naming tools beside the topic lists your words that name only the topic, each "
+                     "marked with the terms it holds, as leads: exit 1 and a LEADS ONLY line, not a match",
+                     c == 1 and all(m in lg for m in mine) and "YOUR WORDS  2 message(s)" in lg
+                     and "2 of them on some of the words only" in lg and lg.count("[some: claude.ai, Safari]") == 2
+                     and "LEADS ONLY  nothing matched in full" in lg),
+                    ("...and the live session on it, with what you said there, and the note, each marked as a lead",
+                     "Read every claude.ai chat" in lg and "(1 on some of the words only)" in lg and said in lg
+                     and "[some: claude.ai, Safari, signed_in_browser]" in lg
+                     and "browser-route.md" in lg and "[some of the words only]" in lg),
+                    ("the short query still finds the same words, session and note, as full matches",
+                     cs == 0 and all(m in sh for m in mine) and "Read every claude.ai chat" in sh and said in sh
+                     and "browser-route.md" in sh and "[some" not in sh and "LEADS ONLY" not in sh),
+                    ("a long query on another topic that shares one of their terms finds none of them",
+                     not any(m in un for m in mine) and "LIVE SESSIONS  0 match" in un and "browser-route.md" not in un)]
             CONFIG["ledger"] = os.path.join(root, "gone.jsonl")
             c, out = brief("widget roster")
             res.append(("a ledger that cannot be read is exit 2 and says DID NOT RUN", c == 2 and "DID NOT RUN" in out))
@@ -3969,7 +4250,7 @@ def selftest_brief():
         for name, good in checks():
             ok &= good
             print(("pass " if good else "FAIL ") + "--brief " + name)
-        for m in ("brief_no_cut", "brief_no_self", "brief_no_seal"):
+        for m in ("brief_no_cut", "brief_no_self", "brief_no_seal", "no_some", "no_some_places"):
             MUT.clear()
             MUT.add(m)
             failed = [n for n, g in checks() if not g]
@@ -4023,6 +4304,43 @@ def selftest_rank():
             res.append(("no alias list: no alias, and the query still compiles",
                         not any(a.get("named") for a in compile_query({"labels": ["Gizmo"]})["concepts"][0]["alts"])))
             CONFIG["aliases"] = saved["aliases"]
+        long = "claude.ai Safari not Edge signed_in_browser"
+        q = compile_query({"labels": [long], "some": True})
+        con, sm = q["concepts"][0], q["concepts"][0]["alts"][0].get("some")
+        m = match_concept(con, "read the claude.ai chats in safari, not edge")
+        res.append(("an alternative of 3 or more terms also matches half of them together, 2 at least, as form some; "
+                    "a common word, and the word not rules out, is not a term",
+                    sm is not None and sm["k"] == 2 and m is not None and m[1] == "some"
+                    and sm["terms"] == ["claude.ai", "Safari", "signed_in_browser"]))
+        res.append(("...not one term alone, the words of one term apart, or two terms over 120 characters apart",
+                    match_concept(con, "safari and the signed browser") is None
+                    and match_concept(con, "claude.ai " + "x " * 70 + "safari") is None))
+        res.append(("...not an alternative of 2 terms, as before, nor one of 9 or more (a pasted sentence)",
+                    compile_query({"labels": ["claude.ai safari"], "some": True})["concepts"][0]["alts"][0].get("some")
+                    is None and compile_query({"labels": [" ".join(f"term{i}x" for i in range(9))], "some": True}
+                                              )["concepts"][0]["alts"][0].get("some") is None))
+        res.append(("...and a tool that imports recall gets form some only when its query asks for it",
+                    compile_query({"labels": [long]})["concepts"][0]["alts"][0].get("some") is None))
+        hs = order_hits([{"ts": "2026-10-30", "alts": ["x"], "rank": RANK["some"], "form": "some", "head": "lead",
+                          "title": True, "decision": True},
+                         {"ts": "2026-10-01", "alts": ["x"], "rank": 0, "form": "near", "head": "match"}])
+        res.append(("a hit on some of the words prints after its source's full matches, however new, and weighs less",
+                    [h["head"] for h in hs] == ["match", "lead"]
+                    and hs[1].get("strength", 0) / 2.25 < hs[0].get("strength", 0)))
+        bl = [e["hit"]["head"] for e in ranked({"src": {"notes": {"ran": True, "hits": hs[1:]},
+                                                        "git": {"ran": True, "hits": hs[:1]}}}, top=2,
+                                               caps={"notes": 0, "git": 0})]
+        res.append(("...and in --brief's ranked list a full match places above a lead that weighs more (a decision "
+                    "file's heading)", hs[1].get("strength", 0) > hs[0].get("strength", 0) and bl == ["match", "lead"]))
+        lq = {"src": {"notes": {"ran": True, "partial": [], "hits": hs[1:]}}}
+        res.append(("a search holding only leads exits 1, saying how many leads to open",
+                    exit_code(lq) == 1 and "1 lead(s)" in meaning(lq, 1)))
+        lg = log_groups([{"key": "aaaaaaaa-0000-4000-8000-000000000001", "ts": "2026-10-30", "role": "you",
+                          "rank": RANK["some"]},
+                         {"key": "bbbbbbbb-0000-4000-8000-000000000002", "ts": "2026-10-01", "role": "assistant",
+                          "rank": 0}])
+        res.append(("...and in the logs a session where you typed only some of the words comes after one holding them all",
+                    [s[:1] for s, _ in lg] == ["b", "a"]))
         hs = [{"ts": "2026-10-30", "alts": ["atlas"], "form": "exact", "head": "new"},
               {"ts": "2026-10-01", "alts": ["rename", "atlas"], "form": "exact", "title": True, "head": "old"},
               {"ts": "2026-10-29", "alts": ["atlas"], "form": "exact", "head": "mid"}]
@@ -4181,7 +4499,7 @@ def selftest_rank():
     for name, good in checks():
         check(name, good)
     for m in ("no_stem", "no_named", "no_strength", "no_origin", "no_link", "no_also_print", "no_also_keep",
-              "no_copy_credit", "no_rewrite", "copy_any_text", "copy_one_time"):
+              "no_copy_credit", "no_rewrite", "copy_any_text", "copy_one_time", "no_some", "no_some_tier"):
         MUT.clear()
         MUT.add(m)
         failed = [n for n, g in checks() if not g]
@@ -4263,7 +4581,7 @@ def selftest():
             fc.fetch = fetch or (lambda key: [dict(c) for c in planted])
             opts.refresh = refresh
             try:
-                qr = search([{"labels": list(labels), "since": since, "before": before}], opts)[0]
+                qr = search([{"labels": list(labels), "since": since, "before": before, "some": True}], opts)[0]
             finally:
                 opts.refresh = False
             return qr, "\n".join(render(qr, opts, full=True))
@@ -4359,12 +4677,29 @@ def selftest():
             qr, _ = run("MobileCard")
             check("one record in three copies (live, archive, resumed zip) is one hit",
                   [h["id"] for h in logs(qr)].count("r2") == 1)
+            # Known bad of 2026-11-11: a query naming tools beside its topic found none of the user's words on it.
+            qr, said = run("claude.ai Safari not Edge signed_in_browser")
+            check("a query naming tools beside its topic finds a record you typed holding 2 of its 3 terms together, "
+                  "through the index, as form some",
+                  [(h["role"], h["forms"]) for h in logs(qr) if h["id"] == "r85"] == [("you", ["some"])])
+            whole = {skey(h["key"]) for h in logs(qr) if h["role"].startswith("you") and not _partial(h)}
+            lead = {skey(h["key"]) for h in logs(qr) if h["role"].startswith("you") and _partial(h)} - whole
+            r85 = {skey(h["key"]) for h in logs(qr) if h["id"] == "r85"}
+            check("...and the summary counts a session where you typed only some of the words apart from typed by you",
+                  bool(r85) and r85 <= lead
+                  and f"typed by you in {len(whole)} (and some of its words in {len(lead)} more)" in said)
+            check("...and a commit whose message holds 2 of them but whose diff holds the whole text is a diff match, "
+                  "not a lead", [h["form"] for h in qr["src"]["git"]["hits"] if "Read claude.ai in Safari" in h["head"]]
+                  == ["diff"])
+            qr, _ = run("footer spacing Safari tablet breakpoint")
+            check("...and a long query on another topic, sharing one term with it, does not",
+                  "r85" not in {h["id"] for h in logs(qr)})
             # The logs source reads through recall_index.py. Read whole (--scan), the same queries give the
             # same hits; the index follows a log that grows, is rewritten, or ends mid-line.
             def both(*qs):
                 """qs: (labels, since) pairs, searched in the logs at once through the index and read whole.
                 -> [(the two agree on hits, roles, forms and SPLIT, the result through the index, its text)]."""
-                Q = [{"labels": list(lb), "since": since, "before": None} for lb, since in qs]
+                Q = [{"labels": list(lb), "since": since, "before": None, "some": True} for lb, since in qs]
                 was, opts.sources = opts.sources, ("logs",)
                 try:
                     a = search(Q, opts)
@@ -4382,10 +4717,11 @@ def selftest():
                 return out
             agree = both(*[((t,), None) for t in ("mobile card", "café→menu", "kiwi", "olive", "peach report",
                                                   "guava finding", "tamarind brief", "MobileCard", "durian", "papaya",
-                                                  "lychee", "grape", "zebra", "3900:33900", "apple pie")],
+                                                  "lychee", "grape", "zebra", "3900:33900", "apple pie",
+                                                  "claude.ai Safari not Edge signed_in_browser")],
                          (("quokka", "wombat"), None), (("lemon",), "2026-09-01"))
             check(f"{len(agree)} planted queries through the index and read whole (--scan) give the same hits, roles, "
-                  f"forms and SPLIT", all(g for g, _, _ in agree) and len(agree) == 17)
+                  f"forms and SPLIT", all(g for g, _, _ in agree) and len(agree) == 18)
             text = both((("→",), None))[0][2]
             check("a term with no 3-character run is read whole, and COVERAGE says why",
                   "every copy read whole, not through the index: '→' has no run of 3" in text)
@@ -5161,7 +5497,8 @@ def selftest():
         # Mutations: break one rule at a time; at least one check must fail.
         for m in ("no_variants", "no_decode_path", "no_dedup", "no_zip", "meta_counts", "no_redact", "no_instance_id",
                   "no_utc", "no_asof", "no_seal", "no_seal_notes", "no_seal_logs", "off_is_gap", "index_writes_sealed",
-                  "whole_file_match", "no_fold_check", "finditer_places", "queued_reminders"):
+                  "whole_file_match", "no_fold_check", "finditer_places", "queued_reminders", "no_some_index",
+                  "no_some_raw", "some_beats_diff", "you_counts_leads"):
             MUT.clear()
             MUT.add(m)
             _CACHE.clear()
@@ -5342,7 +5679,7 @@ def main():
         return cmd_calibrate(a.calibrate, a)
     if a.brief:
         return cmd_brief(a.concepts, a)
-    qr = search([{"labels": a.concepts, "since": a.since, "before": a.before}], a)[0]
+    qr = search([{"labels": a.concepts, "since": a.since, "before": a.before, "some": True}], a)[0]
     for line in render(qr, a, link=True):
         print(line)
     if a.out:
