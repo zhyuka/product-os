@@ -976,6 +976,20 @@ def map_systems(text, root):
     return out
 
 
+def proper_stems(text, first=False):
+    """The stems of the names a text uses: a CamelCase word anywhere, or a capitalised one past a sentence's first
+    word (any word with first=True, for a name list). On 400 past cards, matching traps on plain words ("demo",
+    "page", "screen") printed one on 59, nearly all beside the point."""
+    out = set()
+    for sent in SENTENCE.split(URL.sub(" ", text or "")):
+        for i, tok in enumerate(re.findall(r"[A-Za-z][A-Za-z0-9'’]*[A-Za-z0-9]", sent)):
+            if CAMEL.search(tok) or (tok[0].isupper() and (first or i > 0)):
+                w = re.sub(r"['’]s$", "", tok).lower()
+                if len(w) >= 3 and w not in TOPIC_STOP:
+                    out.add(stem(w))
+    return out
+
+
 def kb_systems():
     """([{"name", "desc", "docs"}] for each knowledge body: its name and aliases, its line, its page and the canonical
     files its line names (a folder by its README.md); [the knowledge entries as ruling passages]) from kb.py's index,
@@ -986,6 +1000,13 @@ def kb_systems():
         return [], [], why
     d, root = kb.kb_dir(), kb.root()
     systems, entries = [], []
+    # A body's name traps ("AgentFlow is the framework, not the builder") are single sentences that lose to longer
+    # passages on shared words, so each is its own passage, matched on the name it is about. A name stem three or
+    # more bodies share ("agent") is too common to match on. Known bad: a card asking what a teammate meant by
+    # AgentFlow got 0 of 2 leads while the body's trap answered it.
+    def names_of(b):
+        return " ".join([b["name"]] + [a.split("alias:", 1)[1].split("(since")[0] for a in b.get("aliases", [])])
+    seen = collections.Counter(s for b in bodies for s in proper_stems(names_of(b), first=True))
     for b in bodies:
         page = os.path.join(d, b["slug"] + ".md")
         listed = b["rest"].split("Canonical:", 1)[1].split("Name traps:", 1)[0] if "Canonical:" in b["rest"] else ""
@@ -995,9 +1016,26 @@ def kb_systems():
             p = os.path.join(p, "README.md") if os.path.isdir(p) else p
             if p.endswith(".md") and os.path.isfile(p) and p not in docs:
                 docs.append(p)
-        names = " ".join([b["name"]] + [a.split("alias:", 1)[1].split("(since")[0] for a in b.get("aliases", [])])
+        names = names_of(b)
+        terms = {s for s in proper_stems(names, first=True) if seen[s] < 3}
+        said = b["rest"].split("Name traps:", 1)[1].strip() if "Name traps:" in b["rest"] else ""
+        traps = []
+        for sent in ([] if re.match(r"none\b", said, re.I) else SENTENCE.split(said)):
+            # The name the sentence is about: its leading run of capitalised words, an article aside. A trap that only
+            # mentions a name ("... are on this Mac alone", "ADO #1440 is the site's Agentic OS pages") printed beside
+            # past cards where that name was beside the point.
+            lead = []
+            for i, tok in enumerate(re.findall(r"[A-Za-z][A-Za-z0-9'’]*[A-Za-z0-9]|\S", sent)):
+                if i == 0 and tok in ("The", "A", "An"):
+                    continue
+                if not (tok[0].isupper() or CAMEL.search(tok)):
+                    break
+                lead.append(tok)
+            hit = sorted(terms & proper_stems(" ".join(lead), first=True))
+            if sent.strip() and hit:
+                traps.append({"kind": "trap", "cite": f"{page} (name traps)", "excerpt": sent.strip(), "terms": hit})
         systems.append({"name": names.replace("|", " ").replace("=", " "), "label": b["name"],
-                        "desc": b["rest"].split("Canonical:", 1)[0], "docs": docs})
+                        "desc": b["rest"].split("Canonical:", 1)[0], "docs": docs, "traps": traps})
         if os.path.isfile(page):
             with open(page, encoding="utf-8", errors="replace") as f:
                 es, _, _ = kb.parse_page(f.read(), b["slug"])
@@ -1040,7 +1078,8 @@ def topic_sources(rows, before=None):
         ks, entries, why = kb_systems()
         src["systems"] += ks
         src["rulings"] += entries
-        status["knowledge"] = f"not configured ({why})" if why else f"ran ({len(ks)} bodies, {len(entries)} entries)"
+        status["knowledge"] = (f"not configured ({why})" if why else
+                               f"ran ({len(ks)} bodies, {len(entries)} entries, {sum(len(s['traps']) for s in ks)} name traps)")
     except Exception as e:  # noqa: BLE001 -- a knowledge index that can't be read is named, never passed
         status["knowledge"] = f"did not run: {type(e).__name__}: {e}"[:160]
     cache = {}
@@ -1087,9 +1126,15 @@ def topic_lookup(card, rows, before=None, src=None, idf=None):
     for q in card.get("questions", []):
         qw = question_weights(q, idf)
         if not qw:
-            out.append({"terms": [], "order": [], "your words": [], "ruling": [], "doc": [], "systems": [],
+            out.append({"terms": [], "order": [], "trap": [], "your words": [], "ruling": [], "doc": [], "systems": [],
                         "outward": None, "lead": None, "yours": None})
             continue
+        # On a name the question uses, among its heaviest stems: a trap on a word as common as "build" matched an
+        # unrelated question.
+        top = set(sorted(qw, key=lambda s: (-qw[s], s))[:8]) & proper_stems(f"{q.get('header') or ''}. {q.get('question') or ''}")
+        traps = [dict(t, shared=[x for x in t["terms"] if x in top]) for s in src["systems"] for t in s.get("traps", [])
+                 if any(x in top for x in t["terms"])]
+        traps.sort(key=lambda t: (-max(qw[x] for x in t["shared"]), t["cite"], t["excerpt"]))
         systems = systems_for(qw, src["systems"])
         docs = list(dict.fromkeys(p for s in systems for p in s["docs"] if "draft" not in os.path.basename(p).lower()))
         got = {"your words": top_passages(qw, src["words"]), "ruling": top_passages(qw, src["rulings"]),
@@ -1106,7 +1151,8 @@ def topic_lookup(card, rows, before=None, src=None, idf=None):
                 if bar is not None and h["score"] >= bar and len(h["shared"]) >= n:
                     speaks.append(h)
         order = sorted(qw, key=lambda s: (-qw[s], s))
-        out.append({"terms": order[:8], "order": order, **got, "systems": [s.get("label") or s["name"] for s in systems],
+        out.append({"terms": order[:8], "order": order, "trap": traps[:TOPIC_SHOW], **got,
+                    "systems": [s.get("label") or s["name"] for s in systems],
                     "outward": out_, "lead": None if yours else (speaks[0] if speaks else None), "yours": yours})
     return out
 
@@ -1122,6 +1168,8 @@ def topic_lines(topics):
         out.append((n, f"topic    {', '.join(t['terms'])}" + (f"; systems read: {'; '.join(t['systems'])}" if t["systems"]
                                                               else "; no system named")
                     + (f"; outward ({t['outward']!r}), so a doc alone doesn't decide it" if t["outward"] else "")))
+        out += [(n, f"  trap       {h['cite']} on {', '.join(h['shared'])}: \"{_clip(h['excerpt'], 220)}\"")
+                for h in t.get("trap", [])]
         for kind in ("your words", "ruling", "doc"):
             hs = [h for h in t[kind] if h["score"] >= TOPIC_PRINT]
             out += [(n, f"  {kind:10} {h['score']:.2f} ({len(h['shared'])} shared)  {h['cite']}: \"{_clip(h['excerpt'], 220)}\"")
@@ -2142,7 +2190,9 @@ audio fills those stretches.
         os.makedirs(kbd)
         with open(os.path.join(kbd, "index.md"), "w", encoding="utf-8") as f:
             f.write("# Knowledge\n\n- [Meeting capture](meeting.md): the caption capture tool. Canonical: "
-                    "`MeetingCapture/`. Name traps: none.\n  - alias: recorder = capture tool  (since 2026-01-01, x)\n")
+                    "`MeetingCapture/`. Name traps: none.\n  - alias: recorder = capture tool  (since 2026-01-01, x)\n"
+                    "- [Frame builder and FrameKit](frame.md): the demo builder and its library. Canonical: `FrameKit/`. "
+                    "Name traps: FrameKit is the library, not the builder. Say Frame builder, never bare Frame.\n")
         with open(os.path.join(kbd, "meeting.md"), "w", encoding="utf-8") as f:
             f.write("# Meeting\n\n## Entries\n\n### meeting.audio\n- id: k-0001; status: live; written: 2026-11-03\n"
                     "- question: \"Is the audio the main source?\" (phrased by the writer)\n"
@@ -2160,6 +2210,19 @@ audio fills those stretches.
                     not why and ks and ks[0]["docs"] == [os.path.join(kbd, "meeting.md"),
                                                          os.path.join(tmp, "MeetingCapture", "README.md")]
                     and "recorder" in ks[0]["name"] and entries and "k-0001" in entries[0]["cite"]))
+        tsrc = {"words": [], "rulings": [], "systems": ks, "read": lambda p: []}
+        meant = {"header": "FrameKit", "question": "Should we ask the lead what she meant by FrameKit in her flow: "
+                                                   "a separate place to build, or how the builder builds?",
+                 "options": [{"label": "Ask her"}, {"label": "Skip"}]}
+        tk = topic_lookup({"questions": [meant, footer]}, [], src=tsrc, idf=lambda s: 1.0)
+        tl = topic_lines(tk)
+        res.append(("a name trap is its own lead, printed first, on the name it is about; 'none' and a question not "
+                    "naming it get none",
+                    not ks[0]["traps"] and len(ks[1]["traps"]) == 2
+                    and tk[0]["trap"] and tk[0]["trap"][0]["excerpt"].startswith("FrameKit is the library")
+                    and not tk[1]["trap"]
+                    and any(n == 1 and ln.lstrip().startswith("trap ") and "framekit" in ln for n, ln in tl)
+                    and [ln for n, ln in tl if n == 1][1].lstrip().startswith("trap ")))
     # Ours to do without a lookup: the question asks whether to ask leave, or a quoted message asks it; a note handing
     # someone facts, and a send with no drafted ask, don't.
     leave_q = {"question": "Should I ask Ana whether we may build the two demos before the review?",
