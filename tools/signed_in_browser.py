@@ -40,7 +40,14 @@ CONFIG (product-os config, all optional):
     signed_in_browser.no_profile_under   folders a profile must never sit under, because they are
                                          synced to a cloud drive or backed up (default ~/Desktop and
                                          ~/Documents)
+    signed_in_browser.not_for            {"<host>": "<why, and the route to use instead>"}: sites this
+                                         tool refuses (exit 1) before it claims a port or starts a
+                                         browser, the host and every host under it
 --channel on the command line overrides the config.
+
+BOT CHECKS. A bot-check page (Cloudflare's `cf-mitigated: challenge` header, its challenge markers,
+or a "Just a moment..." title over verification text) never counts as signed in. The run stops with
+BOT CHECK and exit 2, with a window or without: no sign-in passes one, and this tool solves none.
 
 RULES IT KEEPS
   - The profile is a fresh folder in the system temp dir, never under a synced folder. It refuses to
@@ -103,6 +110,16 @@ STOP_FILE = "stop"             # Windows: `stop` writes it in the serve's folder
 MOVED = {"outlook.office.com": ("outlook.cloud.microsoft",),
          "outlook.office365.com": ("outlook.cloud.microsoft",),
          "teams.microsoft.com": ("teams.cloud.microsoft",)}
+# Bot checks. Cloudflare's "Just a moment..." page sits on the site's own host with plenty of text,
+# so it used to count as signed in: on 2026-11-10 `serve https://claude.ai` printed SERVING (ready)
+# twice on a page no script gets past. A run now stops on one, headed or not: no sign-in passes it,
+# and this tool solves no challenge.
+BOT_CHECK = "bot check"
+BOT_TITLE = re.compile(r"^\s*(just a moment|attention required|checking your browser|verifying you are human)", re.I)
+BOT_TEXT = re.compile(r"performing security verification|verif(y|ying) you are (a )?human|checking your browser"
+                      r"|checking if the site connection is secure|enable javascript and cookies to continue", re.I)
+CHALLENGE_JS = ("!!(window._cf_chl_opt || document.querySelector('#challenge-form,#challenge-stage,"
+                "#challenge-running,#challenge-error-text,script[src*=\"/cdn-cgi/challenge-platform/\"]'))")
 
 
 def _cfg(key, default):
@@ -128,6 +145,53 @@ def sign_in_buttons():
     ready."""
     v = _cfg("sign_in_buttons", {})
     return v if isinstance(v, dict) else {}
+
+
+def not_for():
+    """{host: why, and the route to use instead} from config: sites this tool must not open, such as
+    one whose bot check no sign-in passes."""
+    v = _cfg("not_for", {})
+    return v if isinstance(v, dict) else {}
+
+
+def host_refusal(url, table=None):
+    """Refusal text or None: url's host is, or is under, a host config not_for names. Matched on the
+    hostname, lowercased with any trailing dot gone, so a port, a user or capitals don't slip past."""
+    table = not_for() if table is None else table
+    h = (urllib.parse.urlparse(str(url)).hostname or "").lower().rstrip(".")
+    for k, why in table.items():
+        k = str(k).strip().lower().rstrip(".")
+        if h and k and (h == k or h.endswith("." + k)):
+            return f"REFUSED: {h} is not for this tool (config signed_in_browser.not_for): {why}"
+    return None
+
+
+def bot_check(info=None, headers=None):
+    """True on a bot-check page: Cloudflare's `cf-mitigated: challenge` header on the response (it
+    documents the header on every challenge page type), its challenge markers in the page, or a
+    bot-check title together with bot-check text. A page that only quotes such words is not one."""
+    try:
+        h = {str(k).lower(): str(v) for k, v in dict(headers or {}).items()}
+    except Exception:
+        h = {}
+    if h.get("cf-mitigated", "").strip().lower() == "challenge":
+        return True
+    info = info or {}
+    if info.get("challenge"):
+        return True
+    return bool(BOT_TITLE.search(info.get("title") or "") and BOT_TEXT.search(info.get("text") or ""))
+
+
+def _headers(resp):
+    try:
+        return resp.headers if resp is not None else {}
+    except Exception:
+        return {}
+
+
+def bot_reason(where):
+    return (f"{BOT_CHECK}: {where} shows a bot check (Cloudflare's or the like), which no sign-in "
+            "passes. Nothing was clicked or solved")
 
 
 def no_profile_under():
@@ -260,7 +324,7 @@ def sso_ready(host):
     """A `ready` function for a site on `host` behind single sign-on: 'ready' once the tab is on that
     host with content and no sign-in form, 'needs-user' on a password, code, account picker or
     consent screen, or an identity provider's email field, else 'wait'. It never types."""
-    js = """() => ({url: location.href,
+    js = """() => ({url: location.href, title: document.title, challenge: """ + CHALLENGE_JS + """,
       password: !!document.querySelector('input[type=password]'),
       code: !!document.querySelector('input[autocomplete="one-time-code"],input[name=otc]'),
       email: !!document.querySelector('input[type=email],input[name=loginfmt],input[name=identifier]'),
@@ -347,6 +411,8 @@ def press_sign_in(page, pattern, clicks, most=2):
 def classify(info, host):
     at = urllib.parse.urlparse(info.get("url") or "").netloc
     on_site = any(at == h or at.endswith("." + h) for h in (host, *MOVED.get(host, ())))
+    if bot_check(info):
+        return "bot-check"       # on the site's host with text, but nobody is signed in
     if info.get("password") or info.get("code"):
         return "needs-user"
     # The picker and consent words count only off the site: on it they are a mail or a page that
@@ -383,6 +449,8 @@ def wait_ready(page, ready, wait_user, settle=90, now=time.time, sleep=time.slee
         state = ready(page)
         if state == "ready":
             return "ready"
+        if state == "bot-check":
+            return bot_reason(_page_host(page))   # with a window too: a person's sign-in won't pass it
         if state not in ("wait", "needs-user"):
             return state             # the caller's own reason
         if not window and state == "needs-user":
@@ -403,15 +471,22 @@ class Session:
         self.page, self.ctx, self.folder = page, ctx, folder
 
     def goto(self, url, timeout=90000):
-        """Open url, once more if the first load after idle drops the connection."""
+        """Open url, once more if the first load after idle drops the connection, and return its
+        response. Raises NotReady on a host config not_for names, and BotCheck on a bot-check page."""
         from playwright.sync_api import Error as PlaywrightError
+        why = host_refusal(url)
+        if why:
+            raise NotReady(why)
         for attempt in (1, 2):
             try:
-                self.page.goto(url, wait_until="domcontentloaded", timeout=timeout)
-                return
+                resp = self.page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+                break
             except PlaywrightError:
                 if attempt == 2:
                     raise
+        if bot_check(headers=_headers(resp)):
+            raise BotCheck(bot_reason(_page_host(self.page)))
+        return resp
 
 
 class NotReady(Exception):
@@ -420,6 +495,10 @@ class NotReady(Exception):
 
 class NeedsSignIn(NotReady):
     """A person has to sign in. Nothing was typed and no window opened; ask once, then rerun headed."""
+
+
+class BotCheck(NotReady):
+    """The page is a bot check. No sign-in passes it, and a window won't help; read the site another way."""
 
 
 def launch_options(folder, args=(), chan=None, window=False):
@@ -465,8 +544,12 @@ def _launch(p, folder, args=(), chan=None, window=False):
 def session(url, ready=None, wait_user=180, chan=None, headed=False):
     """One browser for the whole `with` block: launched once, `url` opened, `ready(page)` waited for,
     then closed and its profile deleted however the block ends. Headless unless `headed` (or
-    HEADED_ENV=1). Raises NeedsSignIn when a person has to sign in, and NotReady when the browser did
-    not start, `url` did not load, or the sign-in was not finished."""
+    HEADED_ENV=1). Raises NeedsSignIn when a person has to sign in, BotCheck on a bot-check page, and
+    NotReady when config not_for names the host (before anything starts), the browser did not start,
+    `url` did not load, or the sign-in was not finished."""
+    why = host_refusal(url)
+    if why:
+        raise NotReady(why)
     window = asked_for_window(headed)
     try:
         from playwright.sync_api import Error as PlaywrightError
@@ -491,7 +574,8 @@ def session(url, ready=None, wait_user=180, chan=None, headed=False):
                 if ready is not None:
                     state = wait_ready(pg, ready, wait_user, window=window)
                     if state != "ready":
-                        raise (NeedsSignIn if str(state).startswith(NEEDS_SIGN_IN) else NotReady)(state)
+                        raise (NeedsSignIn if str(state).startswith(NEEDS_SIGN_IN)
+                               else BotCheck if str(state).startswith(BOT_CHECK) else NotReady)(state)
                 yield s
             finally:
                 try:
@@ -613,6 +697,10 @@ def _until(st):
 
 
 def serve(url, minutes=SERVE_DEFAULT, port=SERVE_PORT, wait_user=600, chan=None, headed=False):
+    why = host_refusal(url)
+    if why:                      # before claim, reap or launch: a refusal leaves no record or profile
+        print(why)
+        return 1
     try:
         from playwright.sync_api import Error as PlaywrightError
         from pw_temp import sync_playwright
@@ -660,16 +748,26 @@ def serve(url, minutes=SERVE_DEFAULT, port=SERVE_PORT, wait_user=600, chan=None,
             pg = ctx.pages[0] if ctx.pages else ctx.new_page()
             try:
                 Session(pg, ctx, folder).goto(url)
+                state = None
             except PlaywrightError as e:
                 print(f"DID NOT RUN: {url[:60]} did not load: {str(e).splitlines()[0]}")
                 ctx.close()
                 return 2
+            except BotCheck as e:
+                state = str(e)
             deadline = time.time() + minutes * 60
             _write_state(state_path(port), dict(rec, folder=folder, deadline=deadline))
-            state = wait_ready(pg, sso_ready(host), wait_user, window=window, stopped=lambda: stop["now"] or closed["yes"])
+            if state is None:
+                state = wait_ready(pg, sso_ready(host), wait_user, window=window,
+                                   stopped=lambda: stop["now"] or closed["yes"])
             if state == "stopped":
                 why = "stopped" if stop["now"] else "the browser closed"
                 why += " while it waited for single sign-on"
+            elif state.startswith(BOT_CHECK):
+                code, why = 2, "a bot check"
+                print(f"BOT CHECK: {state[len(BOT_CHECK) + 2:]}.", flush=True)
+                print("  This tool can't read the site, with a window or without. Read it another way, and "
+                      "name that route in config signed_in_browser.not_for so the next run refuses at once.")
             elif state != "ready" and not window:
                 code = 3 if state.startswith(NEEDS_SIGN_IN) else 2
                 detail = state[len(NEEDS_SIGN_IN) + 2:] if code == 3 else state
@@ -870,6 +968,58 @@ def selftest():
             {"url": "https://teams.cloud.microsoft/v2/", "text": "x" * 300}, "teams.microsoft.com") == "ready")
         case("a look-alike of the new host is not the site", classify(
             {"url": "https://outlook.cloud.microsoft.evil.example/", "text": "x" * 300}, "outlook.office.com") == "wait")
+        # Bot checks: the 11-10 claude.ai page, as recorded, was classed ready (its text is long and on
+        # the site's host). It must be a bot check; an ADO page must stay ready, even one quoting the words.
+        cf_page = {"url": "https://claude.ai/login", "title": "Just a moment...",
+                   "text": "claude.ai\nPerforming security verification\nThis website uses a security service "
+                           "to protect against malicious bots. This page is displayed while the website "
+                           "verifies you are not a bot.\nRay ID: 0000000000000000\nPerformance and security "
+                           "by Cloudflare"}
+        case("the 11-10 claude.ai bot-check page, as recorded, is a bot check, not ready",
+             len(cf_page["text"]) > 200 and classify(cf_page, "claude.ai") == "bot-check")
+        case("... and so is a response with Cloudflare's cf-mitigated: challenge header, in any case",
+             bot_check({}, {"CF-Mitigated": "challenge"}) and not bot_check({}, {"cf-ray": "x"}))
+        case("... and a page with Cloudflare's challenge markers",
+             classify({"url": "https://claude.ai/", "challenge": True, "text": "x" * 300}, "claude.ai") == "bot-check")
+        case("an ADO page with content is still ready", classify(
+            {"url": "https://dev.azure.com/org/p/_workitems", "title": "Work Items - Boards", "text": "x" * 300},
+            "dev.azure.com") == "ready")
+        case("... even one whose text quotes a bot check", classify(
+            {"url": "https://dev.azure.com/org/p/_workitems/edit/1", "title": "Bug 1: Just a moment loop - Boards",
+             "text": "Repro: the page says Performing security verification. " + "x" * 300},
+            "dev.azure.com") == "ready")
+        clock[0] = 0.0
+        stopped_at = wait_ready(None, lambda _: "bot-check", 600, now=tick, sleep=sleep, window=True)
+        case("a bot check ends the wait at once, with a window too, and never says NEEDS SIGN-IN",
+             stopped_at.startswith(BOT_CHECK) and clock[0] == 0)
+        nf = {"Claude.ai.": "read it through the user's own browser tab"}
+        case("not_for refuses its host however the URL writes it", all(host_refusal(u, nf) for u in (
+            "https://claude.ai/", "https://Claude.AI:443/x", "https://www.claude.ai", "https://user@claude.ai/",
+            "https://claude.ai./new")))
+        case("... and lets look-alikes and other sites through", not any(host_refusal(u, nf) for u in (
+            "https://notclaude.ai/", "https://claude.ai.example.com/", "https://dev.azure.com/x", "about:blank")))
+        # Stand-ins for claim and reap, so a broken refusal fails here instead of starting a real browser.
+        saved = {k: globals()[k] for k in ("not_for", "claim", "reap")}
+        claimed, n0 = [], LAUNCHES
+
+        def no_reap(*a, **k):
+            raise NotReady("REACHED reap: the refusal came too late")
+        globals().update(not_for=lambda: nf, reap=no_reap,
+                         claim=lambda port, rec, *a, **k: claimed.append(port) or {"pid": 0, "deadline": 0})
+        try:
+            case("serve refuses a not_for host with exit 1, before it claims a port",
+                 serve("https://claude.ai/", port=9349) == 1 and claimed == [])
+            refused = ""
+            try:
+                with session("https://www.claude.ai/x"):
+                    pass
+            except NotReady as e:
+                refused = str(e)
+            case("... and so does session, before reap or any browser starts",
+                 refused.startswith("REFUSED") and LAUNCHES == n0)
+        finally:
+            globals().update(saved)
+
         case("a mail on the site that says 'consent' is not a consent screen", classify(
             {"url": "https://app.example.com/mail", "text": "Please give consent. " + "x" * 300}, site) == "ready")
 
