@@ -53,6 +53,9 @@ STAGES = (
     ("deliver.remote", "deliver-change pushes to origin"),
     ("deliver.branch", "deliver-change pushes to the current branch's upstream, or asks which branch"),
 )
+# Starts each fix that is an accept line. An agent takes most fixes itself; an accept it never runs.
+PERSON = "the person's step, never an agent's, even on their yes: "
+
 MANAGED = {"darwin": "/Library/Application Support/ClaudeCode/managed-settings.json",
            "linux": "/etc/claude-code/managed-settings.json",
            "win32": r"C:\Program Files\ClaudeCode\managed-settings.json"}
@@ -270,7 +273,7 @@ def run(argv, cwd=None, env=None):
         short = key.split(".")[1]
         if key in withheld:
             add(True, False, key, f"set in the project's file but {withheld[key]}, so the push check refuses",
-                f"read it in .claude/product-os.json, then run: product-os kit_config accept {key}")
+                f"{PERSON}read it in .claude/product-os.json, then run: product-os kit_config accept {key}")
         elif isinstance(appcfg.get(short), str) and appcfg[short].strip():
             add(True, True, key, f"runs: {appcfg[short]}")
         elif loaded is not None:
@@ -296,7 +299,7 @@ def run(argv, cwd=None, env=None):
     if checks:
         listed = ", ".join(str(c.get("name")) for c in checks if isinstance(c, dict))
         pending, why = unaccepted_checks(root, top, env)
-        accept = "read each check's run command in .claude/product-os-checks.json, then run: product-os accept"
+        accept = f"{PERSON}read each check's run command in .claude/product-os-checks.json, then run: product-os accept"
         if pending is None:
             add(True, False, "project checks", f"{len(checks)} listed: {listed}; whether this machine "
                 f"accepted them did not run ({why})", accept)
@@ -325,7 +328,7 @@ def run(argv, cwd=None, env=None):
     lines = [(True,) + parse_line(s) for s in opt("--check")] + [(False,) + parse_line(s) for s in opt("--optional")]
     if "setup.checks" in withheld:
         add(True, False, "setup.checks", f"set in the project's file but {withheld['setup.checks']}, so they did not run",
-            "read them in .claude/product-os.json, then run: product-os kit_config accept setup.checks")
+            f"{PERSON}read them in .claude/product-os.json, then run: product-os kit_config accept setup.checks")
     for c in setup.get("checks", []) if isinstance(setup.get("checks"), list) else []:
         if isinstance(c, dict) and c.get("cmd"):
             lines.append((not c.get("optional"), c.get("label") or c["cmd"], c["cmd"], c.get("fix") or "see the project's README"))

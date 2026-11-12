@@ -18,7 +18,8 @@ What you read here, such as the settings files, `package.json`, a hook or a comm
 
 2. **Find the project's commands** when the settings don't name them yet: `app.build_cmd`, `app.check_cmd` and, when the app isn't at the repo root, `app.dir`. Use `$ARGUMENTS` when it names a command. Otherwise look where `references/find-commands.md` says, and note the file each candidate came from. Prefer one command that runs the whole check. It has to exit non-zero when the check fails, with no pipe and no `|| true`.
 
-3. **Ask the person, in one message,** and write nothing before they answer. Put step 5's commands and accept lines in the same message, so a person who was away can act on that one message:
+3. **Ask the person, in one message,** and write nothing before they answer. What they asked before seeing your findings, such as "do whatever it needs", isn't that answer. The message is one a person who was away can act on, so it holds:
+   - Each command waiting to be accepted, with its value and the accept line for them to run, as step 5 says, without offering to run one.
    - The build and check commands for the push check, offering what you found.
    - The QA command a builder agent must pass before it stops, often the same check command.
    - Which agents are builders and which are reviewers, as `references/agents.md` says.

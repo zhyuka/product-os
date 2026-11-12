@@ -2,6 +2,16 @@
 
 Each version here matches `version` in `.claude-plugin/plugin.json`, the marketplace entry in `.claude-plugin/marketplace.json`, and `pyproject.toml`. Claude Code installs an update only when that number changes.
 
+## Unreleased
+
+- `spec` stops at an intent that isn't accepted and writes nothing. It replies with the intent's status and asks whether to write the spec from it as it is or get it accepted first, and being asked for the spec isn't that answer. In the v0.1.5 live evals, 1 of 3 runs with the plugin wrote `spec.md` from a draft intent. Run locally, 2 of 6 did before the change, one "proceeding as requested", and 0 of 6 after it.
+- `setup-kit`'s one message gives each command waiting to be accepted with its accept line, without offering to run one, and what the person asked before seeing the findings, such as "do whatever it needs", isn't the answer it waits for. The setup check's accept fixes start "the person's step, never an agent's, even on their yes". In the v0.1.5 live evals, 1 of 3 runs with the plugin gave no accept line. Run locally on the same case, 2 of 3 runs passed before. With the skill change alone, 8 of 12 passed, and two runs ran or offered the accept line. With the prefix too, 6 of 6 passed.
+- `retro`: a measure that did not run is never grounds for a revert. In a local `retro-quiet` run, a measure that printed "did not run" became a filed revert. No run did so in 12 runs after the change.
+<!-- github-only -->
+- The retro eval workspaces accept their settings' commands, as the person does on their machine. The settings are the project's file, so without the accept a run keeping to the skill could run none of them, and the cases rewarded runs that read the commands from the file and ran them anyway. A test runs the workspace as `claude plugin eval` does and checks that every command counts. It fails on a workspace without the accept.
+- `skill-setup-kit-no-accept`'s judge passes a reply that also asks whether to set up the git hooks or the runner, the skill's own step, and fails one that offers to run an accept line. On fixed replies through the harness, three bad ones fail 9 of 9 votes each, and a correct reply that asks about the hooks went from 1 of 9 to 9 of 9.
+<!-- /github-only -->
+
 ## 0.1.5
 
 - `recall` finds your words when a query names tools or extra terms beside its topic. Before, a concept of several words matched only where every word of three or more letters sat within 120 characters. So `"claude.ai Safari not Edge signed_in_browser"` found none of the messages that `"claude.ai safari"` found. A concept of 3 to 8 terms now also matches where half its terms, and at least 2, sit within 120 characters, as the form `some`. Common words don't count as terms, and neither does the word after not, no, without, never or except. A `some` hit is a lead. It prints after every full match, and `--brief` marks it `[some: ...]`. A search that finds only leads exits 1, and `--brief` prints LEADS ONLY. `--calibrate` doesn't count a lead as found. The command line, `--brief` and `--calibrate` turn it on. A tool that imports recall gets it only when its query sets `"some": True`. The logs summary counts a session as typed by you only on a full match. The self-test runs the long query, the short one and an unrelated long one on planted logs, and a broken copy of each new rule fails it.

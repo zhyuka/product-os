@@ -72,6 +72,38 @@ class AcceptQaCommands(unittest.TestCase):
         self.assertEqual(data, {"projects": {str(self.root / "work" / "e-*"): {"qa_commands": ["python3 qa.py"]}}})
 
 
+@unittest.skipIf(os.name == "nt", "the retro scaffolds run only where plugin eval grants a shell")
+class RetroWorkspaceAccepts(unittest.TestCase):
+    """The retro settings are the project's, so a session keeping to the skill runs none of their
+    commands until they are accepted. The workspace accepts them as the person would."""
+
+    def listing(self, cwd, home):
+        env = {"PATH": os.environ["PATH"], "HOME": str(home), "USERPROFILE": str(home), "TERM": "dumb"}
+        done = subprocess.run([sys.executable, str(ROOT / "tools" / "kit_config.py")], cwd=cwd, env=env,
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout
+
+    def test_every_retro_command_counts_in_the_session(self):
+        root = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        home = root / "home"
+        cwd = home / "cwd"
+        cwd.mkdir(parents=True)
+        env = {"PATH": os.environ["PATH"], "HOME": str(home), "USERPROFILE": str(home), "TERM": "dumb"}
+        for workspace in ("quiet", "last-run"):
+            with self.subTest(workspace=workspace):
+                shutil.rmtree(cwd)
+                cwd.mkdir()
+                subprocess.run([sys.executable, str(ROOT / "evals" / "retro-fixture" / "build.py"), workspace],
+                               cwd=cwd, env=env, check=True, capture_output=True, timeout=60)
+                listed = self.listing(cwd, home)
+                self.assertNotIn("NOT ACCEPTED", listed)
+                self.assertIn('"propose_cmd": "python3 tools/propose.py', listed)
+                (home / ".claude" / "product-os-commands-accepted.json").unlink()
+                self.assertIn("NOT ACCEPTED: retro.propose_cmd", self.listing(cwd, home))
+
+
 def load_summarize():
     spec = importlib.util.spec_from_file_location("summarize", ROOT / "evals" / "summarize.py")
     module = importlib.util.module_from_spec(spec)

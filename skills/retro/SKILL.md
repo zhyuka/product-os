@@ -58,7 +58,8 @@ Each upgrade carries two measures:
 For each upgrade in the last report's block, find whether it landed: its item is done in what
 `plan_cmd` prints, or its commit is in. Then run its measures. The verdict is one of helped, no
 change, worse, not landed, too early, or did not run, written in those words, since the loop's counts
-across runs read them; a measure that can't run is "did not run", never "no change".
+across runs read them; a measure that can't run is "did not run", never "no change". It says
+nothing either way, so it's never grounds for a revert: name what it needs to run next time.
 Recommend reverting an upgrade whose mechanism didn't work, or whose outcome got worse on two
 readings in a row, when it costs something to keep: a rule that loads every session, a gate that
 slows each commit, a scheduled job. Reverts are filed as in step 5 and don't count toward the five.
