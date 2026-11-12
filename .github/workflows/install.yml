@@ -50,12 +50,17 @@ jobs:
   install-doc:
     name: Path 2, INSTALL.md (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash  # Git Bash on Windows, as INSTALL.md asks
     strategy:
       fail-fast: false
       matrix:
         include:
           - { os: ubuntu-24.04, python: "3.9" }
           - { os: macos-latest, python: "3.13" }
+          # setup-python puts only python.exe there, so step 1 has to find python after python3.
+          - { os: windows-latest, python: "3.13" }
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -68,17 +73,28 @@ jobs:
       # Steps 1, 3, 4 and 6 run against the commit under test. Step 2 would check out the newest
       # release instead, so it runs on its own below.
       - name: INSTALL.md's commands, in an empty home, ending in product-os doctor
+        # On Windows the paths go to Git Bash's form, since a C: in PATH splits there, and
+        # USERPROFILE moves with HOME, since Python and Claude Code read ~ from it.
         run: |
-          export HOME="$RUNNER_TEMP/home" PRODUCT_OS_DIR="$GITHUB_WORKSPACE"
+          tmp=$RUNNER_TEMP work=$GITHUB_WORKSPACE
+          [ "$RUNNER_OS" != Windows ] || { tmp=$(cygpath -u "$tmp"); work=$(cygpath -u "$work"); }
+          export HOME="$tmp/home" PRODUCT_OS_DIR="$work"
+          [ "$RUNNER_OS" != Windows ] || export USERPROFILE="$(cygpath -w "$HOME")"
           export PATH="$HOME/.local/bin:$PATH"
           mkdir -p "$HOME"
-          python3 .github/run_install_doc.py --skip 2
+          python .github/run_install_doc.py --skip 2
       - name: Step 2 clones Product OS from GitHub
         run: |
-          export HOME="$RUNNER_TEMP/home2" PRODUCT_OS_DIR="$RUNNER_TEMP/home2/product-os"
+          tmp=$RUNNER_TEMP
+          [ "$RUNNER_OS" != Windows ] || tmp=$(cygpath -u "$tmp")
+          export HOME="$tmp/home2" PRODUCT_OS_DIR="$tmp/home2/product-os"
+          [ "$RUNNER_OS" != Windows ] || export USERPROFILE="$(cygpath -w "$HOME")"
           mkdir -p "$HOME"
-          python3 .github/run_install_doc.py --only 2
+          python .github/run_install_doc.py --only 2
           test -x "$PRODUCT_OS_DIR/bin/product-os"
+          tag=$(git -C "$PRODUCT_OS_DIR" describe --tags --exact-match)
+          case $tag in *-*) echo "step 2 checked out $tag, a probe tag, not a release"; exit 1 ;; esac
+          echo "step 2 checked out $tag"
 
   zip:
     name: Path 3, the release zip

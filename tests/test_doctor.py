@@ -4,11 +4,13 @@ is on PATH, says which value wins when the environment and the settings disagree
 skill line that points at something missing."""
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 TOOLS = ROOT / "tools"
@@ -183,6 +185,42 @@ class DoctorTest(unittest.TestCase):
         self.assertIn("names scripts/gone.py", misses[1])
         self.assertIn("links references/missing.md", misses[2])
         self.assertIn("SKILL.md:5: calls product-os gone_tool", misses[3])
+
+
+class RunnerOnPathTest(unittest.TestCase):
+    """The runner line finds the launcher, a file with no extension, on every OS. On Windows
+    shutil.which can't, since it matches only PATHEXT names; tests.yml runs this there too."""
+
+    def test_finds_a_file_with_no_extension_the_way_windows_needs(self):
+        sys.path.insert(0, str(TOOLS))
+        try:
+            import doctor
+        finally:
+            sys.path.remove(str(TOOLS))
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "product-os").write_text("#!/bin/sh\n")
+            with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([str(Path(tmp, "none")), f'"{tmp}"'])}):
+                self.assertEqual(doctor.on_path("product-os", windows=True), os.path.join(tmp, "product-os"))
+                self.assertIsNone(doctor.on_path("product-os-gone", windows=True))
+        self.assertIn("MSYS=winsymlinks:nativestrict ln -s \"C:/po/bin/product-os\"",
+                      doctor.link_hint("C:/po/bin/product-os", windows=True))
+
+    def test_a_link_passes_and_a_copy_is_a_miss(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Home(tmp, link=False)
+            try:
+                os.symlink(ROOT / "bin" / "product-os", home.bin / "product-os")
+            except OSError as e:  # Windows without Developer Mode or an admin shell
+                self.skipTest(f"this machine can't make a symlink: {e}")
+            code, out = home.run("doctor")
+            self.assertIn("ok   runner:", out)
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Home(tmp, link=False)
+            shutil.copy(ROOT / "bin" / "product-os", home.bin / "product-os")
+            code, out = home.run("doctor")
+            self.assertEqual(code, 1, out)
+            self.assertIn("MISS runner: product-os on PATH is", out)
+            self.assertIn("not this checkout's launcher", out)
 
 
 if __name__ == "__main__":

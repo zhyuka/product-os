@@ -38,8 +38,8 @@ Playwright: `pip install playwright`, then `playwright install chromium`.
 ## Steps
 -->
 
-Run each block below in a shell, in order. Each one starts by naming the folder, because a variable
-set in one command is gone by the next.
+Run each block below in a shell, in order, and on Windows in Git Bash. Each one starts by naming the
+folder, because a variable set in one command is gone by the next.
 <!-- github-only -->
 The folder is `~/product-os` unless the person wants it elsewhere, or is installing from an unzipped
 release: then set `PRODUCT_OS_DIR` to that folder at the top of every block.
@@ -54,10 +54,15 @@ overwrite or delete their files yourself.
 
 ```sh
 git --version
-python3 -c 'import sys; assert sys.version_info >= (3, 9), "Python 3.9 or later is needed, not " + sys.version.split()[0]; print("Python", sys.version.split()[0])'
+py=
+for name in python3 python; do "$name" -c 'import sys; sys.exit(sys.version_info < (3, 9))' 2>/dev/null && { py=$name; break; }; done
+[ -n "$py" ] || { echo "No Python 3.9 or later runs here: tried python3 and python on PATH"; exit 1; }
+"$py" -c 'import sys; print("Python", sys.version.split()[0])'
 ```
 
-From an unzipped release, git isn't needed: skip the first line.
+From an unzipped release, git isn't needed: skip the first line. It tries `python` after `python3`,
+because on Windows `python3` is often a placeholder that only offers to install Python from the
+Microsoft Store.
 
 <!-- github-only -->
 ### 2. Get the latest release
@@ -72,13 +77,14 @@ if [ -e "$PRODUCT_OS_DIR" ]; then
 else
   git clone --quiet https://github.com/zhyuka/product-os "$PRODUCT_OS_DIR"
 fi
-tag=$(git -C "$PRODUCT_OS_DIR" tag --list 'v*' --sort=-v:refname | head -n 1)
+tag=$(git -C "$PRODUCT_OS_DIR" tag --list 'v*' --sort=-v:refname | sed '/-/d' | head -n 1)
 [ -z "$tag" ] || git -C "$PRODUCT_OS_DIR" checkout --quiet "$tag"
 git -C "$PRODUCT_OS_DIR" log -1 --format='%h%d'
 ```
 
-It checks out the newest release tag, or stays on the default branch when there's none yet. If the
-folder already exists and isn't Product OS, it stops: ask the person which folder to use.
+It checks out the newest release tag, or stays on the default branch when there's none yet. It skips
+any tag with a hyphen, such as `v0.1.4-probe.1`, which CI uses for test runs. If the folder already
+exists and isn't Product OS, it stops: ask the person which folder to use.
 <!-- /github-only -->
 <!-- zip-only: the zip shows this instead; skip it here
 ### 2. Nothing to fetch
@@ -117,13 +123,19 @@ outside it, and need the link.
 ```sh
 PRODUCT_OS_DIR="${PRODUCT_OS_DIR:-$HOME/product-os}"
 mkdir -p "$HOME/.local/bin"
+export MSYS=winsymlinks:nativestrict
 [ -e "$HOME/.local/bin/product-os" ] || ln -s "$PRODUCT_OS_DIR/bin/product-os" "$HOME/.local/bin/product-os"
 "$HOME/.local/bin/product-os" --root
 ```
 
-It prints the folder Product OS runs from. If `~/.local/bin` isn't on the person's PATH, give them
-the line `export PATH="$HOME/.local/bin:$PATH"` to add to their shell profile. Don't edit the
-profile yourself. If `~/.local/bin/product-os` already points at another folder, step 6 says so;
+It prints the folder Product OS runs from. The `MSYS` line matters only in Git Bash on Windows.
+Without it, `ln -s` there copies the file, and the copy runs from the wrong folder. With it, `ln`
+makes a real link or fails. Windows allows a real link only with Developer Mode on, under Settings,
+System, For developers, or from a shell run as administrator. If `ln` fails, show the person. They
+can turn on Developer Mode and run this block again, or add `$PRODUCT_OS_DIR/bin` to their PATH in
+place of the link. If `~/.local/bin` isn't on the person's PATH, give them the line
+`export PATH="$HOME/.local/bin:$PATH"` to add to their shell profile. Don't edit the profile
+yourself. If `~/.local/bin/product-os` already points at another folder, step 6 says so;
 show the person and let them choose.
 
 ### 5. Restart Claude Code

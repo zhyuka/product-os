@@ -40,6 +40,26 @@ LINK = re.compile(r"\]\((?!https?:|#|mailto:)([^)\s]*[./][^)\s]*)\)")  # a path,
 SKIP = {"__pycache__", ".DS_Store"}
 
 
+def on_path(name, windows=os.name == "nt"):
+    """The first file called name in a PATH folder, or None. On Windows shutil.which matches only names
+    ending in a PATHEXT extension, and the launcher has none, so each folder is looked in instead."""
+    if not windows:
+        return shutil.which(name)
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        folder = folder.strip().strip('"')
+        if folder and os.path.isfile(os.path.join(folder, name)):
+            return os.path.join(folder, name)
+    return None
+
+
+def link_hint(launcher, windows=os.name == "nt"):
+    """The command that links the launcher onto the PATH; in Git Bash, one that can't copy it instead."""
+    if windows:
+        return (f"in Git Bash, with Developer Mode on, MSYS=winsymlinks:nativestrict "
+                f"ln -s \"{launcher.replace(os.sep, '/')}\" ~/.local/bin/product-os, since a copy runs from the wrong folder")
+    return f"ln -s \"{launcher}\" ~/.local/bin/product-os (any folder on PATH)"
+
+
 def settings_path():
     folder = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
     return os.path.join(folder, "settings.json")
@@ -193,15 +213,15 @@ def main(argv=None):
 
     results.append(("python", sys.version_info >= (3, 9), f"Python {sys.version.split()[0]}; 3.9 or later is needed"))
 
-    found = shutil.which("product-os")
+    found = on_path("product-os")
     launcher = os.path.realpath(os.path.join(ROOT, "bin", "product-os"))
     if not found:
         results.append(("runner", False, f"product-os isn't on PATH, so the git hooks can't run it. Link it: "
-                        f"ln -s \"{launcher}\" ~/.local/bin/product-os (any folder on PATH)"))
+                        f"{link_hint(launcher)}"))
     else:
-        ok = os.path.realpath(found) == launcher
+        ok = os.path.normcase(os.path.realpath(found)) == os.path.normcase(launcher)
         results.append(("runner", ok, f"product-os on PATH is {found}" + ("" if ok else
-                        f", not this checkout's launcher {launcher}; link that one instead")))
+                        f", not this checkout's launcher {launcher}; link that one instead: {link_hint(launcher)}")))
 
     listed, list_detail = plugin_listed()
     ok, detail = plugin_setting(os.path.expanduser(a.settings), listed, list_detail)
