@@ -5,7 +5,8 @@
     stale [--figma] [--json F] [<file> ...]   test every hold in the drafts file and the outbound file, and
                                               their shape
     stale --structure [<file> ...]            the shape rules only, offline but for a NEW draft that links a
-                                              comment id, whose file's comments the own-open rule reads
+                                              comment id, whose file's comments the own-open rule reads, and a
+                                              NEW FIX/ADD/FLAG draft, whose node's lineage the ours rule reads
     selftest                planted cases on a temporary file, no network
 
 THE FILE. A markdown file of comments drafted for Figma and not yet posted: each draft is a `### `
@@ -461,7 +462,7 @@ def holds(text, name):
     return out
 
 
-def structure(text, name, drafts_file=None, files=None, own_check=None, settled=None, ask_check=None):
+def structure(text, name, drafts_file=None, files=None, own_check=None, settled=None, ask_check=None, ours_check=None):
     """[(file, line, rule, words)] for the shapes that let junk pile up:
     prose     a '## ' section holding drafts or naming a Figma file has text before its first block other
               than one paragraph opening "Held" (the section's hold note)
@@ -480,9 +481,12 @@ def structure(text, name, drafts_file=None, files=None, own_check=None, settled=
     own-open  a NEW draft in the drafts file links an open root comment of the token owner's, which
               figma_post's own-open rule would refuse: make the fix and edit that comment instead. Figma is
               read only for a NEW draft that links a comment id; a read that fails is listed as did not run
+    ours      a NEW draft in the drafts file asks design for a change (FIX:, ADD: or FLAG:) on a node you can edit
+              yourself, by figma_post's nineteenth rule (ours_reason): edit the node and drop the draft. A Q: is not
+              tested; a check that could not run is listed as ours not run, which exits 2
     drafts_file: whether this is the drafts file (None: is_drafts_file(name)). files: the
     figma.new_thread_files stand-in for the selftest; own_check: figma_post.own_open_check's; settled:
-    figma.settled_files'; ask_check: figma_post.ask_refusal's."""
+    figma.settled_files'; ask_check: figma_post.ask_refusal's; ours_check: figma_post.ours_reason's."""
     lines = text.split("\n")
     if drafts_file is None:
         drafts_file = is_drafts_file(name)
@@ -514,12 +518,55 @@ def structure(text, name, drafts_file=None, files=None, own_check=None, settled=
         out += override_drafts(text, name, files)
         out += ask_drafts(text, name, settled, ask_check)
         out += own_open_drafts(text, name, own_check)
+        out += ours_drafts(text, name, ours_check)
     return out
 
 
 OWN_NOT_RUN = "own-open not run"   # listed with the structure problems, but it is a check that didn't run: exit 2
 ASK_NOT_RUN = "ask not run"        # the same for the ask rule
-NOT_RUN = (OWN_NOT_RUN, ASK_NOT_RUN)
+OURS_NOT_RUN = "ours not run"      # and for the ours rule
+NOT_RUN = (OWN_NOT_RUN, ASK_NOT_RUN, OURS_NOT_RUN)
+THEIRS = re.compile(r"--theirs\s+\"([^\"]+)\"")
+
+
+def ours_drafts(text, name, ours_check=None):
+    """The ours rule of structure(): each NEW draft that asks design for a change (a FIX:, ADD: or FLAG: line) on a
+    node you can edit yourself, by figma_post's nineteenth rule (ours_reason), in the file its heading's link or its
+    section names. It runs at draft time what the post runs, since a draft that reaches you asking design to change
+    your own layer is the miss: edit the layer instead. A post command in the draft carrying --theirs "<why design must
+    make this change>", three words or more, lets it stand. A Q: draft is not tested and reads nothing; neither is
+    any when figma.own_prefixes and ledger.figma_edits are both unset."""
+    if TOOLS not in sys.path: sys.path.append(TOOLS)
+    import figma_post
+    lines, out = text.split("\n"), []
+    secs = sections(text)
+    for b in blocks(text):
+        body = text_of(b["quote"])
+        if not b["node"] or not body or not figma_post.asks_change(body):
+            continue
+        cmd = next((m.group(0) for ln in lines[b["first"] + 1:b["end"]] if not ln.startswith(">")
+                    for m in [POST_CMD.search(ln)] if m), "")
+        why_theirs = THEIRS.search(cmd)
+        if why_theirs and len(why_theirs.group(1).split()) >= 3:
+            continue
+        sec = next((s for s in secs if s["line"] < b["first"] < s["end"]), None)
+        m = URL_KEY.search(lines[b["first"]])
+        f = None if m or not sec else FILE_KEY.search(sec["head"])
+        key = m.group(1) if m else (f.group(0).strip("`") if f else None)
+        try:
+            if not key:
+                raise ValueError("no file key in its heading's link or its section")
+            mine, why, _ = (ours_check or figma_post.ours_reason)(key, b["node"], body)
+        except Exception as e:  # noqa: BLE001 -- a check that could not run is named, never passed
+            mine, why = None, f"{type(e).__name__}: {e}"
+        if why:
+            out.append((name, b["first"] + 1, OURS_NOT_RUN, f"the ours check did not run ({why}): {b['head'][:70]}"))
+        elif mine:
+            out.append((name, b["first"] + 1, "ours",
+                        f"it asks design to change {b['node']}, which is yours to edit: {mine}. Edit it with use_figma, "
+                        f"read it back, log it in the edits log and drop this draft; if design must make it, give its "
+                        f"post command --theirs \"<why design must make this change>\": {b['head'][:70]}"))
+    return out
 
 
 def own_open_drafts(text, name, own_check=None):
@@ -1401,6 +1448,7 @@ def selftest():
     selftest_stale(case)
     selftest_links(case)
     selftest_own_open(case)
+    selftest_ours(case)
     print(f"{sum(results)} of {len(results)} planted cases behave as expected.")
     return 0 if all(results) else 1
 
@@ -1449,6 +1497,48 @@ def selftest_own_open(case):
     case("own-open: the outbound file is not read",
          not [x for x in structure(md, "outbound-drafts.md", False, set(), own_check=check([root("1000000001")]))
               if x[2] == "own-open"])
+
+
+def selftest_ours(case):
+    """The ours structure rule: figma_post's nineteenth rule while the draft sits in the drafts file, through
+    figma_post.ours_reason with a planted lineage and edits log, so no network."""
+    import figma_post as fp
+    key = "KU" + "0" * 18 + "KU"
+    own = [{"id": "1:6", "type": "CANVAS", "name": "A teammate's sandbox"},
+           {"id": "20:1", "type": "SECTION", "name": "Mine - Onboarding journey"}, {"id": "20:3", "type": "TEXT"}]
+    design = [{"id": "5:1", "type": "CANVAS", "name": "Design page"}, {"id": "5:2", "type": "FRAME", "name": "Hero"},
+              {"id": "5:3", "type": "TEXT"}]
+    paths, calls = {"20:3": own, "5:3": design}, []
+
+    def check(k, node, body):
+        calls.append(node)
+        return fp.ours_reason(k, node, body, path=paths[node], created={})
+    fix = "### Label strip — NEW on `20:3`\n\n> FIX: the label strip should read 'Prototype · sample data'.\n"
+    q = "### Label strip question — NEW on `20:3`\n\n> Q: Is 'Prototype · sample data' the label we keep?\n"
+    other = "### Hero label — NEW on `5:3`\n\n> FIX: the hero label should read 'Prototype'.\n"
+    theirs = ("### Label strip, design's — NEW on `20:3`\n\n`python tools/figma_post.py new KEY 20:3 \"<text>\" "
+              "--theirs \"design owns this label copy\"`\n\n> ADD: a second line for the sample data source.\n")
+    md = f"## Design file `{key}`\n\n{fix}\n{q}\n{other}\n{theirs}"
+    kept = fp.OWN_PREFIXES
+    try:
+        fp.OWN_PREFIXES = ("Mine - ",)
+        got = [x for x in structure(md, "drafts.md", True, set(), ours_check=check) if x[2] == "ours"]
+        case("ours known-bad: a NEW FIX: draft on a layer in your own section is listed, saying to edit it",
+             len(got) == 1 and "20:3" in got[0][3] and "use_figma" in got[0][3]
+             and md.split("\n")[got[0][1] - 1].startswith("### Label strip — NEW"))
+        case("ours known-good: a Q: on the same layer, a FIX: on a design layer and an ADD: whose post command carries "
+             "--theirs with a reason are not listed; the Q is not read", calls == ["20:3", "5:3"])
+        down = [x for x in structure(md, "drafts.md", True, set(),
+                                     ours_check=lambda k, n, b: (_ for _ in ()).throw(OSError("no token")))
+                if x[2] == OURS_NOT_RUN]
+        blank = {"holds": [], "cut_gone": [], "cut_unread": None, "unread": []}
+        case("ours: a read that fails is listed as did not run, and exits 2; a draft it flags exits 1",
+             len(down) == 2 and all("did not run (OSError: no token)" in x[3] for x in down)
+             and stale_exit(dict(blank, structure=down)) == 2 and stale_exit(dict(blank, structure=got)) == 1)
+        case("ours: the outbound file is not read",
+             not [x for x in structure(md, "outbound-drafts.md", False, set(), ours_check=check) if x[2] == "ours"])
+    finally:
+        fp.OWN_PREFIXES = kept
 
 
 def selftest_links(case):

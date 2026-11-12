@@ -11,7 +11,7 @@ accident - you have to reach for a different command.
                                               reply into an existing thread
     new     <file_key> <node_id> <text> [--separate <id>,<id>... "<why>"] [--pin-ok "<why>"] [--multi-ok "<why>"]
             [--repost-ok "<why>"] [--edited <id>,<id>... --picture <file.jpg> --cause <slug> [--new-cause "<why>"]]
-            [--new-thread "<why>"] [--asks <id>]
+            [--new-thread "<why>"] [--asks <id>] [--theirs "<why design must make this change>"]
                                               start a thread pinned to a node
     cause   <file_key> [<thread_id> <slug>]   tag an open FIX thread with its kind of fix; alone, list them
     fixnote <file_key> <comment_id> <text> --edited <id>,<id>... [--cause <slug>] [--separate <id>,<id>... "<why>"]
@@ -181,6 +181,24 @@ that can't run, refuses: the rule never passes unread. figma.settled_cmd runs a 
 own config sets it only once accepted: `python kit_config.py accept figma.settled_cmd`, run in the
 project's folder.
 
+THE NINETEENTH RULE, `new` and a batch's new items, on every file. A new note that asks design for a change (a FIX:,
+ADD: or FLAG: line, CHANGE_TAG) is refused when its node is yours to edit, and the refusal sends the session to make
+the change itself: edit it with use_figma, read it back, log it in the edits log, drop the draft. A Q: is not tested,
+since a question you released can stand on a section you built, nor a FIX note. Yours: the node or a layer above it is
+a section or frame whose name carries one of figma.own_prefixes as a whole word at its start or at the start of a tag
+after "·" or "(" (own_name: "AB" takes "AB proposal —", "(#3 · AB 8/11)" and "timeline · AB", not "ABC" or
+"Feedback for AB"), or the edits log (ledger.figma_edits) records a session creating it or a layer above it
+(entry_created: an undo that removes the id, a new / new_sections / created / archive_subsection field, a nodes string
+calling its id new, a what starting "Created" or naming a "new section <id>", or a "clones <ids>" list). A clone's
+source is not one, and neither is a wrapper or stack a session put around design's layers ("12:7 (new wrapper)"), nor
+those layers. The layers above come from figma_client.lineage, the read THE EIGHTEENTH RULE makes, read once here and
+handed to it: no whole-file GET. With neither key set the rule is off; a lineage or a set log that can't be read
+refuses. --theirs "<why design must make this change>" lifts it on the command line only, and its reason prints with
+the post's notes. A reply, an edit and a fixnote are not gated: a line in an open thread, or your own comment reporting
+a fix already made, is not a new ask. The same test (ours_reason) runs at draft time: drafts_store's structure check
+flags each NEW FIX/ADD/FLAG draft in the drafts file on a node that is yours. The miss it stops: a session drafted a
+comment asking design to relabel a layer in the user's own section, which the session could have edited, and then did.
+
 LINKS. Each line this file prints that names a node ends with that node's link (figma_comments.linked), so
 whichever line is copied opens the node; the posted and replied lines end with the thread's link. The text
 a post sends, and the text the drafts file is matched against, stay as written.
@@ -192,7 +210,7 @@ THE BATCH. Posting is one batch per review pass, and the browser opens once for 
     {"kind": "edit",  "key", "cid", "text" or "text_file", "pictures": [..], "replace", "edited": [..], "cause",
                       "asks"}
 An item can't carry an override ("separate", "pin_ok", "own_last_ok", "multi_ok", "repost_ok",
-"new_cause"): the batch's permission prompt shows only its file's name, so nobody would read the
+"new_cause", "theirs"): the batch's permission prompt shows only its file's name, so nobody would read the
 reason. One such item refuses the batch; post it on its own command line with the flag and its
 reason (OVERRIDES below). (1) Every gate runs on every item; one refusal refuses the batch,
 with nothing posted and no browser opened. --check stops here. (2) The items post in order, each
@@ -205,7 +223,7 @@ approves the batch; and the edit is stamped once (3) confirms it, so it needs no
 for a line edited by hand, runs the same rules with --separate.
 
 OVERRIDES. Each flag that lifts a refusal (--separate, --own-last-ok, --pin-ok, --multi-ok,
---repost-ok, --new-cause, --new-thread) takes a reason in plain words, three words or more
+--repost-ok, --new-cause, --new-thread, --theirs) takes a reason in plain words, three words or more
 (ask_rules.plain), so the permission prompt for the command shows why. --separate takes its ids,
 then the reason. A flag with no reason, one word or a list of ids refuses the command.
 
@@ -256,7 +274,7 @@ CAUSE_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*$")
 # pop_overrides takes the reason each carries first.
 OK_FLAGS = ("--own-last-ok", "--pin-ok", "--multi-ok", "--repost-ok", "--new-cause")
 # The batch keys that would lift a refusal. A batch item carrying one is refused (THE BATCH).
-BATCH_OVERRIDES = ("separate", "own_last_ok", "pin_ok", "multi_ok", "repost_ok", "new_cause")
+BATCH_OVERRIDES = ("separate", "own_last_ok", "pin_ok", "multi_ok", "repost_ok", "new_cause", "theirs")
 # What a FIX note starts with. Anything that reads FIX notes back should share this string.
 DONE_PREFIX = "FIX (done in Figma)"
 FRESH_MIN = 30
@@ -1073,6 +1091,237 @@ def settled_gate(key, node_id, text, cid=None, old=None, path=None):
     return ("REFUSED (THE EIGHTEENTH RULE): " + "; ".join(reasons) + ".") if reasons else None
 
 
+# THE NINETEENTH RULE: a node a session can edit is edited, not asked about.
+OWN_TYPES = ("SECTION", "FRAME")
+OWN_PREFIXES = None     # the selftest's stand-in for figma.own_prefixes
+EDITS_LOG = None        # the selftest's stand-in for ledger.figma_edits
+# Only a note that asks design for a change is gated: a FIX:, ADD: or FLAG: line. A Q: is a question, which can stand
+# on a section you built, and a FIX note reports a fix already made.
+CHANGE_TAG = re.compile(r"^\s*(?:@[^\n]*?\s)?(?:FIX|ADD|FLAG)\s*:", re.M)
+_ID = r"I?\d+:\d+(?:;\d+:\d+)*"
+_FILE_KEY = re.compile(r"\b(?=[A-Za-z]*\d)[A-Za-z0-9]{22}\b")
+# An undo that removes a node says the edit created it: "remove 12:1, 12:2 and 12:5", "Remove sections 12:1 (3G) and
+# 12:2 (3H) and the 3E nodes 13:1, :2". A parenthesis, a quoted name, a band label (3E) and a node word go by; a
+# shorthand :2 takes the prefix of the id before it.
+_UNDO_TOK = re.compile(r"\([^()]*\)|(?<!\w)'[^'\n]{0,80}'(?!\w)|" + _ID + r"|:\d+\b|\d+[A-Za-z]\w*|[A-Za-z][\w'-]*"
+                       r"|[^\sA-Za-z0-9]")
+_UNDO_VERB = re.compile(r"(?i)remove|delete|removing|deleting")
+_UNDO_FILL = frozenset("and or the new instance instances frame frames node nodes section sections sub-section "
+                       "sub-sections layer layers both also its copy copies clone clones component components nested "
+                       "group groups text texts table tables rectangle rectangles".split())
+# Fields that hold created ids: new {id: name}, new_sections {label: id}, created {parent: [ids]} (the parents are
+# someone else's, so a dict gives its values), archive_subsection id.
+CREATED_KEYS = ("new", "new_sections", "created", "archive_subsection")
+# A nodes string that calls its leading id new: "12:6 new badge in card 7:3; cloned from 7:4".
+_NEW_NODE = re.compile(r"(?i)^\W*\(?(?:new|created|added)\b|\b(?:cloned from|clone of|copy of|created)\b")
+# A wrapper or stack a session put around design's own layers ("12:7 (new wrapper)", "12:8 (new stack)") makes neither
+# it nor them yours: the layers are design's, and so is the frame they sit in.
+_WRAPPER = re.compile(r"(?i)\b(?:wrapper|wrapping|stack|container)\b")
+_LEAD = re.compile(r"\s*(?:loose\s+)?(" + _ID + r")(?![\d:;])(.*)", re.S)
+# A what that names what it made: "new section 3H 12:3", "the new archive sub-section 14:1".
+_NEW_IN_WHAT = re.compile(r"\bnew (?:(?:archive|nested|page-level)\s+)?(?:section|sub-section|frame|heading|table|"
+                          r"title|band title)\s+(?:\d+[A-Za-z]\w*\s+)?\(?(" + _ID + r")")
+# The clones an edit made, a list in any text: "archive clones 15:1, 15:2", "clones 14:2, 774".
+_CLONES = re.compile(r"\bclones\s+(" + _ID + r"(?:\s*,\s*(?:and\s+)?(?:" + _ID + r"|\d+)\b)*)")
+
+
+def own_prefixes():
+    """figma.own_prefixes in the product-os config: the name prefixes of your own sections and frames, each a whole
+    word at the start of a name or of a tag in it (own_name). Empty when unset."""
+    if OWN_PREFIXES is not None:
+        return tuple(OWN_PREFIXES)
+    try:
+        import kit_config
+    except ImportError:
+        return ()
+    v = kit_config.get("figma", "own_prefixes") or []
+    return (v,) if isinstance(v, str) else tuple(str(p) for p in v)
+
+
+def edits_log():
+    """ledger.figma_edits, the edits log sessions write each Figma edit to; None when unset."""
+    if EDITS_LOG is not None:
+        return EDITS_LOG
+    try:
+        import ledger
+    except ImportError:
+        return None
+    return ledger.default_figma_edits()
+
+
+def _removed_in(undo):
+    """The ids an undo text removes or deletes: each id right after the verb, through a list joined by commas, "and",
+    node words, band labels, parentheses and quoted names. Any other word ends the list, so "remove the fill on 1:2" and
+    "Remove row 1 of 1:2" name none."""
+    out, on = [], False
+    for t in _UNDO_TOK.findall(undo or ""):
+        if _UNDO_VERB.fullmatch(t):
+            on = True
+        elif on and re.fullmatch(_ID, t):
+            out.append(t)
+        elif on and t.startswith(":") and out and ":" in out[-1]:
+            out.append(out[-1].rsplit(":", 1)[0] + t)
+        elif not (on and (t == "," or t[:1] in "('" or re.fullmatch(r"\d+[A-Za-z]\w*", t) or t.lower() in _UNDO_FILL)):
+            on = False
+    return out
+
+
+def _clones_in(text):
+    """The ids each "clones <id>, <id>, <n>" list in text names, a bare number taking the prefix of the id before it."""
+    out = []
+    for m in _CLONES.finditer(text or ""):
+        for t in re.findall(_ID + r"|\d+", m.group(1)):
+            out.append(t if ":" in t else (out[-1].rsplit(":", 1)[0] + ":" + t if out else t))
+    return [i for i in out if ":" in i]
+
+
+def _field_ids(v):
+    """The ids a created field holds: a string that is or starts with one, each of a list's, a dict's values, or its
+    keys when no value is one (new: {id: name})."""
+    if isinstance(v, str):
+        m = re.match(_ID + r"(?=\s|$)", v.strip())
+        return [m.group(0)] if m else []
+    if isinstance(v, list):
+        return [i for x in v for i in _field_ids(x)]
+    if isinstance(v, dict):
+        return [i for x in v.values() for i in _field_ids(x)] or [k for k in v if re.fullmatch(_ID, k)]
+    return []
+
+
+def entry_created(e):
+    """(the node ids one edits-log entry says a session created, the wrappers it names). Created: its undo removes
+    them, a CREATED_KEYS field holds them, a nodes string calls its id new, its what starts with "Created" (then each
+    id leading a nodes string) or names a new section, frame or table by id, or a text lists the clones it made. A
+    clone's source ("cloned from 7:4") is not one, nor a wrapper or stack ("(new wrapper)"), which the caller takes
+    out of every entry's ids."""
+    undo = e.get("undo")
+    undo = undo if isinstance(undo, str) else json.dumps(undo)
+    out = _removed_in(undo)
+    stack = [e]
+    while stack:
+        o = stack.pop()
+        for k, v in (o.items() if isinstance(o, dict) else enumerate(o)):
+            if k in CREATED_KEYS:
+                out += _field_ids(v)
+            elif isinstance(v, (dict, list)):
+                stack.append(v)
+    what = str(e.get("what") or "")
+    out += [m.group(1) for m in _NEW_IN_WHAT.finditer(what)]
+    out += _clones_in(" ".join([what, undo, json.dumps(e.get("removed") or "")]))
+    made, wraps = bool(re.match(r"\s*Created\b", what)), []
+    for s in e.get("nodes") if isinstance(e.get("nodes"), list) else ():
+        m = _LEAD.match(s) if isinstance(s, str) else None
+        if m and _WRAPPER.search(m.group(2)):
+            wraps.append(m.group(1))
+        elif m and (made or _NEW_NODE.search(m.group(2))):
+            out.append(m.group(1))
+    return list(dict.fromkeys(out)), wraps
+
+
+def created_by_us(key, log=None):
+    """{node id: (the entry's at, its what)} for each node the edits log says a session created in file `key`, less
+    every wrapper any entry names; {} when no log is set, None when a set one can't be read. An entry names its file
+    in `file` (free text, the key first), else the log's file_key."""
+    if log is None:
+        path = edits_log()
+        if not path:
+            return {}
+        try:
+            with open(path, encoding="utf-8") as fh:
+                log = json.load(fh)
+        except (OSError, ValueError):
+            return None
+    out, wrappers = {}, set()
+    for e in (log.get("edits") or []) + (log.get("later") or []):
+        if not isinstance(e, dict):
+            continue
+        m = _FILE_KEY.search(str(e.get("file") or ""))
+        if (m.group(0) if m else log.get("file_key")) != key:
+            continue
+        ids, wraps = entry_created(e)
+        wrappers.update(wraps)
+        for i in ids:
+            out.setdefault(i, (str(e.get("at") or "?"), " ".join(str(e.get("what") or "").split())))
+    return {i: v for i, v in out.items() if i not in wrappers}
+
+
+def own_name(name, prefixes=None):
+    """Whether a layer name carries one of `prefixes` (own_prefixes()) as a whole word at its start or at the start of
+    a tag after "·" or "(": "AB" takes "AB proposal —", "(#3 · AB 8/11)" and "timeline · AB", not "ABC" or
+    "Feedback for AB"."""
+    return any(re.search(r"(?:^|[·(]\s*)" + re.escape(p) + (r"\b" if p[-1:].isalnum() else ""), str(name or ""))
+               for p in (own_prefixes() if prefixes is None else prefixes) if p)
+
+
+def asks_change(text):
+    """Whether text asks design for a change: a FIX:, ADD: or FLAG: line (CHANGE_TAG)."""
+    return bool(CHANGE_TAG.search(text or ""))
+
+
+def ours(node_id, path, created, prefixes=None):
+    """Why node_id is yours to edit, or None. path: its lineage, page first, the node last. Yours: it or a layer above
+    it is a section or frame whose name carries one of `prefixes` (own_name), or `created` (created_by_us) holds it or
+    one above it."""
+    nid, prefixes = _norm(node_id), tuple(own_prefixes() if prefixes is None else prefixes)
+    up = list(reversed(path or []))
+    for e in up if prefixes else ():
+        if e.get("type") in OWN_TYPES and own_name(e.get("name"), prefixes):
+            where = "it is" if e.get("id") == nid else "it sits in"
+            return f"{where} {e['type'].lower()} {e.get('id')} \"{e.get('name')}\", one of your own"
+    for i in dict.fromkeys([nid, _layer(nid)] + [e.get("id") for e in up]):
+        if i in (created or {}):
+            at, what = created[i]
+            where = "it" if i in (nid, _layer(nid)) else f"{i}, a layer above it,"
+            return f"{where} was created by a session (the edits log, {at}: \"{what[:100]}\")"
+    return None
+
+
+def ours_reason(key, node_id, text, path=None, created=None):
+    """THE NINETEENTH RULE's test, for a post and for a draft (drafts_store): (why the node is yours or None, why the
+    test could not run or None, the lineage read). Text that asks no change (asks_change) is not tested and reads
+    nothing; nor is any when neither figma.own_prefixes nor ledger.figma_edits is set."""
+    if not asks_change(text) or (created is None and not own_prefixes() and not edits_log()):
+        return None, None, path
+    nid, why = _norm(node_id), None
+    if path is None:
+        try:
+            import figma_client
+            path = figma_client.lineage(key, [_layer(nid)], kids=False, tool="figma_post").get(_layer(nid)) or []
+        except Exception as e:  # noqa: BLE001 -- a rate limit or no network: refuse, never pass unread
+            why, path = f"could not read where {nid} sits ({type(e).__name__})", None
+    if created is None and not why:
+        created = created_by_us(key)
+        if created is None:
+            why = f"could not read the edits log ({edits_log()})"
+    return (None if why else ours(nid, path, created)), why, path
+
+
+def ours_gate(key, node_id, text, theirs=None, path=None, created=None, notes=None):
+    """THE NINETEENTH RULE, `new` and a batch's new items: (the refusal or None, the lineage read, which settled_gate
+    reuses). Only a FIX:, ADD: or FLAG: note is tested; a Q and a FIX note pass unread. With --theirs its reason goes
+    in notes."""
+    nid = _norm(node_id)
+    mine, why, path = ours_reason(key, node_id, text, path, created)
+    if theirs:
+        if asks_change(text) and (mine or why or created is not None or own_prefixes() or edits_log()):
+            said = why or (f"{nid} is yours, {mine}" if mine else f"{nid} is not yours by the record")
+            (notes if notes is not None else []).append(f"  --theirs: {said}; posted for design because: {theirs}")
+        return None, path
+    if why:
+        return (f"REFUSED (THE NINETEENTH RULE): {why}, so there is no telling whether it is yours to edit. Re-run once "
+                "it reads, or, if design must make this change, add --theirs \"<why design must make this change>\"."), path
+    if not mine:
+        return None, path
+    return (f"REFUSED (THE NINETEENTH RULE): {nid} is yours to edit: {mine}. Asking design to change it is a change "
+            "you make yourself:\n"
+            "  1. edit it with use_figma,\n"
+            "  2. read it back (the characters or properties you set, and a screenshot),\n"
+            "  3. log it in the edits log (at, file, section, what, nodes, before, after, readback, undo),\n"
+            "  4. drop the draft from the drafts file.\n"
+            "If design must make this change, re-run this command with --theirs \"<why design must make this change>\"; "
+            "a batch item can't carry it."), path
+
+
 def node_components(ix, node):
     """The main components a node is part of, from figma_family's index: each copy on its path (an
     instance's main, a main itself, a detached copy's main), or every variant of a component set.
@@ -1501,20 +1750,24 @@ def check_reply(key, parent_id, text, own_last_ok=False, edited=(), evidence=Non
 
 def check_new(key, node_id, text, separate=(), edited=(), evidence=None, pin_ok=False, multi_ok=False,
               repost_ok=False, picture=None, cause=None, new_cause=False, also=(), new_thread=None, in_batch=False,
-              asks_cid=None):
+              asks_cid=None, theirs=None):
     """(refusal or None, plan): every gate for a new thread, and what post() sends. Posts nothing. also:
-    the threads this batch edits or replies in (THE FIFTEENTH RULE)."""
+    the threads this batch edits or replies in (THE FIFTEENTH RULE). theirs: --theirs's reason (THE NINETEENTH)."""
     docs = {}
 
     def fetch(k, n):  # drift_gate and pin_spot read the same frame: one call
         if n not in docs:
             docs[n] = fetch_node(k, n)
         return docs[n]
-    refused = (settled_gate(key, node_id, text, asks_cid) or pin_gate(node_id) or question_gate(text, multi_ok)
+    notes, offset, cs = [], None, []
+    # THE NINETEENTH RULE first, since a node you can edit needs no read, search or ask; its lineage serves the 18th.
+    refused, path = pin_gate(node_id), None
+    if not refused:
+        refused, path = ours_gate(key, node_id, text, theirs, notes=notes)
+    refused = refused or (settled_gate(key, node_id, text, asks_cid, path=path) or question_gate(text, multi_ok)
                or _drafts_wrapped(text) or _drafts_cut(node_id, key)
                or (None if repost_ok else repost_gate(key, node_id))
                or search_gate(key) or gate(key, node_id) or drift_gate(key, node_id, fetch))
-    notes, offset, cs = [], None, []
     if not refused:
         frame = _stamp(_load_reads()[key][_norm(node_id)])[1]
         offset, refused, pin_note = pin_spot(fetch(key, frame), node_id, pin_ok)
@@ -1618,9 +1871,9 @@ def reply(key, parent_id, text, own_last_ok=False, edited=(), evidence=None, mul
 
 
 def new(key, node_id, text, separate=(), edited=(), evidence=None, pin_ok=False, multi_ok=False,
-        repost_ok=False, picture=None, cause=None, new_cause=False, new_thread=None, asks_cid=None):
+        repost_ok=False, picture=None, cause=None, new_cause=False, new_thread=None, asks_cid=None, theirs=None):
     refused, plan = check_new(key, node_id, text, separate, edited, evidence, pin_ok, multi_ok, repost_ok, picture,
-                              cause, new_cause, new_thread=new_thread, asks_cid=asks_cid)
+                              cause, new_cause, new_thread=new_thread, asks_cid=asks_cid, theirs=theirs)
     if refused:
         sys.exit(shown(key, refused))
     _, jobs = post(plan)
@@ -1821,10 +2074,10 @@ def pop_flag(argv, flag):
 def pop_overrides(argv):
     """({flag: its reason, or None when none follows}, argv without the reasons). Each flag in OK_FLAGS
     goes off with its reason; --separate keeps its ids for parse_flags and gives up the reason after them;
-    --new-thread goes off with its reason."""
+    --new-thread and --theirs go off with theirs."""
     argv, got = list(argv), {}
     take = lambda k: argv[k] if k < len(argv) and not argv[k].startswith("--") else None
-    for flag in OK_FLAGS + ("--new-thread",):
+    for flag in OK_FLAGS + ("--new-thread", "--theirs"):
         if flag in argv:
             i = argv.index(flag)
             got[flag] = take(i + 1)
@@ -2080,10 +2333,145 @@ def selftest():
         globals()["read_only"] = real
 
 
+def ours_selftest(case, tmp):
+    """THE NINETEENTH RULE's planted cases: a layer in one of your own sections, a node the edits log says a session
+    created, a design node, --theirs, the log's shapes, and the wiring into check_new and batch. The lineage, the
+    prefixes and the log are planted; no Figma call."""
+    global OWN_PREFIXES, EDITS_LOG
+    import contextlib, io
+    import figma_client
+    K, B = "Kfile000000000000000A1", "Kboard00000000000000B2"     # 22 characters, as a Figma file key
+    log = {"file_key": K, "edits": [
+        {"at": "2026-01-02T10:00Z", "file": f"{K} (design file), page Sandbox", "what": "Created frame 'Prod / 2'.",
+         "nodes": ["30:10"], "undo": "use_figma: remove 30:10. The section returns to one child."},
+        {"at": "2026-01-03T10:00Z", "what": "Pill rows grow to fit.", "nodes": ["40:6 new badge in card 7:3; cloned from 7:4"],
+         "undo": "Delete 40:6. Row set variants: cards back to FIXED."},
+        {"at": "2026-01-04T10:00Z", "what": "A fade added on the heroes.", "nodes": ["50:1"],
+         "before": {"created": {"50:9": ["51:1", "51:2"]}}, "undo": "remove the fill on 50:1, then restore the version"},
+        {"at": "2026-01-05T10:00Z", "file": B, "what": "A new section 3.", "new": {"60:1": "3 · How we got here"}}]}
+    lp = os.path.join(tmp, "figma-edits.json")
+    with open(lp, "w", encoding="utf-8") as fh:
+        json.dump(log, fh)
+    page = {"id": "1:6", "type": "CANVAS", "name": "A teammate's sandbox"}
+    label = [page, {"id": "20:1", "type": "SECTION", "name": "Mine - Onboarding journey"},
+             {"id": "20:2", "type": "FRAME", "name": "Present / label strip"}, {"id": "20:3", "type": "TEXT", "name": "Label"}]
+    made = [page, {"id": "29:1", "type": "SECTION", "name": "Production direction"},
+            {"id": "30:10", "type": "FRAME", "name": "Prod / 2"}, {"id": "30:11", "type": "TEXT", "name": "Status"}]
+    v3 = {"id": "5:1", "type": "CANVAS", "name": "Design page"}
+    design = [v3, {"id": "5:2", "type": "FRAME", "name": "Overview"}, {"id": "5:3", "type": "RECTANGLE", "name": "Hero"}]
+    under = lambda *ids: [v3] + [{"id": i, "type": "FRAME", "name": "Card"} for i in ids]
+    ask = "FIX: the label strip should read 'Prototype · sample data', as the ruling says."
+    done = DONE_PREFIX + ": the label strip reads 'Prototype · sample data'."
+    kept = (OWN_PREFIXES, EDITS_LOG, figma_client.lineage)
+    try:
+        OWN_PREFIXES, EDITS_LOG = ("Mine - ",), lp
+        cr = created_by_us(K, log)
+
+        def g(path, text=ask, theirs=None, notes=None, created=cr, key=K):
+            return ours_gate(key, path[-1]["id"], text, theirs, path, created, notes)[0]
+        got = g(label) or ""
+        case("19th known-bad: an ask on a layer inside your own 'Mine - ' section: refused, and the refusal says edit "
+             "it with use_figma, read it back, log it, drop the draft, or --theirs",
+             None if all(w in got for w in ("yours to edit", "20:1", "use_figma", "read it back", "edits log",
+                                            "drop the draft", "--theirs")) else got or "passed", False)
+        got = g(made) or ""
+        case("19th known-bad: 30:11 inside 30:10, which the edits log's undo removes (a session created it), in no "
+             "section of yours: refused, naming the entry",
+             None if "30:10, a layer above it, was created by a session" in got and "2026-01-02T10:00Z" in got
+             else got or "passed", False)
+        case("19th known-good: a design node with no own section above it and no record of its creation: passes",
+             g(design), False)
+        notes = []
+        got = g(label, theirs="design owns the label wording here", notes=notes)
+        case("19th known-good: the same ask with --theirs: passes, and its reason is in the notes post() prints",
+             None if got is None and any("design owns the label wording" in n and "is yours" in n for n in notes)
+             else (got, notes), False)
+        case("19th: a FIX note on your own layer asks nothing: passes", g(label, done), False)
+        case("19th log: a nodes string calling its id new is yours ...", g(under("40:6")), True)
+        case("19th log: ... but its clone's source is not", g(under("7:4")), False)
+        case("19th log: before.created's ids are yours ...", g(under("51:1")), True)
+        case("19th log: ... their parent is not, nor a node whose undo removes only its fill",
+             g(under("50:9")) or g(under("50:1")), False)
+        case("19th log: a `new` field's id is yours on its own file ...", g(under("60:1"), key=B,
+                                                                            created=created_by_us(B, log)), True)
+        case("19th log: ... and not on another file", g(under("60:1")), False)
+        built = [v3, {"id": "70:1", "type": "SECTION", "name": "Delivery timeline"}, {"id": "70:2", "type": "TEXT"}]
+        tl = {"70:1": ("2026-01-06T10:00Z", "Built the delivery timeline.")}
+        case("19th: a FIX: note on a section a session built is refused ...", g(built, created=tl), True)
+        case("19th: ... a Q: on it passes: a question you released can stand there",
+             g(built, "Q: @Design, A. which week does the pilot start?", created=tl), False)
+        case("19th: ... while ADD: and FLAG: notes on it are refused, like FIX:",
+             None if g(built, "ADD: a row for the pilot.", created=tl) and g(built, "FLAG: week 3 overlaps.", created=tl)
+             else "passed", False)
+        wr = created_by_us(K, {"file_key": K, "edits": [
+            {"at": "2026-01-07T10:00Z", "what": "Spacing.", "nodes": ["8:1", "12:7 (new wrapper)"]},
+            {"at": "2026-01-08T10:00Z", "what": "Created the pill stacks.", "nodes": ["12:8 (new stack)", "12:9"]}]})
+        wrapped = design[:2] + [{"id": "12:7", "type": "FRAME", "name": "wrapper"}, {"id": "8:1", "type": "TEXT"}]
+        case("19th wrappers: a child of a wrapper a session put around design's layers passes ...",
+             g(wrapped, created=wr), False)
+        case("19th wrappers: ... and so does the wrapper, and a stack in an entry that starts \"Created\" ...",
+             g(wrapped[:3], created=wr) or g(design[:2] + [{"id": "12:8", "type": "FRAME"}], created=wr), False)
+        case("19th wrappers: ... while that entry's other node stays yours", g(under("12:9"), created=wr), True)
+        OWN_PREFIXES = ("Mine - ", "AB")
+        tag = lambda name: [v3, {"id": "80:1", "type": "FRAME", "name": name}, {"id": "80:2", "type": "TEXT"}]
+        case("19th names: an \"(#3 · 12 · AB 8/11)\" tag is yours ...", g(tag("Modal exploration (#3 · 12 · AB 8/11)")),
+             True)
+        case("19th names: ... and \"AB proposal —\", and a \"· AB\" suffix",
+             None if g(tag("AB proposal — details modal")) and g(tag("Delivery timeline · AB")) else "passed", False)
+        case("19th names: a teammate's \"CD - \" and \"(· CD 8/11)\", \"ABC\" and \"Feedback for AB\" pass",
+             g(tag("CD - Onboarding")) or g(tag("Modal (#2 · CD 8/11)")) or g(tag("ABC review"))
+             or g(tag("Feedback for AB")), False)
+        OWN_PREFIXES = ("Mine - ",)
+        got = entry_created({"undo": "Remove sections 12:1 (3G) and 12:2 (3H) and the 3E nodes 13:1, :2, :3 (then move "
+                                     "3E's Still open up 2400); delete 4C rows 22-25"})[0]
+        case("19th parse: an undo list past band labels, parentheses and :shorthand ids",
+             None if got == ["12:1", "12:2", "13:1", "13:2", "13:3"] else got, False)
+        got = entry_created({"what": "Cut, each table cloned whole into the new archive sub-section 14:1 first.",
+                             "undo": "Delete the 10 'Builds · ' sections and texts 14:5 and 14:6 (check comments "
+                                     "first). Remove row 1 of 14:9.",
+                             "removed": ["every original table is whole in 14:1 (clones 14:2, 774)"]})[0]
+        case("19th parse: a new archive sub-section, texts past a quoted name, clones with bare numbers; a removed "
+             "row's table is not one", None if sorted(got) == ["14:1", "14:2", "14:5", "14:6", "14:774"] else got, False)
+
+        def boom(*a, **k):
+            raise OSError("offline")
+        figma_client.lineage = boom
+        case("19th: a lineage that can't be read refuses", ours_gate(K, "20:3", ask)[0], True)
+        case("19th: ... and a FIX note reads nothing, so it passes", ours_gate(K, "20:3", done)[0], False)
+        OWN_PREFIXES, EDITS_LOG = (), ""
+        case("19th: with no own prefixes and no edits log set, the rule is off and reads nothing",
+             ours_gate(K, "20:3", ask)[0], False)
+        OWN_PREFIXES = ("Mine - ",)
+        figma_client.lineage = lambda key, ids, **kw: {"20:3": label, "5:3": design}
+        EDITS_LOG = os.path.join(tmp, "no-such-edits.json")
+        case("19th: a set edits log that can't be read refuses", ours_gate(K, "5:3", ask)[0], True)
+        EDITS_LOG = lp
+        got = check_new(K, "20:3", ask)[0] or ""
+        case("19th wiring: check_new refuses the ask on the nineteenth rule, before any read it would need",
+             None if "THE NINETEENTH RULE" in got else got or "passed", False)
+        bp, buf = os.path.join(tmp, "ours-batch.json"), io.StringIO()
+        with open(bp, "w", encoding="utf-8") as fh:
+            json.dump([{"kind": "new", "key": K, "node": "20:3", "text": ask},
+                       {"kind": "new", "key": K, "node": "20:3", "text": ask, "theirs": "design owns the label"}], fh)
+        with contextlib.redirect_stdout(buf):
+            code = batch(bp, check_only=True)
+        out = buf.getvalue()
+        case("19th wiring: batch --check refuses a new item on your own layer, and an item carrying `theirs`",
+             None if code == 1 and "REFUSED (THE NINETEENTH RULE)" in out and "--theirs" in out
+             else (code, out[-600:]), False)
+        got, argv = pop_overrides(["new", K, "20:3", ask, "--theirs", "design owns the label wording"])
+        case("19th: --theirs comes off the command line with its reason",
+             None if got.get("--theirs") == "design owns the label wording" and argv == ["new", K, "20:3", ask]
+             else (got, argv), False)
+    finally:
+        OWN_PREFIXES, EDITS_LOG, figma_client.lineage = kept
+
+
 def _selftest(real_read_only):
-    global READS, SEARCHES, FIXNOTES, DELETES, CAUSES
+    global READS, SEARCHES, FIXNOTES, DELETES, CAUSES, OWN_PREFIXES, EDITS_LOG
     saved, tmp = (READS, SEARCHES), tempfile.mkdtemp()
     CAUSES = os.path.join(tmp, "causes.json")    # no case may write the real one
+    saved_own, (OWN_PREFIXES, EDITS_LOG) = (OWN_PREFIXES, EDITS_LOG), ((), "")   # the machine's config sets neither
     atexit.register(shutil.rmtree, tmp, True)
     READS, SEARCHES = os.path.join(tmp, "reads.json"), os.path.join(tmp, "searches.json")
     band = {"id": "1:1", "type": "FRAME", "itemSpacing": 12,
@@ -2938,7 +3326,9 @@ def _selftest(real_read_only):
              globals()["_me"]) = kept
         own_open_selftest(case, tmp)
         settled_selftest(case, tmp)
+        ours_selftest(case, tmp)
     finally:
+        OWN_PREFIXES, EDITS_LOG = saved_own
         _fc.whoami = saved_whoami
         for k in planted_meta:
             _fc._META.pop(k, None)
@@ -2976,7 +3366,7 @@ if __name__ == "__main__":
                             ok("--multi-ok"), ok("--repost-ok"), picture, separate, cause_slug, asks_cid),
      "new": lambda: new(args[1], args[2], args[3], separate, edited, evidence,
                         ok("--pin-ok"), ok("--multi-ok"), ok("--repost-ok"), picture, cause_slug, ok("--new-cause"),
-                        new_thread, asks_cid),
+                        new_thread, asks_cid, overrides.get("--theirs")),
      "cause": lambda: cause(args[1], *(args[2:4] if len(args) >= 4 else ())),
      "fixnote": lambda: fixnote(args[1], args[2], args[3], edited, evidence, cause_slug, separate),
      "delete": lambda: delete(args[1], args[2])}.get(cmd, lambda: sys.exit(f"unknown: {cmd}"))()

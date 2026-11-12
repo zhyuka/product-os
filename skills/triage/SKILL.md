@@ -112,12 +112,14 @@ change separately. Then record it where the item lives:
   and `- Applied in: <file>` when a file changed. Defer: add `- Deferred <YYYY-MM-DD>: <what is
   blocking>`; the status stays `open`. Moot: after a yes, set `Status: moot` with the date and why;
   the entry stays in the file. Read the entry back after each write.
-- **Tracker item.** Draft one comment that gives the answer or the blocker, plainly, with roles, not
-  names. Show it and get a yes for that item, then post it with `ado_write.py comment <id> "<html>"`,
-  which reads it back. Resolve or Close, won't fix, on an item whose title is the question:
-  `ado_write.py state <id> Closed`. On a work item that only carries the tag: remove the tag with
-  `ado_write.py field <id> System.Tags "<the other tags>"`, which replaces the whole value, and leave
-  its state to the `ado` skill. Defer: the comment says what is blocking, and nothing else changes.
+- **Tracker item.** Draft the answer or the blocker plainly, with roles, not names, and get a yes
+  for that item. Resolve or Close, won't fix, on an item whose title is the question:
+  `ado_write.py state <id> Closed` first, then post the answer as its resolution comment with
+  `ado_write.py comment <id> "<html>"`, which reads it back. On a work item that only carries the
+  tag, the answer changes what the item says: write it into the body with `ado_write.py field <id>
+  System.Description`, remove the tag with `ado_write.py field <id> System.Tags "<the other tags>"`,
+  which replaces the whole value, and leave its state to the `ado` skill. Defer: the body gets
+  `[OPEN: <what is blocking>, waits on <whom>]`, and nothing else changes.
   Moot: no comment; after a yes for the delete, send it to the recycle bin with `ado_write.py
   delete`, as `references/sources.md` says.
 - **Request-ledger question.** The card that names its id is the record.

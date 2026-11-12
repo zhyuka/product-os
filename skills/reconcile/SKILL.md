@@ -133,7 +133,7 @@ your own section only; in a repo, your own files.
    (what, evidence, disposition), ranked by consequence; the rest as a count by category. Durable
    detail goes in the archive `MANIFEST.md`, not the reply.
 2. Then one question, the recommended option first. A multi-file edit shows its file list and sample
-   lines. Each outward action (a tracker comment, a design comment, a message, a push) is its own
+   lines. Each outward action (a tracker edit or comment, a design edit or comment, a message, a push) is its own
    line in it, with its text, and needs its own yes: approving a text isn't approving its post.
 3. Report and park: nothing new starts mid-pass. What the pass can't settle goes to `open-question`
    (§6 D).

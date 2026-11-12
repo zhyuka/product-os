@@ -30,7 +30,8 @@ OS keychain (`figma_auth.py --source` says which), and file keys from their argu
 - Write only where the work is yours. Design's personal pages (sandboxes, graveyard pages,
   in-progress copies) and the other sections of a shared board are teammates' work: never edit or
   delete there, even on a keyword match. A main edit reaches personal pages anyway; report what
-  lands there, and don't undo it.
+  lands there, and don't undo it. A section the owner keeps on one of those pages and a frame your
+  sessions built (the edit log) are yours: fix them in place, never by a comment asking for it.
 - On a board, build content from native text, sticky, table, code-block and shape objects the team
   can edit; upload an image only for a picture of real UI, never a rendered PNG of text. Give each
   part the form its use in the room needs: a table for a lookup, stickies for a set the room will

@@ -38,9 +38,12 @@ the moment any other path files a ticket.
 
 ## Body versus comment
 
-The body is the living spec: when requirements change on a not-yet-started item, rewrite
-Description/AC to the clean current truth (the revision history is the diff). Comments are for
-watchers and for the resolution record. Don't pile a new comment per change; consolidate or delete
+The body is the living spec: any change to what the item says, whether its scope, a dependency's
+status, an open point or a date, is an edit to Description/AC, at any stage, giving the clean
+current truth (the revision history is the diff). A comment is for a person who must reply or be
+told, and for the resolution record; `ado_write.py comment` refuses one on an open item that
+mentions nobody, answers no teammate and cites no shipped work (`--resolve <State>` sets the state
+first and posts the note in one step). Don't pile a new comment per change; consolidate or delete
 your own redundant comments. A point still open goes in the body as `[OPEN: <the point>, waits on
 <who>]`; once it settles, rewrite the note as its answer, or as "tracked in #N". `ado_write.py`
 refuses to close an item that still holds one.

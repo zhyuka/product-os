@@ -13,7 +13,19 @@ nothing else, over the same PAT + urllib path:
                                        any single field, e.g. Microsoft.VSTS.Common.AcceptanceCriteria;
                                        "" clears it. Refuses to drop a line someone else first
                                        wrote (see "Whose text" below) unless --replaces says why
-    comment  <id> <text> [--stack WHY] add a comment. Refuses if the newest comment on the
+    comment  <id> <text> [--resolve STATE] [--notify WHO] [--stack WHY]
+                                       add a comment. First refuses one that belongs in the body:
+                                       the item isn't Resolved, Closed, Done or Removed, no
+                                       teammate's comment is newest, the text @mentions nobody,
+                                       and it cites no shipped work (a commit sha, the
+                                       deliver.branch branch, a PR/MR link). A status, an open
+                                       point or a date then goes in the body as [OPEN: <the
+                                       point>, waits on <whom>]. --resolve <State> sets that state
+                                       first, reads it back, then posts: a resolution note in one
+                                       command. --notify "<who must be told and why>" lifts the
+                                       test, --stack doesn't. The same test runs on a `field` or
+                                       `batch` System.History.
+                                       Then refuses if the newest comment on the
                                        item is already yours - nobody has replied, so patch
                                        that one with `editcmt` instead of stacking a second.
                                        Allowed once a teammate has replied. A time gap, a closed
@@ -115,8 +127,9 @@ shares with ado_rest.py's audit. So one write that rewrites the note as its answ
 A `batch` with one such entry refuses the whole file; an undo file's entries pass.
 
 Each write goes out from its own command line, `ado_write.py <subcommand> ...`, which names the
-write, so a settings ask rule can prompt on it (ask_rules.py checks that each one does). --stack's
-and --replaces' WHY sit on that command, in plain words (ask_rules.plain), so the prompt shows why.
+write, so a settings ask rule can prompt on it (ask_rules.py checks that each one does). --stack's,
+--notify's and --replaces' WHY sit on that command, in plain words (ask_rules.plain), so the prompt
+shows why.
 
 CONFIG. ado.org and ado.project from kit_config.py; unset, a write exits 2 naming the key.
 ado.undo_dir: where `delete` writes its undo files (default ~/.local/share/product-os/ado-undo).
@@ -480,8 +493,105 @@ def _live_comments(wid):
     return cs
 
 
-def add_comment(wid, text, stack_reason=None):
-    """Add a comment - but REFUSE to stack a second unanswered one on your own.
+# A comment on an item in one of these states is its resolution record; on any other, the body test runs.
+_SETTLED = {"resolved", "closed", "done", "removed"}
+
+
+def _body_ref(fields):
+    """The item's body field: ReproSteps on a Bug, Description on anything else."""
+    bug = str(_field(fields, "System.WorkItemType") or "").strip().lower() == "bug"
+    return "Microsoft.VSTS.TCM.ReproSteps" if bug else "System.Description"
+
+
+# Shipped work makes a comment a resolution record: a commit sha as a word (7 to 40 hex characters, holding a
+# digit and a letter, since an all-digit run is an item, comment or design-tool id or a date), the branch work
+# ships to (deliver.branch), or a PR/MR link. A GUID's runs (an attachment or mention address) are not shas. A
+# status note that cites a commit ("Partly done. The link half shipped in ...") passes too: a blind spot this
+# test accepts, since most notes that cite shipped work are resolution records.
+_GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+_SHA = re.compile(r"\b(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
+_PR = re.compile(r"/pull/\d+|/merge_requests/\d+|/pullrequest/\d+", re.I)
+
+
+def _shipped_branch():
+    """The branch shipped work lands on, deliver.branch (kit_config.py); "" when unset, so no branch counts."""
+    try:
+        return kit_config.get("deliver", "branch") or ""
+    except Exception:
+        return ""
+
+
+def _shipped(text):
+    """What in the text cites shipped work ("commit 2fed223", the branch, "a PR/MR link"), or None."""
+    t = _GUID.sub(" ", str(text or ""))
+    m = _SHA.search(t)
+    if m:
+        return f"commit {m.group(0)}"
+    branch = _shipped_branch()
+    if branch and re.search(r"(?<![\w/.-])" + re.escape(branch) + r"(?![\w/-])", t):
+        return branch
+    return "a PR/MR link" if _PR.search(t) else None
+
+
+def _body_test(wid, text, override, fields=None, state=None):
+    """Does this new comment belong in the item's body? (refusal or None, live comments read or None, _me() or None).
+
+    The ado skill's rule (references/writing-work-items.md, "Body vs comment"): the body is the living spec, a
+    point still open goes in it as [OPEN: <the point>, waits on <whom>], and comments are for watchers and for
+    the resolution record. Sessions still draft a status comment on an open item where a body edit is the
+    write. So a new comment is refused when all four hold: the item is not Resolved, Closed, Done or Removed;
+    no teammate's comment is newest (there are none, or the newest is ours); the text @mentions nobody (no
+    data-vss-mention); and it cites no shipped work (_shipped), which makes it a resolution record. `override`
+    is the command line --notify goes on. `state` is the state the write leaves (--resolve, or a batch entry
+    that resolves the item in the same patch). The comments and identity read here are returned so the
+    stacking test doesn't read them again."""
+    if "data-vss-mention" in str(text or ""):
+        return None, None, None
+    cites = _shipped(text)
+    if cites:
+        print(_ln(f"  #{wid} body test: passes, the text cites shipped work ({cites}), so it is a resolution record"))
+        return None, None, None
+    if fields is None:
+        fields = _req(_p(f"/_apis/wit/workitems/{wid}?{API}")).get("fields") or {}
+    state = str(state or _field(fields, "System.State") or "").strip()
+    if state.lower() in _SETTLED:
+        return None, None, None
+    cs, me = _live_comments(wid), None
+    if cs:
+        me = _me()
+        who = ((cs[-1].get("createdBy") or {}).get("id") or "").strip().lower()
+        if not me[0]:
+            print(_ln(f"  #{wid} body test: did not run (the PAT's identity can't be read, so whose the newest "
+                      f"comment is is unknown)"))
+            return None, cs, me
+        if who != me[0]:
+            return None, cs, me
+    thread = "has no comments" if not cs else f"its newest comment ({cs[-1].get('id')}) is yours"
+    end = "Closed" if str(_field(fields, "System.WorkItemType") or "").strip().lower() == "task" else "Resolved"
+    return _ln(
+        f"REFUSED #{wid}: it is {state or 'open'}, {thread}, and the text @mentions nobody, so this comment tells "
+        f"no one and reads as the item's status. Nothing sent.\n"
+        f"  A status, an open point or a date on an open item goes in its body, as [OPEN: <the point>, waits on "
+        f"<whom>]. Comments are for watchers and for the resolution record.\n"
+        f"  Write the body as it stands with the point added (python ado_rest.py show {wid} prints it):\n"
+        f'    python ado_write.py field {wid} {_body_ref(fields)} "<text>"\n'
+        f"  Resolving it? One command sets the state, then posts the note as its resolution record:\n"
+        f'    python ado_write.py comment {wid} "<text>" --resolve {end}\n'
+        f"  A note that cites shipped work (a commit, {_shipped_branch() or 'the deliver.branch branch'}, a PR/MR "
+        f"link) passes as one.\n"
+        f"  Someone must be told? @mention them in the text, or say who and why:\n"
+        f'    python ado_write.py {override} --notify "<who must be told and why>"\n'
+        f"  --stack does not lift this test."), cs, me
+
+
+def add_comment(wid, text, stack_reason=None, notify=None, resolve=None):
+    """Add a comment - but REFUSE one that belongs in the body (_body_test), then REFUSE to stack a
+    second unanswered one on your own. `notify` ("<who must be told and why>", from --notify) lifts the
+    first test and is printed; --stack lifts only the second. The body test runs first, because the
+    stacking refusal points to editcmt, which would put the same status in a comment. `resolve`
+    (--resolve <State>, one of Resolved, Closed, Done, Removed) judges both tests on that state, then
+    sets it and reads it back before posting, so a resolution note goes out with its resolve in one
+    command and needs no override; a refusal sends nothing.
 
     WHY THIS GATE EXISTS. "One comment per thread - edit it, do not stack a second one"
     and "the detail belongs in the BODY, not the comment" can be written down and still
@@ -510,13 +620,21 @@ def add_comment(wid, text, stack_reason=None):
         print(f"  ! {len(text)} chars. Target is ~700; a wall of text gets rewritten by hand. "
               f"Mechanism and measurements belong in Description/AC; the comment points at them.")
 
+    cs = mine = None
+    if notify is None:
+        refusal, cs, mine = _body_test(wid, text, f'comment {wid} "<text>"', state=resolve)
+        if refusal:
+            sys.exit(refusal)
+    else:
+        print(f"  --notify: {notify}")
+
     if stack_reason is None:
-        cs = _live_comments(wid)
+        cs = _live_comments(wid) if cs is None else cs
         if cs:
             newest = cs[-1]
             by = newest.get("createdBy") or {}
             who = (by.get("id") or "").strip().lower()
-            me, my_name = _me()
+            me, my_name = mine or _me()
             if me and who == me:
                 head = " ".join(newest.get("text", "").split())[:160]
                 sys.exit(_ln(
@@ -538,6 +656,8 @@ def add_comment(wid, text, stack_reason=None):
     else:
         print(f"  --stack override: {stack_reason}")
 
+    if resolve:  # both tests passed on the state this command leaves; set it first, read back, then post
+        patch_fields(wid, [("System.State", resolve)])
     text = _linked(text)
     d = _req(_p(f"/_apis/wit/workItems/{wid}/comments?api-version=7.0-preview.3"),
              {"text": text}, "POST")
@@ -943,6 +1063,25 @@ def batch(path, replaces=None):
         print(_ln(f"REFUSED: {path} closes {len(refused)} item(s) over an open note "
                   f"({', '.join(re.match(r'REFUSED (#[0-9]+)', line).group(1) for line in refused)}), so nothing "
                   f"was sent. Rewrite each note as its answer in the same entry, or leave the item Resolved."))
+        return 1
+    # A System.History value adds a comment, so it meets the body test add_comment runs (_body_test), judged on
+    # the state the entries up to it leave: one that resolves the item in the same patch is its resolution
+    # record. No batch override: --notify sits on its own `comment` command line. Undo entries carry no History.
+    in_body, states = [], {}
+    for it in items:
+        wid, sets = str(it["id"]), {r.lower(): v for r, v in (it.get("set") or {}).items()}
+        if "system.state" in sets:
+            states[wid] = str(sets["system.state"])
+        if "status" in it or not sets.get("system.history"):
+            continue
+        refusal, _, _ = _body_test(wid, sets["system.history"], f'comment {wid} "<text>"', state=states.get(wid))
+        if refusal:
+            in_body.append((wid, refusal))
+    if in_body:
+        print("\n".join(r for _, r in in_body))
+        print(_ln(f"REFUSED: {path} adds {len(in_body)} comment(s) through System.History that belong in the body "
+                  f"({', '.join('#' + w for w, _ in in_body)}), so nothing was sent. Move each into the item's body, "
+                  f"or send it as its own comment command with --notify."))
         return 1
     undo, applied, skipped, written = [], [], [], set()
 
@@ -2089,6 +2228,7 @@ _LINE_CASES = [
          says="1 of 1 applied", names='left out System.History ""', not_says=["SKIPPED"]),
     dict(name="w21 a History comment is sent, and its undo holds no History and puts nothing back", op="batch",
          ref="System.State", prior="Active", store=lambda s: s, expect=0, then_undo=True,
+         existing=[("someone-else", "<p>Their question.</p>")],  # a reply to a teammate, which the body test lets by
          batch=[{"id": 4242, "set": {"System.History": "<p>A note.</p>"}}],
          says="nothing to send: an undo can't take back a discussion comment", not_says=['"System.History"']),
 ]
@@ -2195,6 +2335,90 @@ _DELETE_CASES = [
          says="#4242, said earlier at 09:00Z: Holding #4242 until the push lands.", names="1 of 1 applied"),
 ]
 
+# ---- a comment that belongs in the body (the ado skill's "Body vs comment") ----------------------------------------
+# Each runs the real command line, run() and add_comment's tests, with no override the case doesn't name.
+_STATUS = "<p>Status: the hero copy waits on design; next check on Friday.</p>"
+_ACCEPTED = "<p>Design accepted the hero as built at 1440 and 390.</p>"  # a resolution note that cites no shipped work
+_BODY_CASES = [
+    dict(name="n1 a status comment on a New item with no comments and no mention is refused", op="cli",
+         argv=["comment", "4242", _STATUS], extra_fields={"System.State": "New"}, store=lambda s: s, expect=1,
+         says='python ado_write.py field 4242 System.Description "<text>"',
+         names=["REFUSED #4242: it is New, has no comments", "[OPEN: <the point>, waits on <whom>]",
+                'comment 4242 "<text>" --resolve Resolved', "stand-in writes: none"], not_says=["read back"]),
+    dict(name="n2 a System.History write on an Active Task meets the same test, names --resolve Closed, sends nothing",
+         op="cli", argv=["field", "4242", "System.History", _STATUS], extra_fields={"System.WorkItemType": "Task"},
+         store=lambda s: s, expect=1, says="REFUSED #4242: it is Active, has no comments",
+         names=['field 4242 System.History "<text>" --notify', '"<text>" --resolve Closed', "stand-in writes: none"]),
+    dict(name="n3 allowed when a teammate's comment is newest", op="cli", argv=["comment", "4242", _STATUS],
+         existing=["<p>Ours first.</p>", ("someone-else", "<p>Their question.</p>")], store=lambda s: s, expect=0,
+         says="read back", names="stand-in writes: POST comment"),
+    dict(name="n4 allowed when the text @mentions someone", op="cli",
+         argv=["comment", "4242", f'<p><a href="#"{_MENTION}>@Teammate, A.</a> the hero copy is yours to send.</p>'],
+         extra_fields={"System.State": "New"}, store=lambda s: s, expect=0, says="read back",
+         names="stand-in writes: POST comment"),
+    dict(name="n5 allowed on a Resolved item: the comment is its resolution record", op="cli",
+         argv=["comment", "4242", _ACCEPTED], extra_fields={"System.State": "Resolved"},
+         store=lambda s: s, expect=0, says="read back", names="stand-in writes: POST comment",
+         not_says=["body test: passes"]),
+    dict(name="n6 allowed with --notify, its reason printed", op="cli",
+         argv=["comment", "4242", _STATUS, "--notify", "design must know the date moved"],
+         extra_fields={"System.State": "New"}, store=lambda s: s, expect=0,
+         says="--notify: design must know the date moved", names=["read back", "stand-in writes: POST comment"]),
+    dict(name="n7 --stack does not lift it", op="cli",
+         argv=["comment", "4242", _STATUS, "--stack", "a second note on purpose"], extra_fields={"System.State": "New"},
+         store=lambda s: s, expect=1, says="--stack does not lift this test", names="stand-in writes: none"),
+    dict(name="n8 on a Bug the refusal names ReproSteps, its body", op="cli", argv=["comment", "4242", _STATUS],
+         extra_fields={"System.WorkItemType": "Bug"}, store=lambda s: s, expect=1,
+         says='field 4242 Microsoft.VSTS.TCM.ReproSteps "<text>"', names="stand-in writes: none"),
+    dict(name="n9 our own comment newest: the body refusal, not the stacking one that points to editcmt", op="cli",
+         argv=["comment", "4242", _STATUS], existing=["<p>Our earlier note.</p>"], store=lambda s: s, expect=1,
+         says="its newest comment (7001) is yours", names="stand-in writes: none", not_says=["editcmt"]),
+    dict(name="n10 a batch History entry on an open item refuses the whole file before anything is sent", op="batch",
+         ref="System.State", prior="Active", store=lambda s: s, expect=1,
+         batch=[{"id": 4242, "set": {"System.Tags": "x"}}, {"id": 4242, "set": {"System.History": _STATUS}}],
+         says="belong in the body (#4242)", names="REFUSED #4242: it is Active", not_says=["applied", "undo holds"]),
+    dict(name="n11 a batch entry that resolves the item with its History note passes: the resolution record",
+         op="batch", ref="System.State", prior="Active", store=lambda s: s, expect=0,
+         batch=[{"id": 4242, "set": {"System.State": "Resolved", "System.History": _ACCEPTED}}],
+         says="1 of 1 applied", not_says=["REFUSED", "body test: passes"]),
+    dict(name="n12 --notify with no reason is refused before anything is read", op="cli",
+         argv=["comment", "4242", _STATUS, "--notify", " "], store=lambda s: s, expect=1,
+         says="--notify requires who must be told and why", names="stand-in writes: none"),
+    dict(name="n13 field System.History with --notify is sent", op="cli",
+         argv=["field", "4242", "System.History", _STATUS, "--notify", "the user asked for a note here"],
+         store=lambda s: s, expect=0, says="--notify: the user asked for a note here",
+         names=["read back", "stand-in writes: PATCH fields"]),
+    dict(name="n14 editcmt is not gated: it rewrites a comment already there", op="cli",
+         argv=["editcmt", "4242", "7001", _STATUS], existing=["<p>Our note.</p>"], extra_fields={"System.State": "New"},
+         store=lambda s: s, expect=0, says="replaced", names="stand-in writes: PATCH comment"),
+    # Shipped work is a resolution record; --resolve posts one with its resolve. The branch rule reads
+    # deliver.branch, which the stand-in doesn't set, so it has no case here.
+    dict(name="n15 allowed on an Active item: the text cites a commit sha", op="cli",
+         argv=["comment", "4242", "<p>Fixed in 2fed223: the hero copy matches the frame.</p>"], store=lambda s: s,
+         expect=0, says="cites shipped work (commit 2fed223)", names=["read back", "stand-in writes: POST comment"]),
+    dict(name="n17 allowed on an Active item: the text links a PR", op="cli",
+         argv=["comment", "4242", '<p>Merged: <a href="https://github.com/org/site/pull/48">the hero PR</a>.</p>'],
+         store=lambda s: s, expect=0, says="cites shipped work (a PR/MR link)", names="read back"),
+    dict(name="n18 refused: a status that only looks like shipped work (ids, a date, an attachment GUID, 'decade')",
+         op="cli", argv=["comment", "4242",
+                         '<p>Status: the 20261114 build waits on design; design comment 1881261968 asks for the copy, '
+                         'a decade-old <img src="https://dev.azure.com/org/_apis/wit/attachments/'
+                         '0b6c1f3a-8d4e-4f5a-9b0c-1d2e3f4a5b6c?fileName=hero.png">.</p>'],
+         extra_fields={"System.State": "New"}, store=lambda s: s, expect=1, says="REFUSED #4242: it is New",
+         names="stand-in writes: none", not_says=["body test: passes"]),
+    dict(name="n19 --resolve on a New item with no comments sets the state first, reads it back, then posts", op="cli",
+         argv=["comment", "4242", _ACCEPTED, "--resolve", "resolved"], extra_fields={"System.State": "New"},
+         store=lambda s: s, expect=0, says="state=Resolved",
+         names=["read back: 1 of 1 field(s) as sent", "read back as sent", "stand-in writes: PATCH fields; POST comment"],
+         not_says=["REFUSED"]),
+    dict(name="n20 --resolve takes only a settled state, and sends nothing otherwise", op="cli",
+         argv=["comment", "4242", _ACCEPTED, "--resolve", "Active"], extra_fields={"System.State": "New"},
+         store=lambda s: s, expect=1, says="--resolve <State> goes on `comment`", names="stand-in writes: none"),
+    dict(name="n21 --resolve with our own comment newest: the stacking refusal comes before the state write", op="cli",
+         argv=["comment", "4242", _ACCEPTED, "--resolve", "Resolved"], existing=["<p>Our earlier note.</p>"],
+         store=lambda s: s, expect=1, says="is already yours", names="stand-in writes: none"),
+]
+
 
 def _standin(case):
     import http.server
@@ -2208,8 +2432,9 @@ def _standin(case):
         st["fields"].pop(ref, None)
         if prior is not None:
             st["fields"][ref] = prior
-    for k, text in enumerate(case.get("existing") or []):
-        st["comments"].append({"id": 7001 + k, "text": text, "createdBy": {"id": "me"},
+    for k, text in enumerate(case.get("existing") or []):  # a (who, text) pair is a comment by `who`
+        who, text = text if isinstance(text, tuple) else ("me", text)
+        st["comments"].append({"id": 7001 + k, "text": text, "createdBy": {"id": who},
                                "isDeleted": False, "createdDate": "2026-10-0%dT00:00:00Z" % (k % 9 + 1)})
     if case["op"] == "editcmt" or any((b.get("comment") or {}).get("id") == 8001 for b in case.get("batch") or []):
         st["comments"].append({"id": 8001, "text": _ORIGINAL, "createdBy": {"id": "someone-else"},
@@ -2302,6 +2527,7 @@ def _standin(case):
                     st["rev"] += 1
                 return self._send(200, {"id": 4242})
             if path.endswith("/comments"):
+                st["writes"].append("POST comment")
                 st["next"] += 1
                 kept = case["store"](body["text"])
                 if kept is not None:
@@ -2309,6 +2535,7 @@ def _standin(case):
                                            "isDeleted": False, "createdDate": "2026-10-22T00:00:00Z"})
                 return self._send(200, {"id": st["next"], "text": body["text"]})
             if "/comments/" in path:
+                st["writes"].append("PATCH comment")
                 cid, kept = path.rsplit("/", 1)[1], case["store"](body["text"])
                 for c in st["comments"]:
                     if str(c["id"]) == cid and kept is not None:
@@ -2379,8 +2606,9 @@ def _run_case(mod, case):
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
             try:
-                if case["op"] == "comment":
-                    mod.add_comment("4242", case["sent"], "selftest")
+                if case["op"] == "comment":  # read-back cases: both tests lifted; the body test's cases run as "cli"
+                    kw = {"notify": "selftest"} if "notify" in mod.add_comment.__code__.co_varnames else {}
+                    mod.add_comment("4242", case["sent"], "selftest", **kw)
                 elif case["op"] == "editcmt":
                     mod.edit_comment("4242", "8001", case["sent"])
                 elif case["op"] == "batch":
@@ -2453,12 +2681,14 @@ def _selftest(against=None):
         print(f"selftest against {against}")
     planted_all = [c for n in ("PLANTED", "PLANTED_2", "PLANTED_3", "PLANTED_4", "PLANTED_5")
                    for c in globals().get(n, [])]
-    cases = [("maker", c) for c in _MAKER_CASES + _LINK_CASES + _DELETE_CASES + _LINE_CASES] + [("planted", c) for c in planted_all]
+    maker = _MAKER_CASES + _LINK_CASES + _DELETE_CASES + _LINE_CASES + _BODY_CASES
+    cases = [("maker", c) for c in maker] + [("planted", c) for c in planted_all]
     wrong, codes = [], {}
     for i, (by, c) in enumerate(cases, 1):
         code, out = _run_case(mod, c)
         codes[i] = code
-        words = [c.get("says") or _SAYS[c["expect"]]] + ([c["names"]] if c.get("names") else [])
+        names = c.get("names") or []
+        words = [c.get("says") or _SAYS[c["expect"]]] + (names if isinstance(names, list) else [names])
         unsaid = [w for w in words if w not in out] + [f"(said) {w}" for w in c.get("not_says", []) if w in out]
         unsaid += [f"(no link on line {n}) {i}" for n, i in bare_ids.unlinked(out)]
         ok = code == c["expect"] and not unsaid
@@ -2484,7 +2714,7 @@ def _selftest(against=None):
         print(f"          got: {got!r}; printed: {buf.getvalue().strip()!r}")
     planted = sum(1 for by, _ in cases if by == "planted")
     print(f"selftest: {len(cases) - len(wrong)} of {len(cases)} cases gave the expected exit and words "
-          f"({len(_MAKER_CASES) + len(_LINK_CASES) + len(_DELETE_CASES) + len(_LINE_CASES)} maker, {planted} planted)"
+          f"({len(maker)} maker, {planted} planted)"
           + (f"; missed {wrong}" if wrong else ""))
     if against:  # a copy with no read-back also misses every good case on its words, so count the bad
         bad = [i for i, (_, c) in enumerate(cases, 1) if c["expect"] != 0]
@@ -2498,6 +2728,29 @@ def _selftest(against=None):
 def run(argv):
     """One command line, argv as sys.argv holds it. The self-test runs it on a stand-in."""
     cmd, wid = argv[1], argv[2]
+    notify = None
+    if "--notify" in argv:
+        i = argv.index("--notify")
+        if cmd not in ("comment", "field") or (cmd == "field" and [a.lower() for a in argv[3:4]] != ["system.history"]):
+            sys.exit("--notify lifts the body test, which only `comment` and `field <id> System.History` run. A batch's "
+                     "command line names only its file: send that comment as its own `comment` command. Nothing sent.")
+        notify = (argv[i + 1:i + 2] or [""])[0]
+        if not notify.strip():
+            sys.exit("--notify requires who must be told and why, in plain words on this command line. It is printed, "
+                     "so the override is visible. Nothing sent.")
+        refused = ask_rules.override("--notify", notify)
+        if refused:
+            sys.exit(refused)
+        argv = argv[:i] + argv[i + 2:]
+    resolve = None
+    if "--resolve" in argv:
+        i = argv.index("--resolve")
+        resolve = (argv[i + 1:i + 2] or [""])[0].strip()
+        if cmd != "comment" or resolve.lower() not in _SETTLED:
+            sys.exit("--resolve <State> goes on `comment`, and takes Resolved, Closed, Done or Removed, the state the "
+                     f"note records ({resolve!r} given on `{cmd}`). Nothing sent.")
+        resolve = {s: s.capitalize() for s in _SETTLED}[resolve.lower()]
+        argv = argv[:i] + argv[i + 2:]
     replaces = None
     if "--replaces" in argv and cmd in ("batch", "field"):
         i = argv.index("--replaces")
@@ -2535,6 +2788,13 @@ def run(argv):
         patch_fields(wid, [("System.State", argv[3])])
     elif cmd == "field":
         ref, value, pin = argv[3], argv[4], None
+        if ref.lower() == "system.history" and value:  # a History value adds a comment: the body test runs
+            if notify is None:
+                refusal, _, _ = _body_test(wid, value, f'field {wid} System.History "<text>"')
+                if refusal:
+                    sys.exit(refusal)
+            else:
+                print(f"  --notify: {notify}")
         if ref.lower() in _CHECKED:
             problems, revs, notes = _text_check([{"id": wid, "set": {ref: value}}], *(replaces or ((), None)))
             for line in notes:
@@ -2557,7 +2817,7 @@ def run(argv):
             refused = ask_rules.override("--stack", reason)
             if refused:
                 sys.exit(refused)
-        add_comment(wid, argv[3], reason)
+        add_comment(wid, argv[3], reason, notify, resolve)
     elif cmd == "editcmt":
         edit_comment(wid, argv[3], argv[4])
     elif cmd == "delcmt":
