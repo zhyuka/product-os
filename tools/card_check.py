@@ -12,6 +12,8 @@ question's topic.
                                                         100 s a card, against about 1 s without, and they flag nothing
     python tools/card_check.py --selftest               planted cards: each flag fires on its bad case, none on a clean one
     python tools/card_check.py --share [--days 7]       per day, the cards asked that a run checked first, by question text
+    python tools/card_check.py --served <text|->        the served artifacts a text names (SERVED below): a sweep runs it
+                                                        on a hit before holding it for anyone; exit 1 names them
     --no-record is still accepted, as a no-op, and says so: the topic lookup always runs, the leads only with --leads.
 
 WHY. Much of what goes wrong between a session and the user is in what the session asks or tells them:
@@ -48,6 +50,9 @@ FLAGS, each with the question it sits in:
                  open comment, which the fix goes into instead. An ask or own-open check that could not run is
                  flagged too, never passed. The drafts check runs on every card; with no drafts file
                  configured it has nothing to read, and the summary says so
+  served         SERVED: the question or an option names an artifact (a board, a page, a deck) the served
+                 record (SERVED below) lists as done after the call it was walked on: leave it, and ask only
+                 about work that call didn't cover, saying what is new
 Not here: a flag for a recommended option that is setup work (settings, hooks, gates, a delete) with no
 challenger run first; it needs a session coordinator that maps sessions to logs and lists setup paths.
 
@@ -95,6 +100,16 @@ Other tools call run_record() and record_lookup() directly; their default is rec
 terms (RECORD_SOURCES: logs, ADO, transcripts, git, notes, memory and Figma), as before the topic lookup.
 --leads passes sources=BRIEF_SOURCES and brief=True (the notes filter and the live sessions).
 
+SERVED. A board, page or deck made for one call is done once that call is held and filed, but nothing on
+it says so, and a later sweep can pick it up as live. `transcripts.served` in the product-os config names
+a tab-separated record of such artifacts, one row each: the call's transcript, when it was recorded (UTC),
+by whom, the artifact's name, and how a text names it: word sets split by ` | `, each a list of phrases
+split by ` + ` that must all appear (`open questions + loop`), matched on whole words, case and a plural s
+aside. A row is written when the call is filed (calls_filed.py serve, in the firm's tools). With the key
+unset the summary says so and nothing is flagged; a record that can't be read exits 2 when nothing else
+flagged. BLIND: a text that names the artifact in other words passes, and a new artifact that shares a
+served one's words flags; the flag prints the call and its date, so read them before leaving it.
+
 RUNS. Every run appends one line to `card_check.runs` in the product-os config (default
 ~/.local/share/product-os/card-checks.jsonl): time, the questions, the flag count, whether the leads ran,
 didn't or weren't asked for, per question what was shown (source, id, link, the record printed for a log
@@ -112,8 +127,9 @@ SESSION. The asking session is --session (a Claude Code session id, as the reque
 else $CLAUDE_CODE_SESSION_ID. When one session checks a card another drafted, name the other.
 
 EXIT. 0 clean, 1 with flags, 2 when the card or the request ledger couldn't be read (ledger.py writes
-the ledger, under ledger.dir), or, with nothing else flagged, a topic source did not run or the leads
-asked for with --leads did not run. Leads not asked for are no reason for 2.
+the ledger, under ledger.dir), or, with nothing else flagged, a topic source did not run, the served
+record is configured but couldn't be read, or the leads asked for with --leads did not run. Leads not
+asked for are no reason for 2.
 
 BLIND. Word overlap is a lead, not a match: a reworded question that was answered slips past, and a
 new question on an old subject can flag. The topic lookup reads words, not meaning: a passage on the same
@@ -1262,13 +1278,85 @@ def draft_title(head):
 
 
 # ------------------------------------------------------------------------------------- the check
-def check(card, cards, drafts=None, found=None, reader=None, now=None):
+SERVED_WORD = re.compile(r"[a-z0-9]+")
+
+
+def served_path():
+    """The served record's path (transcripts.served in the product-os config), or None when it isn't set."""
+    v = kit_config.get("transcripts", "served")
+    return os.path.expanduser(v) if v else None
+
+
+def served_words(text):
+    """Whole words, lowercased, a plural s taken off (questions = question), for SERVED matching."""
+    return [w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w
+            for w in SERVED_WORD.findall((text or "").lower())]
+
+
+def served_match(spec):
+    """A row's match column as word sets: 'open questions + loop | question log' -> [[[open, question], [loop]],
+    [[question, log]]]. A set matches when every phrase in it appears."""
+    sets = []
+    for s in (spec or "").split("|"):
+        phrases = [served_words(p) for p in s.split("+")]
+        phrases = [p for p in phrases if p]
+        if phrases:
+            sets.append(phrases)
+    return sets
+
+
+def served_rows(path=None):
+    """(rows, status). Each row: transcript, recorded, by, artifact, match (served_match's sets). status is
+    'N artifact(s)', 'not configured (transcripts.served)' or 'did not run: ...'; a row with too few
+    columns or no word set is counted as unreadable in the status, never matched."""
+    path = path or served_path()
+    if not path:
+        return [], "not configured (transcripts.served)"
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError as e:
+        return [], f"did not run: {type(e).__name__}: {e}"
+    rows, skipped = [], 0
+    for ln in lines:
+        if not ln.strip() or ln.startswith("#"):
+            continue
+        col = ln.split("\t")
+        sets = served_match(col[4]) if len(col) >= 5 else []
+        if not sets or not col[3].strip():
+            skipped += 1
+            continue
+        rows.append({"transcript": col[0].strip(), "recorded": col[1].strip(), "by": col[2].strip(),
+                     "artifact": col[3].strip(), "match": sets})
+    return rows, f"{len(rows)} artifact(s)" + (f", {skipped} row(s) unreadable" if skipped else "")
+
+
+def served_hits(text, rows):
+    """The served rows whose name text uses: some word set with each of its phrases in text."""
+    w = served_words(text)
+
+    def has(p):
+        return any(w[i:i + len(p)] == p for i in range(len(w) - len(p) + 1))
+    return [r for r in rows if any(all(has(p) for p in s) for s in r["match"])]
+
+
+def served_line(r):
+    return (f"SERVED: names {r['artifact']}, which served the call in {r['transcript']} (recorded "
+            f"{r['recorded'][:10]}): leave it; ask only about work that call didn't cover, and say what is new")
+
+
+def check(card, cards, drafts=None, found=None, reader=None, now=None, served=None):
     """[(question number, flag, detail)]. drafts: settled_drafts or a stand-in; without one the settled-draft
     flag isn't checked. found: run_record()'s lookups, one per question. reader(question, top) -> [(flag,
     detail)] reads a question's top RECORD_TOP for what the record settles; without one (today) nothing is
     flagged from them. now: the time your words? counts the last RECENT_HOURS back from (default the clock).
+    served: served_rows()'s rows; without them the served flag isn't checked.
     The topic lookup flags nothing (TOPIC): its passages print as leads; ours to do needs no lookup."""
     flags, seen, failing = [], set(), {}
+    for n, q in enumerate(card.get("questions", []), 1):
+        said = " ".join([q.get("question", "")] + [o.get("label", "") + " " + o.get("description", "")
+                                                    for o in q.get("options", [])])
+        flags += [(n, "served", served_line(r)) for r in served_hits(said, served or [])]
     for n, (q, f) in enumerate(zip(card.get("questions", []), found or []), 1):
         if reader and f.get("terms"):
             flags += [(n, flag, detail) for flag, detail in reader(q, f["top"])]
@@ -1355,13 +1443,14 @@ def utc_text(t):
 
 
 def checked(card, cards, rows, sid, no_record=False, runs=None, runner=None, drafts=settled_drafts, before=None,
-            topic_src=None, leads=False):
+            topic_src=None, leads=False, served_src=None):
     """(the lines main prints for one card, its exit code), the run logged to runs: the flags; each question's
     topic lines and, with leads, its record lines; the line saying the leads didn't run or weren't asked for; the
     card with its ids linked when one is bare; and the summary. leads: recall's --brief search under each question
     (run_record with BRIEF_SOURCES), its own log cut at the user's last message there (sid, from the ledger rows).
     runner stands in for run_record and topic_src for topic_sources. before: the record as it stood then, the
-    ledger rows and past cards cut there. no_record is a no-op, and says so."""
+    ledger rows and past cards cut there. no_record is a no-op, and says so. served_src stands in for
+    served_rows(): (rows, status)."""
     before = utc_text(before)
     if before:
         rows = [r for r in rows if (r.get("ts") or "") < before]
@@ -1377,7 +1466,8 @@ def checked(card, cards, rows, sid, no_record=False, runs=None, runner=None, dra
         ts = [topic_terms(q, t, vocab) for q, t in zip(card.get("questions", []), topics)]
         found, why = (runner or run_record)(card, sid, since, vocab=vocab, before=before, ts=ts,
                                             sources=BRIEF_SOURCES, brief=True)
-    flags = check(card, cards, drafts, (found or {}).get("found"), now=now)
+    served, served_status = served_src if served_src is not None else served_rows()
+    flags = check(card, cards, drafts, (found or {}).get("found"), now=now, served=served)
     log_run(card, flags, runs or runs_path(),
             record=("ran" if found else f"did not run: {why}") if leads else "not asked",
             found=(found or {}).get("found"), topics=topics, before=before)
@@ -1409,10 +1499,12 @@ def checked(card, cards, rows, sid, no_record=False, runs=None, runner=None, dra
                + f"; topic lookup (leads, flags nothing): {'; '.join(f'{k} {v}' for k, v in st.items())}"
                + f"; {len(cards)} past card answers read; recall leads "
                + ("ran" if found else "did not run" if leads else "not asked for (--leads)")
+               + f"; served record: {served_status}"
                + (f"; the record as it stood before {before}" if before else "")
                + ("; no drafts file configured (figma.drafts or $FIGMA_DRAFTS), so no draft was checked"
                   if no_drafts else ""))
-    gone = [k for k, v in st.items() if str(v).startswith("did not run")]
+    gone = [k for k, v in st.items() if str(v).startswith("did not run")] + (
+        ["served"] if served_status.startswith("did not run") else [])
     return out, 1 if flags else (2 if (leads and not found) or gone else 0)
 
 
@@ -1730,11 +1822,58 @@ def selftest():
               f"checked twice is 1 checked, a card in two log copies is 1 asked, a card no run checked is asked and not "
               f"checked, a replay (--before) checks nothing, and a run for a card never asked is counted apart: want "
               f"[1, 2, 1], got {tot}")
+    # Served: a question that edits a board that served its call (known bad), one that names only one of its
+    # phrases, a clean card, and the record's reader: unset, missing, a short row, and checked()'s exit.
+    loop = [{"transcript": "transcript_2026-11-10_1501_Walkthrough.md", "recorded": "2026-11-12T18:00Z",
+             "by": "s1", "artifact": "the team's Open Questions page in Loop",
+             "match": served_match("open questions + loop | platform call + question log")}]
+    served_cases = [
+        ("served: an edit to a served board's card flags", {"questions": [{**q0, "question": (
+            "On the team's Open Questions board in Loop, the card we added on 11/10 still ends \"The timeline assumes "
+            "a dev or staging site by 12/1.\" Change that ending?")}]}, {"served"}),
+        ("served: the second word set flags too", {"questions": [{**q0, "question":
+            "Add a card to the platform call's question log?"}]}, {"served"}),
+        ("served: one phrase of a set alone passes (the review loop)", {"questions": [{**q0, "question":
+            "Does the review loop need a second pass before the build?"}]}, set()),
+        ("served: open questions without loop pass", {"questions": [{**q0, "question":
+            "Which open questions remain on the delivery timeline?"}]}, set()),
+        ("served: a clean card passes", ok, set()),
+    ]
+    for name, card, want in served_cases:
+        got = {f[1] for f in check(card, cards, served=loop)}
+        good = got == want
+        bad += not good
+        print(f"{'PASS' if good else 'FAIL'}  {name}: want {sorted(want)}, got {sorted(got)}")
+    extra_served = len(served_cases)
+    with tempfile.TemporaryDirectory() as stmp:
+        rec_path = os.path.join(stmp, "calls-served.tsv")
+        with open(rec_path, "w", encoding="utf-8") as f:
+            f.write("# header\ntranscript_a.md\t2026-11-12T18:00Z\ts1\tthe Open Questions page\topen questions + loop\n"
+                    "short row\tonly three\tcolumns\n")
+        rows_, status_ = served_rows(rec_path)
+        missing = served_rows(os.path.join(stmp, "none.tsv"))[1]
+        unset = served_rows()[1]   # run_isolated: an empty product-os config
+        good = (len(rows_) == 1 and status_ == "1 artifact(s), 1 row(s) unreadable"
+                and missing.startswith("did not run") and unset == "not configured (transcripts.served)")
+        bad += not good
+        print(f"{'PASS' if good else 'FAIL'}  served_rows reads a row, counts a short one unreadable, calls a missing "
+              f"record did not run and an unset key not configured: got {len(rows_)}, {status_!r}, {missing[:30]!r}, "
+              f"{unset!r}")
+        nothing = {"words": [], "rulings": [], "systems": [], "read": lambda p: [], "status": {}}
+        _, code_hit = checked(served_cases[0][1], [], [], None, runs=os.path.join(stmp, "r.jsonl"), drafts=None,
+                              topic_src=nothing, served_src=(loop, "1 artifact(s)"))
+        out_gone, code_gone = checked(ok, [], [], None, runs=os.path.join(stmp, "r.jsonl"), drafts=None,
+                                      topic_src=nothing, served_src=([], missing))
+        good = code_hit == 1 and code_gone == 2 and any("served record: did not run" in x for x in out_gone)
+        bad += not good
+        print(f"{'PASS' if good else 'FAIL'}  checked(): a served hit exits 1; a clean card whose served record "
+              f"couldn't be read exits 2 and says so: got {code_hit}, {code_gone}")
+        extra_served += 2
     rec = selftest_record()
     bad += rec[0]
     top = selftest_topic()
     bad += top[0]
-    total = len(cases) + extra + extra_recent + 1 + rec[1] + top[1]
+    total = len(cases) + extra + extra_recent + 1 + rec[1] + top[1] + extra_served
     print(f"{total - bad} of {total} cases pass")
     return 1 if bad else 0
 
@@ -2255,10 +2394,21 @@ def main():
                                                              "the leads only with --leads")
     ap.add_argument("--before", help="the record as it stood before this time (UTC unless it carries an offset), "
                                      "for a replay of a card already asked")
+    ap.add_argument("--served", metavar="TEXT", help="the served artifacts TEXT (or - for stdin) names, for a "
+                                                     "sweep's hit: exit 1 names them, 0 none, 2 no record read")
     ap.add_argument("--record-child", nargs=2, help=argparse.SUPPRESS)
     a = ap.parse_args()
     if a.record_child:
         return record_child(*a.record_child)
+    if a.served is not None:
+        text = sys.stdin.read() if a.served == "-" else a.served
+        served, status = served_rows()
+        if not status[:1].isdigit():
+            print(f"card_check --served: {status}")
+            return 2
+        hits = served_hits(text, served)
+        print("\n".join(served_line(r) for r in hits) or f"card_check --served: names none of {status}")
+        return 1 if hits else 0
     if a.selftest:
         return kit_config.run_isolated(selftest)
     if a.share:
