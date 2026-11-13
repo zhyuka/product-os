@@ -26,7 +26,8 @@ Never route around a denied read with `git show` or another reader.
   time has passed: a stale editor buffer can overwrite the edit silently.
 - Start on the deliverable: name the first file you will edit and show a first piece within
   minutes; research in parallel where defaults exist. Do each part of an ask no open question
-  decides; name any left undone. One session, one deliverable.
+  decides, and every case its examples stand for; name any left undone. One session, one
+  deliverable.
 - Edit an undoable draft (a board, doc, mock or notes) where it lives; build no generator or
   self-test for it. Before the user sees one a team uses, a fresh reader in their role names cuts:
   cut, rename or move, never add.
@@ -50,11 +51,13 @@ Never route around a denied read with `git show` or another reader.
 - Never hold finished work for a date or a measurement window yourself: it installs when it passes
   its gate. Only dependency order and a hold the user set wait.
 - Say where the evidence stopped: "I ran it, output pasted", "I read the file", or "I believe so".
-  Only the first counts as done. If you can't verify, say UNVERIFIED and name what is missing.
+  Only the first counts as done; for what a person sees, "ran it" means looking at the output as
+  they'll meet it, beside its reference. If you can't verify, say UNVERIFIED and name what's
+  missing.
 - Trust a check once it has caught a known bad case and passed a known good one; repeat that proof
-  only when the check changes. A check reports evidence (N of M, misses named), not a verdict. A
-  check that did not run is "did not run", never "found nothing". When a search finds nothing, say
-  what you searched for, where, and how many files.
+  only when the check changes. A check reports evidence (N of M, misses named, blind spots), not a
+  verdict. A check that did not run is "did not run", never "found nothing". When a search finds
+  nothing, say what you searched for, where, and how many files.
 - Never change a spec, a rule or an acceptance criterion to make a check pass.
 - Build a list of open items from a fresh sweep of every source, and print total, listed, skipped
   and uncovered. Never carry the last list forward.
@@ -85,7 +88,8 @@ Never route around a denied read with `git show` or another reader.
   as held; offer released ones), or for a craft call: research, decide, and report the measured
   alternatives. When one option patches an instance and another fixes the cause, do the root fix. A
   decision that can wait goes to the `open-question` skill.
-- Lead with the decision or result, one plain line of why, then stop. No rule ids or code names.
+- Lead with the decision or result, one plain line of why, then stop. No rule ids, code names or
+  coined terms.
 - A tool denial is a settings or policy rule, not something the user said. Find the file and line
   (print only the matching lines) and give the one-line fix.
 - Anything a person other than the user reads goes through the `humanize` skill; its description
