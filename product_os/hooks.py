@@ -51,8 +51,11 @@ characters, slashes included, so "~/code/shop*" also covers a folder such as
 ~/code/shop-fix. When several keys match, the longest wins.
 A CLAUDE_CONFIG_DIR inside the project is ignored.
 """
+import argparse
+import contextlib
 import fnmatch
 import hashlib
+import io
 import json
 import os
 import re
@@ -336,34 +339,138 @@ def _refuse(reason):
 def _ask_before_trusting_checks(event):
     """`product-os accept` runs a project's checks and makes them count on this machine, and
     `kit_config accept` does the same for the commands in the project's settings. Accepting is
-    the person's step, so an agent's accept is denied. `check --run-listed` runs every listed
-    check without accepting any, as CI does, so the user decides before an agent starts it. None
-    of them writes anything a file guard sees."""
+    the person's step, so an agent's accept is denied. Nor does an agent run a listed command
+    nobody accepted here without the user's OK: `check --run-listed` runs every listed check, as
+    CI does, `prove` runs each check it proves on its cases, and `prove --check FILE` runs the
+    checks in FILE, which asks when the repository committed it. None of them writes anything a
+    file guard sees."""
     tool, tool_input = event.get("tool_name", ""), event.get("tool_input") or {}
     if tool not in ("Bash", "PowerShell"):
         return None
-    command = str(tool_input.get("command") or "")
-    asks = _trusting_words(command)
-    if asks == "run-listed":
-        what = ("runs every check the project lists, including ones you haven't accepted, so a "
-                "check whose command you never saw would run")
-        return {"hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "ask",
-            "permissionDecisionReason": f"product-os: this {_shown(event)} call {what}. It needs "
-                                        "your OK."}}
-    if asks == "accept":
-        what, read = ("accepts the project's checks, so their commands would run on this machine "
-                      "from now on", "each check's command in .claude/product-os-checks.json")
-    elif asks == "accept-commands":
-        what, read = ("accepts commands from the project's .claude/product-os.json, so they would "
-                      "run on this machine from now on", "each one there")
-    else:
+    calls, moves = _product_os_calls(str(tool_input.get("command") or ""))
+    for kind, args in calls:
+        if kind == "accept-commands" or (args is not None and args.command == "accept"):
+            what, read = (
+                ("accepts commands from the project's .claude/product-os.json, so they would run "
+                 "on this machine from now on", "each one there") if kind == "accept-commands" else
+                ("accepts the project's checks, so their commands would run on this machine from "
+                 "now on", "each check's command in .claude/product-os-checks.json"))
+            return _refuse(f"product-os refused this {_shown(event)} call: it {what}. Accepting is "
+                           f"{PERSON}, so don't try it another way, such as running the command "
+                           "yourself or writing the accepted file. Give the person the line to run "
+                           f"in a terminal they opened themselves, once they have read {read}.")
+    for kind, args in calls:
+        what = _unaccepted_run(event, args, moves) if args is not None else None
+        if what:
+            return {"hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "ask",
+                "permissionDecisionReason": f"product-os: this {_shown(event)} call {what}. It "
+                                            "needs your OK."}}
+    return None
+
+
+def _unaccepted_run(event, args, moves):
+    """What an agent's product-os command would run that nobody accepted here, as a clause, or
+    None when it runs nothing of the kind."""
+    if args.command == "check" and getattr(args, "run_listed", False) and not args.folder:
+        return ("runs every check the project lists, including ones you haven't accepted, so a "
+                "check whose command you never saw would run" + _listing(_pending(event, args, moves)))
+    if args.command != "prove":
         return None
-    return _refuse(f"product-os refused this {_shown(event)} call: it {what}. Accepting is "
-                   f"{PERSON}, so don't try it another way, such as running the command yourself "
-                   "or writing the accepted file. Give the person the line to run in a terminal "
-                   f"they opened themselves, once they have read {read}.")
+    if args.check:
+        found = _committed_checks(event, args.check, moves)
+        where = "" if isinstance(found, str) else ", a file the repository committed,"
+        return found and (f"proves the checks in {args.check}{where} which runs their commands on "
+                          "this machine" + _listing(found))
+    found = _pending(event, args, moves, args.names)
+    which = "" if isinstance(found, str) else ", and one it would prove isn't accepted here"
+    return found and ("proves the project's checks, which runs their commands on this machine"
+                      + which + _listing(found))
+
+
+def _listing(found):
+    if isinstance(found, str):
+        return f". {found}"
+    if not found:
+        return ""
+    return ": " + "; ".join(f"{name} runs {line}" for name, line in found) + ". Say yes only once " \
+        "you have read each command"
+
+
+def _cwd(event):
+    cwd = event.get("cwd")
+    return cwd if isinstance(cwd, str) and cwd else os.getcwd()
+
+
+def _roots(event, args, moves):
+    """The project folders the command can mean, or None when it changes folder first, so its
+    project can't be placed here. product-os reads --project, else $CLAUDE_PROJECT_DIR in its own
+    shell, which an agent's shell may lack, else that shell's folder, so both count."""
+    from . import project
+    named = getattr(args, "project", None)
+    if named:
+        path = Path(os.path.expanduser(named))
+        if not path.is_absolute():
+            if moves:
+                return None
+            path = Path(_cwd(event)) / path
+        return [project.find_root(path)]
+    if moves:
+        return None
+    roots = []
+    for start in (_cwd(event), os.environ.get("CLAUDE_PROJECT_DIR")):
+        root = project.find_root(start) if start else None
+        if root is not None and root not in roots:
+            roots.append(root)
+    return roots
+
+
+def _pending(event, args, moves, names=()):
+    """[(name, command line)] for the checks the command would run that nobody accepted here as
+    they are now, a sentence when that can't be read, or None when there is none. A project
+    whose checks can't be read, or an unknown name, stops prove and check before anything runs."""
+    from . import project
+    roots = _roots(event, args, moves)
+    if roots is None:
+        return ("The command changes folder first, so which project's checks would run can't be "
+                "read here")
+    found = []
+    for root in roots:
+        try:
+            listed = project.plan(root, os.environ).checks  # --base only ever drops checks
+        except project.ConfigError:
+            continue
+        if any(name not in {check.name for check in listed} for name in names):
+            continue
+        try:
+            accepted = project.read_accepted(root, os.environ)
+        except project.ConfigError as err:
+            return f"What you accepted can't be read ({err})"
+        found += [(check.name, project.command_line(check)) for check in listed
+                  if (not names or check.name in names)
+                  and project.stale(check, root, accepted.get(check.name), accepted=True)]
+    return found or None
+
+
+def _committed_checks(event, path, moves):
+    """[(name, command line)] for the checks in a file the repository committed and nobody has
+    changed since, which an agent shouldn't run unseen, else None. A file the session wrote, as
+    miss-to-check does before it lists one, isn't committed yet."""
+    from . import project
+    file = Path(os.path.expanduser(path))
+    if not file.is_absolute():
+        if moves:
+            return "The command changes folder first, so which file it proves can't be read here"
+        file = Path(_cwd(event)) / file
+    try:
+        if not (project._git_ok(file.parent, "ls-files", "--error-unmatch", "--", file.name)
+                and project._git_ok(file.parent, "diff", "--quiet", "HEAD", "--", file.name)):
+            return None
+        checks = project.file_checks(file)
+    except project.ConfigError:
+        return None
+    return [(check.name, project.command_line(check)) for check in checks] or None
 
 
 # The command and module names.
@@ -395,21 +502,32 @@ def _inner(words):
     return []
 
 
-def _trusting_words(command, depth=0):
-    """ "accept" when the command line runs product-os accept, "accept-commands" when it runs
-    kit_config accept, "run-listed" when it passes check --run-listed to product-os, else "".
-    A command line given to a shell's -c or to eval is read too. A line that can't be read is
-    judged on its plain words, so an unclosed quote can't hide any of them."""
+MOVES = ("cd", "pushd", "popd", "chdir", "set-location", "sl", "push-location", "pop-location")
+PROJECT_VAR = re.compile(r"(\$env:)?CLAUDE_PROJECT_DIR(\s*=|$)")  # bash's X=..., PowerShell's $env:X = ...
+
+
+def _product_os_calls(command, depth=0):
+    """(calls, moves) for a command line. calls has ("accept-commands", None) for each kit_config
+    accept it runs, and ("product-os", args) for each product-os command, with args read by the
+    command's own parser, or None where the command would refuse its words and run nothing. A
+    command line given to a shell's -c or to eval is read too. moves is True when the line changes
+    folder or sets CLAUDE_PROJECT_DIR, so a relative project can't be placed. A line that can't be
+    read is judged on its plain words, so an unclosed quote can't hide anything."""
     try:
-        commands = [shell.program(simple.words) for level in shell.split(command) for simple in level]
+        simples = [simple.words for level in shell.split(command) for simple in level]
     except ValueError:
-        commands = [re.sub(r"[\"'`\\]", " ", command).split()]
-    found = ""
-    for words in commands:
+        simples = [re.sub(r"[\"'`\\]", " ", command).split()]
+    calls, moves = [], False
+    for raw in simples:
+        words = shell.program(raw)
+        first = os.path.basename(words[0]).lower() if words else ""
+        if first in MOVES or any(PROJECT_VAR.match(word) for word in raw) or (
+                first in ("export", "unset", "set", "setenv") and "CLAUDE_PROJECT_DIR" in words):
+            moves = True
         for inner in (_inner(words) if depth < NESTING else []):
-            found = found or _trusting_words(inner, depth + 1)
-            if found in ("accept", "accept-commands"):
-                return found
+            more, moved = _product_os_calls(inner, depth + 1)
+            calls += more
+            moves = moves or moved
         for i, word in enumerate(words):
             name = os.path.basename(word).lower()
             if name in KIT_CONFIG:
@@ -417,19 +535,29 @@ def _trusting_words(command, depth=0):
                 if rest[:1] == ["--project"]:  # kit_config takes --project DIR anywhere
                     rest = rest[2:]
                 if rest[:1] == ["accept"]:
-                    return "accept-commands"
+                    calls.append(("accept-commands", None))
                 continue
             if name in OURS:
-                rest = words[i + 1:]
+                calls.append(("product-os", _parse(words[i + 1:])))
             elif word == "-m" and i + 1 < len(words) and words[i + 1] in MODULES:
-                rest = words[i + 2:]
-            else:
-                continue
-            if rest[:1] == ["accept"]:
-                return "accept"
-            if "--run-listed" in rest:
-                found = found or "run-listed"
-    return found
+                calls.append(("product-os", _parse(words[i + 2:])))
+    return calls, moves
+
+
+def _parse(words):
+    """A product-os command's arguments as the command reads them, so a shortened option such as
+    --run counts as --run-listed; None when the command would refuse them and run nothing."""
+    try:
+        from .cli import build_parser
+    except Exception:  # the command can't load; read its plain words
+        names = [w for w in words[1:] if not w.startswith("-")]
+        return argparse.Namespace(command=words[0] if words else None, folder=None, names=names,
+                                  run_listed="--run-listed" in words, project=None, check=None)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return build_parser().parse_known_args(words)[0]
+    except SystemExit:  # an error or --help: nothing would run
+        return None
 
 
 def _deny_reviewer_write(event, config):

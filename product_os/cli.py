@@ -317,7 +317,9 @@ def run_gates(url, serve, baseline, widths, only, scale, out):
     return 1 if failed or not results else 0
 
 
-def main(argv=None):
+def build_parser():
+    """The command line's parser. The hooks read an agent's product-os command with it, so they
+    read it as the command does, a shortened option such as --run for --run-listed included."""
     parser = argparse.ArgumentParser(prog="product-os",
                                      description="Checks an agent can't pass for itself.")
     parser.add_argument("--version", action="version", version=f"product-os {__version__}")
@@ -428,6 +430,11 @@ def main(argv=None):
     for sub in (listing, exercising):
         sub.add_argument("--frame", action="append", metavar="ID", help="only this frame; "
                          "repeat for more. Every frame by default")
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "design":
         if args.design_command == "states":

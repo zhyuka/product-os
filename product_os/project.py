@@ -716,9 +716,12 @@ def commands(root, names=(), environ=None, base=None):
     """[(name, the command line it runs)] for the checks accept would run, so the user sees
     each command before accepting it."""
     work = plan(Path(root).resolve(), os.environ if environ is None else environ, base)
-    return [(check.name, " ".join(w if w in ("{python}", "{target}") else shlex.quote(w)
-                                  for w in check.run))
-            for check in work.checks if not names or check.name in names]
+    return [(check.name, command_line(check)) for check in work.checks if not names or check.name in names]
+
+
+def command_line(check):
+    """The command line a check runs, as a person reads it before accepting it."""
+    return " ".join(w if w in ("{python}", "{target}") else shlex.quote(w) for w in check.run)
 
 
 def prove_file(root, path, environ=None):

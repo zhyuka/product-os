@@ -7,6 +7,7 @@ accepting is the person's step, even on their yes.
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,7 +15,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from product_os.hooks import DEFAULTS, reviewer_readonly
+from product_os import project
+from product_os.hooks import AGENT_SHELL, DEFAULTS, reviewer_readonly
 
 ROOT = Path(__file__).resolve().parent.parent
 HOOK = ROOT / "hooks" / "reviewer_readonly.py"
@@ -317,6 +319,133 @@ class ConfigGuardTest(unittest.TestCase):
                               text=True, cwd=ROOT, env=env, timeout=60)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(decision(json.loads(done.stdout)), "ask")
+
+
+EXAMPLE = ROOT / "examples" / "project"
+NO_PRINT = {"name": "no-print", "run": "{python} checks/no_print.py {target}", "target": "src",
+            "bad": "checks/cases/no-print/bad", "good": "checks/cases/no-print/good"}
+GIT = shutil.which("git")
+
+
+class AnAgentsUnacceptedRunTest(unittest.TestCase):
+    """An agent never runs a listed command nobody accepted here without the user's OK. prove runs
+    each check it proves on its cases, so it asks unless each is accepted as it is now, and so does
+    check --run-listed, however its option is shortened."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve() / "shop"
+        shutil.copytree(EXAMPLE, self.root, ignore=shutil.ignore_patterns("product-os-checks-proofs.json"))
+        self.configure(NO_PRINT, {**NO_PRINT, "name": "no-print-too"})
+        self.user = Path(tmp.name).resolve() / "config"
+        self.user.mkdir()
+        self.elsewhere = Path(tmp.name).resolve() / "elsewhere"
+        self.elsewhere.mkdir()
+        env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PROJECT_DIR", AGENT_SHELL)}
+        env["CLAUDE_CONFIG_DIR"] = str(self.user)
+        patcher = mock.patch.dict(os.environ, env, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def configure(self, *checks):
+        (self.root / ".claude" / "product-os-checks.json").write_text(json.dumps({"checks": list(checks)}))
+
+    def accept(self, *names):
+        rows, _, ok = project.prove_project(self.root, names, os.environ, accept=True)
+        self.assertTrue(ok, rows)
+
+    def answer(self, command, tool="Bash", cwd=None):
+        return reviewer_readonly(event(tool, {"command": command}, "main", cwd or self.root), dict(DEFAULTS))
+
+    def reason(self, output):
+        return output["hookSpecificOutput"]["permissionDecisionReason"]
+
+    def test_an_agents_prove_of_an_unaccepted_check_asks_and_names_its_command(self):
+        for tool in ("Bash", "PowerShell", "Monitor"):
+            for command in ("product-os prove", "product-os prove no-print", "python3 -m product_os prove",
+                            "python -m product_os.__main__ prove --base origin/main",
+                            "bash -c 'product-os prove'", "eval \"product-os prove no-print\"",
+                            f"product-os prove --project {self.root}", "product-os prove --p .",
+                            "product-os prove --project=."):
+                with self.subTest(tool=tool, command=command):
+                    output = self.answer(command, tool)
+                    self.assertEqual(decision(output), "ask")
+                    self.assertIn("isn't accepted here", self.reason(output))
+                    self.assertIn("no-print runs {python} checks/no_print.py {target}", self.reason(output))
+
+    def test_once_each_check_it_proves_is_accepted_as_it_is_prove_goes_through(self):
+        self.accept("no-print")
+        self.assertIsNone(self.answer("product-os prove no-print"))
+        output = self.answer("product-os prove")
+        self.assertEqual(decision(output), "ask")
+        self.assertIn("no-print-too runs", self.reason(output))
+        self.assertNotIn("no-print runs", self.reason(output))
+        self.accept()
+        for command in ("product-os prove", "python3 -m product_os prove no-print no-print-too"):
+            with self.subTest(command=command):
+                self.assertIsNone(self.answer(command))
+        self.configure({**NO_PRINT, "target": "."}, {**NO_PRINT, "name": "no-print-too"})
+        self.assertEqual(decision(self.answer("product-os prove no-print")), "ask")
+
+    def test_a_prove_that_runs_nothing_is_left_alone(self):
+        for command in ("product-os prove nosuch", "product-os prove --help", "product-os prove --check"):
+            with self.subTest(command=command):
+                self.assertIsNone(self.answer(command))
+        (self.root / ".claude" / "product-os-checks.json").write_text("{")
+        self.assertIsNone(self.answer("product-os prove"))
+
+    def test_the_project_is_the_shells_folder_or_claude_project_dir(self):
+        self.assertEqual(decision(self.answer("product-os prove", cwd=self.elsewhere)), "allow")
+        with mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": str(self.root)}):
+            self.assertEqual(decision(self.answer("product-os prove", cwd=self.elsewhere)), "ask")
+        with mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": str(self.elsewhere)}):
+            self.assertEqual(decision(self.answer("product-os prove")), "ask")
+        self.assertEqual(decision(self.answer(f"product-os prove --project {self.root}",
+                                              cwd=self.elsewhere)), "ask")
+
+    def test_a_line_that_changes_folder_first_asks(self):
+        self.accept()
+        for command in ("cd shop && product-os prove", "pushd .. && product-os prove",
+                        "CLAUDE_PROJECT_DIR=/elsewhere product-os prove",
+                        "export CLAUDE_PROJECT_DIR=/elsewhere; product-os prove",
+                        "cd .. && product-os prove --project shop"):
+            with self.subTest(command=command):
+                output = self.answer(command)
+                self.assertEqual(decision(output), "ask")
+                self.assertIn("changes folder first", self.reason(output))
+        self.assertIsNone(self.answer(f"cd /tmp && product-os prove --project {self.root}"))
+
+    def test_run_listed_asks_however_it_is_shortened_and_names_what_nobody_accepted(self):
+        self.accept("no-print")
+        for command in ("product-os check --run-listed", "product-os check --run",
+                        "product-os check --run-l --base origin/main", "bash -c 'product-os check --run'"):
+            with self.subTest(command=command):
+                output = self.answer(command)
+                self.assertEqual(decision(output), "ask")
+                self.assertIn("including ones you haven't accepted", self.reason(output))
+                self.assertIn("no-print-too runs", self.reason(output))
+                self.assertNotIn("no-print runs", self.reason(output))
+        for command in ("product-os check", "product-os check --prove", "product-os check examples/builds/x"):
+            with self.subTest(command=command):
+                self.assertIsNone(self.answer(command))
+
+    @unittest.skipUnless(GIT, "needs git")
+    def test_proving_a_file_the_repository_committed_asks(self):
+        extra = self.root / "checks" / "extra.json"
+        extra.write_text(json.dumps({**NO_PRINT, "name": "extra"}))
+        command = "product-os prove --check checks/extra.json"
+        self.assertIsNone(self.answer(command), "a file the session wrote, as miss-to-check does")
+        git = [GIT, "-C", str(self.root), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+        for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "shop", "--no-verify"]):
+            subprocess.run(git + args, check=True, capture_output=True)
+        output = self.answer(command)
+        self.assertEqual(decision(output), "ask")
+        self.assertIn("a file the repository committed", self.reason(output))
+        self.assertIn("extra runs {python} checks/no_print.py {target}", self.reason(output))
+        self.assertEqual(decision(self.answer(f"product-os prove --check {extra}", cwd=self.elsewhere)), "ask")
+        extra.write_text(json.dumps({**NO_PRINT, "name": "extra", "target": "."}))
+        self.assertIsNone(self.answer(command), "changed since the commit, so the session wrote it")
 
 
 if __name__ == "__main__":
