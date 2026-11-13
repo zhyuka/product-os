@@ -317,8 +317,8 @@ class _Run:
                 saved = {k: os.environ.get(k) for k in ENV_KEYS}
                 os.environ.update({k: self.folder for k in ENV_KEYS})
                 # The driver starts in the run's folder too, and the browser inherits its working folder
-                # (Playwright passes the browser no cwd). Edge's PDF viewer writes pdf_mip_storage/ there,
-                # relative: a signed-in serve run from ~/Desktop put one in the Desktop root on 2026-11-12.
+                # (Playwright passes the browser no cwd). Edge's PDF viewer writes pdf_mip_storage/ into
+                # that folder, so without this a run leaves one wherever it was started.
                 cwd = os.getcwd()
                 os.chdir(self.folder)
                 try:
