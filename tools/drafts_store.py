@@ -44,14 +44,16 @@ STALE. A held item reported as held and never checked again stays "held" long af
 gone. So each hold names what releases it, right after "held until": a request-ledger question
 (q-xxxxxx, ledger.py), an ADO item (#N, or "#N has an owner"), the draft "<words of its heading>",
 commit <sha> [on <branch>] in drafts.repo (default: the folder you run in; the branch defaults to
-drafts.branch), or a date (YYYY-MM-DD). A section note, one paragraph opening "Held" before a
-section's first draft, holds each draft in it that says "held with the section"; a status with "by
+drafts.branch), setup plan items plan:<id>[,<id>...] in drafts.plan (released when all are done, target gone
+when one was dropped), the file `<path>` exists (or the folder; absolute or from ~), or a date (YYYY-MM-DD).
+A section note, one paragraph opening "Held" before a section's first draft, holds each draft in it that says "held with the section"; a status with "by
 YYYY-MM-DD" is a deadline, held or not. `stale` sorts every hold into released (the question
 answered, the item Closed, Resolved or Done or, with "has an owner", assigned; the draft gone; the
-commit on the branch), target gone (no such question, item or commit), deadline passed (the date has
+commit on the branch; the plan item done; the file there), target gone (no such question, item or commit; the
+plan item dropped or not in the plan), deadline passed (the date has
 come), untestable (no release a tool can test: it goes to the user as a question, and the question's
 id becomes the release) or still held, and prints N of M. A release it could not read (no ADO_PAT,
-a git error, no branch named or configured) is not checked, never held. Then the shape rules that let
+a git error, no branch named or configured, no drafts.plan) is not checked, never held. Then the shape rules that let
 junk pile up: text before a section's first draft other than its hold note, a heading that says moot,
 cut, withdrawn or dropped, a "draft below this heading was cut" placeholder, a block in the drafts
 file that says it is not a comment, under a section naming a file in figma.new_thread_files a
@@ -350,6 +352,13 @@ RELEASES = (    # what may follow "held until", in this order; anything else is 
     ("ado", re.compile(r"(?:ADO\s+)?\[?#(\d{3,6})\b(?:\]\([^)\s]*\))?( has an owner)?", re.I)),
     ("draft", re.compile(r'the draft "([^"]{8,})"')),
     ("commit", re.compile(r"commit `?([0-9a-f]{7,40})`?(?: (?:is )?on `?([\w./-]+?)`?)?(?=[\s.,;:)]|$)")),
+    # an item of the setup plan drafts.plan names (a JSON file of items by id, each with a status): released when
+    # it is done, the way a hold on setup work ("until the Product OS rework is done") can be tested
+    # Several items, comma-joined (plan:s216,s226,s355), release only when all are done.
+    ("plan", re.compile(r"`?plan:(s\d+(?:,s\d+)*)`?(?=[\s.,;:)]|$)")),
+    # a file or folder some other work will write (a build's packets): released once it exists. Absolute or from ~,
+    # so the answer doesn't depend on the folder the check runs from; a relative path stays untestable.
+    ("file", re.compile(r"the (?:file|folder) `([~/][^`]*)` exists")),
     ("date", re.compile(r"(?:by )?(\d{4}-\d{2}-\d{2})\b")),
 )
 VERDICTS = ("released", "target gone", "deadline passed", "untestable", "not checked", "held")
@@ -720,10 +729,43 @@ def git_release(sha, branch, repo=None):
     raise NotChecked(f"git merge-base exit {r.returncode}: {r.stderr.strip()[:80]}")
 
 
-def judge(hs, headings, today=None, questions=None, ado=None, git=git_release, branch=None):
+def plan_release(ids, plan=None):
+    """(verdict, detail) for "held until plan:<id>[,<id>...]": released when every item is done, target gone when
+    one was dropped or is not in the plan, held while any is open or paused. plan: the file's parsed JSON, else
+    drafts.plan read."""
+    if "," in ids:
+        got = [plan_release(i, plan) for i in ids.split(",")]
+        gone = [d for v, d in got if v == "target gone"]
+        if gone:
+            return "target gone", "; ".join(gone)
+        held = [d for v, d in got if v == "held"]
+        return ("held", "; ".join(held)) if held else ("released", f"plan:{ids} are all done")
+    iid = ids
+    import json
+    if plan is None:
+        path = _cfg("drafts", "plan")
+        if not path:
+            raise NotChecked(f"plan:{iid} names a setup plan item, and drafts.plan is not set")
+        try:
+            with open(os.path.expanduser(path), encoding="utf-8") as f:
+                plan = json.load(f)
+        except (OSError, ValueError) as e:
+            raise NotChecked(f"the setup plan could not be read ({type(e).__name__})")
+    it = (plan.get("items") or {}).get(iid) if isinstance(plan, dict) else None
+    if not it:
+        return "target gone", f"plan:{iid} is not in the setup plan"
+    st = str(it.get("status") or "")
+    if st == "done":
+        return "released", f"plan:{iid} is done"
+    if st.startswith("drop"):
+        return "target gone", f"plan:{iid} was dropped"
+    return "held", f"plan:{iid} is {st or 'open'}"
+
+
+def judge(hs, headings, today=None, questions=None, ado=None, git=git_release, branch=None, plan=None):
     """Each hold with its verdict and a detail line. questions: the ledger rows, or a function that returns
     them; ado: a function of a set of ids; both are read only when a hold needs them. branch: the branch a
-    commit release names none of (drafts.branch when None)."""
+    commit release names none of (drafts.branch when None). plan: the setup plan's JSON (drafts.plan when None)."""
     import datetime as dt
     today = today or dt.date.today()
     branch = branch or _cfg("drafts", "branch")
@@ -783,6 +825,11 @@ def judge(hs, headings, today=None, questions=None, ado=None, git=git_release, b
                 if not (v[1] or branch):
                     raise NotChecked(f"commit {v[0]} names no branch, and drafts.branch is not set")
                 verdict, detail = git(v[0], v[1] or branch)
+            elif kind == "plan":
+                verdict, detail = plan_release(v, plan)
+            elif kind == "file":
+                p = os.path.expanduser(v)
+                verdict, detail = ("released", f"{v} exists") if os.path.exists(p) else ("held", f"{v} does not exist yet")
             elif kind == "date":
                 d = dt.date.fromisoformat(v)
                 verdict, detail = ("deadline passed", f"{v} has come") if today >= d else ("held", f"until {v}")
@@ -829,7 +876,7 @@ def cut_gone(text, lineage=None, files=None):
 
 
 def stale(paths=None, figma=False, today=None, questions=None, ado=None, git=git_release, lineage=None,
-          figma_files=None, branch=None, files=None):
+          figma_files=None, branch=None, files=None, plan=None):
     """The whole check: {"holds": judged holds, "structure": problems, "cut_gone": rows, "cut_unread": files,
     "unread": files not read}. paths: the drafts file and the outbound file by default (the first, when
     configured, is read as the drafts file). figma: also list Cut rows on deleted nodes (the daily run)."""
@@ -843,7 +890,7 @@ def stale(paths=None, figma=False, today=None, questions=None, ado=None, git=git
             unread.append(f"{p} ({type(e).__name__})")
     headings = [b["head"] for t in texts.values() for b in blocks(t)]
     hs = [h for p, t in texts.items() for h in holds(t, os.path.basename(p))]
-    out = {"holds": judge(hs, headings, today, questions, ado, git, branch),
+    out = {"holds": judge(hs, headings, today, questions, ado, git, branch, plan),
            "structure": [x for p, t in texts.items()
                          for x in structure(t, os.path.basename(p), is_drafts_file(p), files)],
            "cut_gone": [], "cut_unread": None, "unread": unread}
@@ -1275,6 +1322,35 @@ def selftest_stale(case):
          rel('held until the draft "Partner A, chat 1:1".')["verdict"] == "released"
          and rel('held until the draft "Platform contact, chat 1:1".')["verdict"] == "held"
          and rel("held until 2030-01-20.")["verdict"] == "held")
+    pl = {"items": {"s1": {"status": "done"}, "s2": {"status": "open"}, "s3": {"status": "paused"},
+                    "s4": {"status": "dropped"}}}
+    relp = lambda line, plan=pl: judge(   # noqa: E731
+        holds("### X — `1:2345` · Last reviewed: 2030-01-10 — " + line + "\n\n> Q?\n", "drafts.md"),
+        ["Platform contact, chat 1:1: what the onboarding"], today, ledger_rows, lambda ids: ado_rows, fake_git,
+        "release", plan)[0]
+    case("... a setup plan item done is released; open or paused holds; dropped or not in the plan is target gone",
+         relp("held until plan:s1.")["verdict"] == "released" and relp("held until `plan:s2`.")["verdict"] == "held"
+         and relp("held until plan:s3 (the kit).")["verdict"] == "held"
+         and relp("held until plan:s4.")["verdict"] == "target gone" and relp("held until plan:s9.")["verdict"] == "target gone")
+    case("... several plan items release only when all are done, and one dropped is target gone",
+         relp("held until plan:s1,s2: the whole rework.")["verdict"] == "held"
+         and relp("held until plan:s1,s1.")["verdict"] == "released"
+         and relp("held until plan:s1,s4.")["verdict"] == "target gone")
+    real_cfg = globals()["_cfg"]
+    globals()["_cfg"] = lambda *keys: None
+    try:
+        case("... a plan item with no drafts.plan configured is not checked, never held",
+             relp("held until plan:s1.", plan=None)["verdict"] == "not checked")
+    finally:
+        globals()["_cfg"] = real_cfg
+    with tempfile.TemporaryDirectory() as d:
+        there = os.path.join(d, "packets")
+        os.makedirs(there)
+        case("... a file or folder that exists is released; one not written yet holds; a relative path, which "
+             "depends on where the check runs, is untestable",
+             relp(f"held until the folder `{there}` exists.")["verdict"] == "released"
+             and relp(f"held until the file `{os.path.join(d, 'none.pdf')}` exists.")["verdict"] == "held"
+             and relp("held until the file `packets/ratings.xlsx` exists.")["verdict"] == "untestable")
 
     def no_pat(ids):
         raise NotChecked("no ADO_PAT")

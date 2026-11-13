@@ -316,10 +316,16 @@ class _Run:
             with _env_lock:
                 saved = {k: os.environ.get(k) for k in ENV_KEYS}
                 os.environ.update({k: self.folder for k in ENV_KEYS})
+                # The driver starts in the run's folder too, and the browser inherits its working folder
+                # (Playwright passes the browser no cwd). Edge's PDF viewer writes pdf_mip_storage/ there,
+                # relative: a signed-in serve run from ~/Desktop put one in the Desktop root on 2026-11-12.
+                cwd = os.getcwd()
+                os.chdir(self.folder)
                 try:
                     self._cm = self._real()
                     pw = self._cm.__enter__()
                 finally:
+                    os.chdir(cwd)
                     for k, v in saved.items():
                         if v is None:
                             os.environ.pop(k, None)
@@ -486,6 +492,7 @@ def selftest():
 
         def __enter__(self):
             seen["env"] = {k: os.environ.get(k) for k in ENV_KEYS}
+            seen["cwd"] = os.getcwd()
             if self.fail:
                 raise RuntimeError("driver did not start")
             pw = type("PW", (), {})()
@@ -498,6 +505,7 @@ def selftest():
             seen["exited"] = True
 
     before = {k: os.environ.get(k) for k in ENV_KEYS}
+    cwd0 = os.getcwd()
     with tempfile.TemporaryDirectory() as scratch:   # never the real temp dir: a broken build reaps here only
         killed = os.path.join(scratch, f"pw-run-{dead}-_z")
         os.makedirs(os.path.join(killed, "playwright_chromiumdev_profile-_z"))
@@ -511,6 +519,10 @@ def selftest():
             check("the folder is named for this pid", os.path.basename(folder).startswith(f"{PREFIX}{me}-"), folder)
             check("the environment is put back once the driver is up",
                   {k: os.environ.get(k) for k in ENV_KEYS} == before)
+            check("the driver starts in the run's folder, so the browser's relative files (Edge's pdf_mip_storage/) "
+                  "land there, and the caller's working folder is put back",
+                  os.path.realpath(seen["cwd"]) == os.path.realpath(folder) and os.getcwd() == cwd0,
+                  (seen["cwd"], os.getcwd()))
             check("Python's temp dir does not move", tempfile.gettempdir() == real_tmp)
             want = "--disable-features=" + ",".join(playwright_disabled() + ("RenderDocument", "Foo"))
             got = pw.chromium.launch(channel="chromium", args=["--x", "--disable-features=Foo,RenderDocument"])
@@ -531,8 +543,9 @@ def selftest():
             run.__enter__()
             check("a failed start raises", False)
         except RuntimeError:
-            check("a failed start deletes the folder and puts the environment back",
-                  not os.path.exists(run.folder) and {k: os.environ.get(k) for k in ENV_KEYS} == before)
+            check("a failed start deletes the folder and puts the environment and the working folder back",
+                  not os.path.exists(run.folder) and {k: os.environ.get(k) for k in ENV_KEYS} == before
+                  and os.getcwd() == cwd0)
 
     print(f"\n{'PASS' if not fails else 'FAIL'}: {len(cases) - len(fails)} of {len(cases)} cases passed")
     return 1 if fails else 0
